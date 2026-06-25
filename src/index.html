@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Karaoke Shake</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header class="app-header">
+    <div class="header-left">
+      <span class="header-icon">🎤</span>
+      <h1>Karaoke Shake</h1>
+    </div>
+    <div class="header-right">
+      <span id="clock" class="clock"></span>
+      <button id="btn-history" class="btn btn-outline">Histórico</button>
+    </div>
+  </header>
+
+  <main class="app-main">
+
+    <section class="form-section">
+      <form id="form-entry" autocomplete="off">
+        <div class="form-row">
+          <div class="form-group">
+            <label for="input-name">Nome</label>
+            <input id="input-name" type="text" placeholder="Nome do cantor" required />
+          </div>
+          <div class="form-group form-group--sm">
+            <label for="input-song">Nº Música</label>
+            <input id="input-song" type="text" placeholder="Ex: 1234" required />
+          </div>
+          <div class="form-group form-group--xs">
+            <label for="input-table">Mesa</label>
+            <input id="input-table" type="number" placeholder="Ex: 5" min="1" required />
+          </div>
+          <button type="submit" class="btn btn-primary">+ Adicionar</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="queue-section">
+      <div class="section-header">
+        <h2>Fila <span id="queue-count" class="badge">0</span></h2>
+        <span class="section-hint">Ordenada pela mesa com maior espera</span>
+      </div>
+
+      <div id="queue-list" class="queue-list">
+        <div class="empty-state">
+          <span class="empty-icon">🎵</span>
+          <p>Nenhuma entrada na fila.</p>
+          <p>Adicione a primeira música acima!</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <div id="history-panel" class="history-panel hidden">
+    <div class="history-header">
+      <h2>Histórico</h2>
+      <button id="btn-close-history" class="btn btn-icon">✕</button>
+    </div>
+    <div class="history-controls">
+      <button id="btn-clear-history" class="btn btn-danger-outline btn-sm">Limpar histórico</button>
+    </div>
+    <div id="history-list" class="history-list">
+      <div class="empty-state">
+        <span class="empty-icon">📋</span>
+        <p>Nenhum registro no histórico.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="overlay" class="overlay hidden"></div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
