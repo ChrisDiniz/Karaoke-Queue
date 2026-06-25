@@ -128,13 +128,15 @@ function renderQueue() {
     const round     = getRound(entry)
     return `
       <div class="${cardClass}" data-id="${entry.id}">
-        <div class="card-position ${posClass}">${i + 1}</div>
+        <div class="card-position-wrap">
+          <span class="card-position ${posClass}">${i + 1}</span>
+          <span class="card-round">Rodada ${round}</span>
+        </div>
         <div class="card-info">
           <div class="card-top">
             <span class="card-table">Mesa ${entry.table}</span>
             <span class="card-name">${escapeHtml(entry.name)}</span>
             <span class="card-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
-            <span class="card-round">R${round}</span>
           </div>
           <div class="card-bottom">
             <span class="card-log">${entry.id}</span>
@@ -147,6 +149,8 @@ function renderQueue() {
             <span class="check-box">✓</span>
             <span class="check-label">No sistema</span>
           </label>
+        </div>
+        <div class="card-actions">
           <button class="btn-done" onclick="markDone('${entry.id}')">✓ Cantou</button>
         </div>
       </div>`

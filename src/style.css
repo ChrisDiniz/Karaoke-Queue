@@ -246,8 +246,8 @@ input::placeholder {
   border-radius: var(--radius-lg);
   padding: 14px 16px;
   display: grid;
-  grid-template-columns: 48px 1fr auto;
-  gap: 12px;
+  grid-template-columns: 48px 1fr auto auto;
+  gap: 72px;
   align-items: center;
   transition: border-color 0.15s, background 0.15s;
   animation: slideIn 0.2s ease;
@@ -265,6 +265,13 @@ input::placeholder {
 @keyframes slideIn {
   from { opacity: 0; transform: translateY(-6px); }
   to   { opacity: 1; transform: translateY(0); }
+}
+
+.card-position-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
 }
 
 .card-position {
@@ -315,13 +322,11 @@ input::placeholder {
 }
 
 .card-round {
-  font-size: 0.68rem;
-  font-weight: 700;
+  font-size: 0.65rem;
+  font-weight: 600;
   color: var(--text-dim);
-  border: 1px solid var(--border-light);
-  border-radius: 99px;
-  padding: 1px 7px;
-  margin-left: auto;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .card-bottom {
@@ -344,9 +349,8 @@ input::placeholder {
 
 .card-actions {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 8px;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Checkbox toggle */
