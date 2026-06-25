@@ -141,6 +141,13 @@ input::placeholder {
   color: var(--text-dim);
 }
 
+.label-optional {
+  font-weight: 400;
+  color: var(--text-dim);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 /* ── Buttons ─────────────────────────────────────────── */
 .btn {
   padding: 9px 18px;

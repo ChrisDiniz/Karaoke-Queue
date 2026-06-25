@@ -58,14 +58,15 @@ function sortedQueue() {
 }
 
 // ── Actions ───────────────────────────────────────────
-function addEntry(name, songNumber, table) {
+function addEntry(name, songNumber, songNumber2, table) {
   const entry = {
-    id:         generateLogId(),
-    name:       name.trim(),
-    songNumber: songNumber.trim(),
-    table:      String(table).trim(),
-    insertedAt: Date.now(),
-    checked:    false
+    id:          generateLogId(),
+    name:        name.trim(),
+    songNumber:  songNumber.trim(),
+    songNumber2: songNumber2.trim(),
+    table:       String(table).trim(),
+    insertedAt:  Date.now(),
+    checked:     false
   }
   state.queue.push(entry)
   saveState()
@@ -129,7 +130,7 @@ function renderQueue() {
           <div class="card-top">
             <span class="card-table">Mesa ${entry.table}</span>
             <span class="card-name">${escapeHtml(entry.name)}</span>
-            <span class="card-song">🎵 ${escapeHtml(entry.songNumber)}</span>
+            <span class="card-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
           </div>
           <div class="card-bottom">
             <span class="card-log">${entry.id}</span>
@@ -166,7 +167,7 @@ function renderHistory() {
       <div class="history-card-top">
         <span class="history-badge-table">Mesa ${entry.table}</span>
         <span class="history-name">${escapeHtml(entry.name)}</span>
-        <span class="history-song">🎵 ${escapeHtml(entry.songNumber)}</span>
+        <span class="history-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
       </div>
       <div class="history-meta">
         <span class="history-log">${entry.id}</span>
@@ -228,8 +229,9 @@ document.addEventListener('DOMContentLoaded', () => {
     e.preventDefault()
     const name   = document.getElementById('input-name').value
     const song   = document.getElementById('input-song').value
+    const song2  = document.getElementById('input-song2').value
     const table  = document.getElementById('input-table').value
-    addEntry(name, song, table)
+    addEntry(name, song, song2, table)
     e.target.reset()
     document.getElementById('input-name').focus()
   })
