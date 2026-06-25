@@ -108,6 +108,43 @@
     </div>
   </div>
 
+  <div id="edit-modal" class="modal hidden">
+    <div class="modal-box modal-box--sm">
+      <div class="modal-header">
+        <h2>✏️ Editar Registro</h2>
+        <button id="btn-close-edit" class="btn btn-icon">✕</button>
+      </div>
+      <div class="modal-body edit-modal-body">
+        <input type="hidden" id="edit-id" />
+        <div class="form-group">
+          <label for="edit-name">Nome</label>
+          <input id="edit-name" type="text" placeholder="Nome do cantor" />
+        </div>
+        <div class="edit-songs-row">
+          <div class="form-group">
+            <label for="edit-song">1ª Música</label>
+            <input id="edit-song" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Ex: 1234" />
+          </div>
+          <div class="form-group">
+            <label for="edit-song2">2ª Música <span class="label-optional">(opcional)</span></label>
+            <input id="edit-song2" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Ex: 5678" />
+          </div>
+        </div>
+        <div class="form-group form-group--xs">
+          <label for="edit-table">Mesa</label>
+          <input id="edit-table" type="number" placeholder="Ex: 5" min="1" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div></div>
+        <div class="modal-actions">
+          <button id="btn-cancel-edit" class="btn btn-outline">Cancelar</button>
+          <button id="btn-save-edit" class="btn btn-primary">Salvar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="overlay" class="overlay hidden"></div>
 
   <div id="toast" class="toast hidden"></div>

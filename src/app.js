@@ -45,6 +45,11 @@ function formatDateTime(ts) {
 // Round = (entries from same table in history) + (entries from same table
 // in queue inserted before this one) + 1.
 // Lower round = higher priority. Ties broken by insertion time (FIFO).
+function getRoundColor(round) {
+  const colors = ['#10b981', '#06b6d4', '#f59e0b', '#f97316', '#ef4444']
+  return colors[Math.min(round - 1, colors.length - 1)]
+}
+
 function getRound(entry) {
   const historySings  = state.history.filter(h => h.table === entry.table).length
   const queueBefore   = state.queue.filter(q => q.table === entry.table && q.insertedAt < entry.insertedAt).length
@@ -83,6 +88,48 @@ function toggleChecked(id) {
   entry.checked = !entry.checked
   saveState()
   renderQueue()
+}
+
+function openEdit(id) {
+  const entry = state.queue.find(e => e.id === id)
+  if (!entry) return
+  document.getElementById('edit-id').value    = entry.id
+  document.getElementById('edit-name').value  = entry.name
+  document.getElementById('edit-song').value  = entry.songNumber
+  document.getElementById('edit-song2').value = entry.songNumber2 || ''
+  document.getElementById('edit-table').value = entry.table
+  document.getElementById('edit-modal').classList.remove('hidden')
+  document.getElementById('edit-name').focus()
+}
+
+function closeEdit() {
+  document.getElementById('edit-modal').classList.add('hidden')
+}
+
+function saveEdit() {
+  const id    = document.getElementById('edit-id').value
+  const name  = document.getElementById('edit-name').value.trim()
+  const song  = document.getElementById('edit-song').value.trim()
+  const song2 = document.getElementById('edit-song2').value.trim()
+  const table = document.getElementById('edit-table').value.trim()
+
+  if (!name || !song || !table) {
+    showToast('Preencha nome, 1ª música e mesa.')
+    return
+  }
+
+  const entry = state.queue.find(e => e.id === id)
+  if (!entry) return
+
+  entry.name        = name
+  entry.songNumber  = song
+  entry.songNumber2 = song2
+  entry.table       = table
+
+  saveState()
+  renderQueue()
+  closeEdit()
+  showToast('Registro atualizado!')
 }
 
 function removeEntry(id) {
@@ -138,15 +185,18 @@ function renderQueue() {
     const round     = getRound(entry)
     return `
       <div class="${cardClass}" data-id="${entry.id}">
-        <button class="btn-remove" onclick="removeEntry('${entry.id}')" title="Remover da fila">✕</button>
+        <div class="card-left-actions">
+          <button class="btn-remove" onclick="removeEntry('${entry.id}')" title="Remover da fila">✕</button>
+          <button class="btn-edit" onclick="openEdit('${entry.id}')" title="Editar registro">✏️</button>
+        </div>
         <div class="card-position-wrap">
           <span class="card-position ${posClass}">${i + 1}</span>
         </div>
         <div class="card-info">
           <div class="card-top">
             <div class="card-table-wrap">
-              <span class="card-round">Rodada ${round}</span>
               <span class="card-table">Mesa ${entry.table}</span>
+              <span class="card-round" style="color:${getRoundColor(round)}">Rodada ${round}</span>
               <span class="card-time">${formatTime(entry.insertedAt)}</span>
             </div>
             <span class="card-name">${escapeHtml(entry.name)}</span>
@@ -342,6 +392,14 @@ document.addEventListener('DOMContentLoaded', () => {
     input.addEventListener('input', () => {
       input.value = input.value.replace(/[^0-9]/g, '')
     })
+  })
+
+  document.getElementById('btn-close-edit').addEventListener('click', closeEdit)
+  document.getElementById('btn-cancel-edit').addEventListener('click', closeEdit)
+  document.getElementById('btn-save-edit').addEventListener('click', saveEdit)
+  document.querySelectorAll('#edit-song, #edit-song2').forEach(input => {
+    input.addEventListener('keypress', e => { if (!/[0-9]/.test(e.key)) e.preventDefault() })
+    input.addEventListener('input', () => { input.value = input.value.replace(/[^0-9]/g, '') })
   })
 
   document.getElementById('btn-open-batch').addEventListener('click', openBatch)

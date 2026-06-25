@@ -329,11 +329,11 @@ input::placeholder {
 }
 
 .card-round {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 700;
   text-align: center;
   white-space: nowrap;
+  letter-spacing: 0.3px;
 }
 
 .card-bottom {
@@ -421,6 +421,13 @@ input::placeholder {
   color: var(--success);
 }
 
+.card-left-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
 .btn-remove {
   background: var(--danger-bg);
   border: 2px solid var(--danger);
@@ -437,6 +444,40 @@ input::placeholder {
 .btn-remove:hover {
   background: var(--danger);
   color: #fff;
+}
+
+.btn-edit {
+  background: transparent;
+  border: 1px solid var(--border-light);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  transition: all 0.15s;
+  line-height: 1;
+}
+
+.btn-edit:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.modal-box--sm {
+  max-width: 480px;
+}
+
+.edit-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.edit-songs-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 
 /* ── Empty state ─────────────────────────────────────── */
