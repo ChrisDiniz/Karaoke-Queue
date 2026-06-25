@@ -2,29 +2,25 @@
 
 // ── Storage keys ──────────────────────────────────────
 const KEYS = {
-  QUEUE:       'kshake_queue',
-  HISTORY:     'kshake_history',
-  TABLE_TIMES: 'kshake_table_times'
+  QUEUE:   'kshake_queue',
+  HISTORY: 'kshake_history'
 }
 
 // ── State ─────────────────────────────────────────────
 let state = {
-  queue:      [],
-  history:    [],
-  tableTimes: {}
+  queue:   [],
+  history: []
 }
 
 // ── Persistence ───────────────────────────────────────
 function loadState() {
-  state.queue      = JSON.parse(localStorage.getItem(KEYS.QUEUE)       || '[]')
-  state.history    = JSON.parse(localStorage.getItem(KEYS.HISTORY)     || '[]')
-  state.tableTimes = JSON.parse(localStorage.getItem(KEYS.TABLE_TIMES) || '{}')
+  state.queue   = JSON.parse(localStorage.getItem(KEYS.QUEUE)   || '[]')
+  state.history = JSON.parse(localStorage.getItem(KEYS.HISTORY) || '[]')
 }
 
 function saveState() {
-  localStorage.setItem(KEYS.QUEUE,       JSON.stringify(state.queue))
-  localStorage.setItem(KEYS.HISTORY,     JSON.stringify(state.history))
-  localStorage.setItem(KEYS.TABLE_TIMES, JSON.stringify(state.tableTimes))
+  localStorage.setItem(KEYS.QUEUE,   JSON.stringify(state.queue))
+  localStorage.setItem(KEYS.HISTORY, JSON.stringify(state.history))
 }
 
 // ── Helpers ───────────────────────────────────────────
@@ -46,13 +42,20 @@ function formatDateTime(ts) {
 }
 
 // ── Queue ordering ─────────────────────────────────────
-// Tables that waited the longest (lowest lastSangTime) go first.
-// Ties broken by insertion order (FIFO).
+// Round = (entries from same table in history) + (entries from same table
+// in queue inserted before this one) + 1.
+// Lower round = higher priority. Ties broken by insertion time (FIFO).
+function getRound(entry) {
+  const historySings  = state.history.filter(h => h.table === entry.table).length
+  const queueBefore   = state.queue.filter(q => q.table === entry.table && q.insertedAt < entry.insertedAt).length
+  return historySings + queueBefore + 1
+}
+
 function sortedQueue() {
   return [...state.queue].sort((a, b) => {
-    const tA = state.tableTimes[a.table] || 0
-    const tB = state.tableTimes[b.table] || 0
-    if (tA !== tB) return tA - tB
+    const roundA = getRound(a)
+    const roundB = getRound(b)
+    if (roundA !== roundB) return roundA - roundB
     return a.insertedAt - b.insertedAt
   })
 }
@@ -87,7 +90,6 @@ function markDone(id) {
   if (idx === -1) return
   const [entry] = state.queue.splice(idx, 1)
   entry.doneAt = Date.now()
-  state.tableTimes[entry.table] = entry.doneAt
   state.history.unshift(entry)
   saveState()
   renderQueue()
@@ -121,8 +123,9 @@ function renderQueue() {
   }
 
   list.innerHTML = sorted.map((entry, i) => {
-    const posClass = i === 0 ? 'first' : ''
+    const posClass  = i === 0 ? 'first' : ''
     const cardClass = entry.checked ? 'queue-card is-checked' : 'queue-card'
+    const round     = getRound(entry)
     return `
       <div class="${cardClass}" data-id="${entry.id}">
         <div class="card-position ${posClass}">${i + 1}</div>
@@ -131,6 +134,7 @@ function renderQueue() {
             <span class="card-table">Mesa ${entry.table}</span>
             <span class="card-name">${escapeHtml(entry.name)}</span>
             <span class="card-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
+            <span class="card-round">R${round}</span>
           </div>
           <div class="card-bottom">
             <span class="card-log">${entry.id}</span>

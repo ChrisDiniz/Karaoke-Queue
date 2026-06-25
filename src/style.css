@@ -314,6 +314,16 @@ input::placeholder {
   color: var(--text-muted);
 }
 
+.card-round {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  border: 1px solid var(--border-light);
+  border-radius: 99px;
+  padding: 1px 7px;
+  margin-left: auto;
+}
+
 .card-bottom {
   display: flex;
   align-items: center;
