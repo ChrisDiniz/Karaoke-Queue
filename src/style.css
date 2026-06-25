@@ -336,22 +336,36 @@ input::placeholder {
   letter-spacing: 0.3px;
 }
 
-.card-bottom {
+.card-info-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.card-info-top {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-.card-log {
-  font-size: 0.8rem;
-  color: var(--text-dim);
-  font-family: 'Courier New', monospace;
+.card-inserted {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
-.card-time {
-  font-size: 0.85rem;
+.card-inserted-label {
+  font-size: 0.7rem;
   color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.card-inserted-time {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
 }
 
 .card-actions {
