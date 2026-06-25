@@ -254,6 +254,15 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('input-name').focus()
   })
 
+  document.querySelectorAll('#input-song, #input-song2').forEach(input => {
+    input.addEventListener('keypress', e => {
+      if (!/[0-9]/.test(e.key)) e.preventDefault()
+    })
+    input.addEventListener('input', () => {
+      input.value = input.value.replace(/[^0-9]/g, '')
+    })
+  })
+
   document.getElementById('btn-history').addEventListener('click', openHistory)
   document.getElementById('btn-close-history').addEventListener('click', closeHistory)
   document.getElementById('overlay').addEventListener('click', closeHistory)
