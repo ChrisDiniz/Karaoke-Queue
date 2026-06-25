@@ -41,6 +41,7 @@
             <input id="input-table" type="number" placeholder="Ex: 5" min="1" required />
           </div>
           <button type="submit" class="btn btn-primary">+ Adicionar</button>
+          <button type="button" id="btn-open-batch" class="btn btn-outline">📋 Adicionar Vários</button>
         </div>
       </form>
     </section>
@@ -74,6 +75,35 @@
       <div class="empty-state">
         <span class="empty-icon">📋</span>
         <p>Nenhum registro no histórico.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="batch-modal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>📋 Adicionar Vários</h2>
+        <button id="btn-close-batch" class="btn btn-icon">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="batch-header-row">
+          <span>Nome</span>
+          <span>1ª Música</span>
+          <span>2ª Música <span class="label-optional">(opcional)</span></span>
+          <span>Mesa</span>
+          <span></span>
+        </div>
+        <div id="batch-rows"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="modal-footer-left">
+          <button id="btn-add-batch-row" class="btn btn-outline">+ Adicionar linha</button>
+          <span id="batch-count-label" class="batch-count-label">0 entradas prontas</span>
+        </div>
+        <div class="modal-actions">
+          <button id="btn-cancel-batch" class="btn btn-outline">Cancelar</button>
+          <button id="btn-confirm-batch" class="btn btn-primary">Confirmar Todos</button>
+        </div>
       </div>
     </div>
   </div>

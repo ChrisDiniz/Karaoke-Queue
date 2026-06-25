@@ -195,6 +195,87 @@ function renderHistory() {
   ).join('')
 }
 
+// ── Batch add ─────────────────────────────────────────
+let batchRowCount = 0
+
+function openBatch() {
+  batchRowCount = 0
+  document.getElementById('batch-rows').innerHTML = ''
+  document.getElementById('batch-modal').classList.remove('hidden')
+  addBatchRow()
+  addBatchRow()
+  addBatchRow()
+  document.querySelector('.batch-row .b-name').focus()
+}
+
+function closeBatch() {
+  document.getElementById('batch-modal').classList.add('hidden')
+}
+
+function addBatchRow() {
+  const idx = batchRowCount++
+  const row = document.createElement('div')
+  row.className = 'batch-row'
+  row.dataset.idx = idx
+  row.innerHTML = `
+    <input type="text" placeholder="Nome do cantor" class="b-name" />
+    <input type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Ex: 1234" class="b-song" />
+    <input type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Ex: 5678" class="b-song2" />
+    <input type="number" placeholder="Mesa" min="1" class="b-table" />
+    <button type="button" class="btn-batch-remove" onclick="removeBatchRow(this)" title="Remover linha">✕</button>
+  `
+  row.querySelectorAll('.b-song, .b-song2').forEach(input => {
+    input.addEventListener('keypress', e => { if (!/[0-9]/.test(e.key)) e.preventDefault() })
+    input.addEventListener('input', () => { input.value = input.value.replace(/[^0-9]/g, '') })
+  })
+  row.querySelectorAll('input').forEach(input => {
+    input.addEventListener('input', updateBatchCount)
+  })
+  document.getElementById('batch-rows').appendChild(row)
+  updateBatchCount()
+}
+
+function removeBatchRow(btn) {
+  const row = btn.closest('.batch-row')
+  const allRows = document.querySelectorAll('.batch-row')
+  if (allRows.length === 1) return
+  row.remove()
+  updateBatchCount()
+}
+
+function updateBatchCount() {
+  const count = getCompleteBatchRows().length
+  const label = document.getElementById('batch-count-label')
+  label.textContent = `${count} entrada${count !== 1 ? 's' : ''} pronta${count !== 1 ? 's' : ''}`
+  label.style.color = count > 0 ? 'var(--success)' : 'var(--text-dim)'
+}
+
+function getCompleteBatchRows() {
+  return [...document.querySelectorAll('.batch-row')].filter(row => {
+    const name  = row.querySelector('.b-name').value.trim()
+    const song  = row.querySelector('.b-song').value.trim()
+    const table = row.querySelector('.b-table').value.trim()
+    return name && song && table
+  })
+}
+
+function confirmBatch() {
+  const complete = getCompleteBatchRows()
+  if (complete.length === 0) {
+    showToast('Nenhuma entrada completa para adicionar.')
+    return
+  }
+  complete.forEach(row => {
+    const name  = row.querySelector('.b-name').value.trim()
+    const song  = row.querySelector('.b-song').value.trim()
+    const song2 = row.querySelector('.b-song2').value.trim()
+    const table = row.querySelector('.b-table').value.trim()
+    addEntry(name, song, song2, table)
+  })
+  closeBatch()
+  showToast(`${complete.length} entrada${complete.length !== 1 ? 's' : ''} adicionada${complete.length !== 1 ? 's' : ''} à fila!`)
+}
+
 // ── History panel ─────────────────────────────────────
 function openHistory() {
   document.getElementById('history-panel').classList.remove('hidden')
@@ -261,6 +342,16 @@ document.addEventListener('DOMContentLoaded', () => {
     input.addEventListener('input', () => {
       input.value = input.value.replace(/[^0-9]/g, '')
     })
+  })
+
+  document.getElementById('btn-open-batch').addEventListener('click', openBatch)
+  document.getElementById('btn-close-batch').addEventListener('click', closeBatch)
+  document.getElementById('btn-cancel-batch').addEventListener('click', closeBatch)
+  document.getElementById('btn-confirm-batch').addEventListener('click', confirmBatch)
+  document.getElementById('btn-add-batch-row').addEventListener('click', () => {
+    addBatchRow()
+    const rows = document.querySelectorAll('.batch-row')
+    rows[rows.length - 1].querySelector('.b-name').focus()
   })
 
   document.getElementById('btn-history').addEventListener('click', openHistory)
