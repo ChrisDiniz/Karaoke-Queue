@@ -53,11 +53,11 @@ body {
 }
 
 .header-icon {
-  font-size: 1.5rem;
+  font-size: 2rem;
 }
 
 .app-header h1 {
-  font-size: 1.25rem;
+  font-size: 1.5rem;
   font-weight: 700;
   color: var(--text);
   letter-spacing: 0.5px;
@@ -70,7 +70,7 @@ body {
 }
 
 .clock {
-  font-size: 1.1rem;
+  font-size: 1.35rem;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   font-weight: 600;
@@ -113,7 +113,7 @@ body {
 .form-group--xs { flex: 0 0 100px; }
 
 label {
-  font-size: 0.75rem;
+  font-size: 0.9rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -125,9 +125,9 @@ input[type="number"] {
   background: var(--bg-base);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 9px 12px;
+  padding: 11px 14px;
   color: var(--text);
-  font-size: 0.95rem;
+  font-size: 1.05rem;
   transition: border-color 0.15s;
   width: 100%;
 }
@@ -150,11 +150,11 @@ input::placeholder {
 
 /* ── Buttons ─────────────────────────────────────────── */
 .btn {
-  padding: 9px 18px;
+  padding: 11px 22px;
   border-radius: var(--radius);
   border: none;
   cursor: pointer;
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: 600;
   transition: background 0.15s, opacity 0.15s;
   white-space: nowrap;
@@ -163,7 +163,7 @@ input::placeholder {
 .btn-primary {
   background: var(--accent);
   color: #fff;
-  height: 38px;
+  height: 46px;
   align-self: flex-end;
 }
 .btn-primary:hover { background: var(--accent-hover); }
@@ -246,7 +246,7 @@ input::placeholder {
   border-radius: var(--radius-lg);
   padding: 14px 16px;
   display: grid;
-  grid-template-columns: 48px 1fr auto auto;
+  grid-template-columns: auto 48px 1fr auto auto;
   gap: 72px;
   align-items: center;
   transition: border-color 0.15s, background 0.15s;
@@ -275,7 +275,7 @@ input::placeholder {
 }
 
 .card-position {
-  font-size: 1.5rem;
+  font-size: 2rem;
   font-weight: 800;
   color: var(--text-dim);
   text-align: center;
@@ -295,34 +295,41 @@ input::placeholder {
 .card-top {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   flex-wrap: wrap;
+}
+
+.card-table-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
 }
 
 .card-table {
   background: var(--accent);
   color: #fff;
-  font-size: 0.7rem;
+  font-size: 0.85rem;
   font-weight: 700;
-  padding: 2px 8px;
+  padding: 3px 10px;
   border-radius: 99px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .card-name {
-  font-size: 1rem;
+  font-size: 1.15rem;
   font-weight: 600;
   color: var(--text);
 }
 
 .card-song {
-  font-size: 0.9rem;
+  font-size: 1.05rem;
   color: var(--text-muted);
 }
 
 .card-round {
-  font-size: 0.65rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--text-dim);
   text-align: center;
@@ -337,13 +344,13 @@ input::placeholder {
 }
 
 .card-log {
-  font-size: 0.7rem;
+  font-size: 0.8rem;
   color: var(--text-dim);
   font-family: 'Courier New', monospace;
 }
 
 .card-time {
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   color: var(--text-dim);
 }
 
@@ -367,15 +374,15 @@ input::placeholder {
 }
 
 .check-box {
-  width: 20px;
-  height: 20px;
+  width: 26px;
+  height: 26px;
   border: 2px solid var(--border-light);
   border-radius: 5px;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.15s;
-  font-size: 0.7rem;
+  font-size: 0.9rem;
   color: transparent;
   background: transparent;
 }
@@ -387,7 +394,7 @@ input::placeholder {
 }
 
 .check-label {
-  font-size: 0.72rem;
+  font-size: 0.9rem;
   color: var(--text-dim);
   white-space: nowrap;
 }
@@ -400,8 +407,8 @@ input::placeholder {
   background: transparent;
   border: 1px solid var(--border-light);
   color: var(--text-muted);
-  font-size: 0.75rem;
-  padding: 5px 10px;
+  font-size: 0.95rem;
+  padding: 8px 16px;
   border-radius: var(--radius);
   cursor: pointer;
   transition: all 0.15s;
@@ -412,6 +419,24 @@ input::placeholder {
   background: var(--success-bg);
   border-color: var(--success);
   color: var(--success);
+}
+
+.btn-remove {
+  background: var(--danger-bg);
+  border: 2px solid var(--danger);
+  color: var(--danger);
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 5px 7px;
+  border-radius: var(--radius);
+  transition: all 0.15s;
+  line-height: 1;
+}
+
+.btn-remove:hover {
+  background: var(--danger);
+  color: #fff;
 }
 
 /* ── Empty state ─────────────────────────────────────── */

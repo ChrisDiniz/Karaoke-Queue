@@ -85,6 +85,16 @@ function toggleChecked(id) {
   renderQueue()
 }
 
+function removeEntry(id) {
+  const entry = state.queue.find(e => e.id === id)
+  if (!entry) return
+  if (!confirm(`Remover ${entry.name} (Mesa ${entry.table}) da fila?`)) return
+  state.queue = state.queue.filter(e => e.id !== id)
+  saveState()
+  renderQueue()
+  showToast(`${entry.name} removido(a) da fila.`)
+}
+
 function markDone(id) {
   const idx = state.queue.findIndex(e => e.id === id)
   if (idx === -1) return
@@ -128,19 +138,19 @@ function renderQueue() {
     const round     = getRound(entry)
     return `
       <div class="${cardClass}" data-id="${entry.id}">
+        <button class="btn-remove" onclick="removeEntry('${entry.id}')" title="Remover da fila">✕</button>
         <div class="card-position-wrap">
           <span class="card-position ${posClass}">${i + 1}</span>
-          <span class="card-round">Rodada ${round}</span>
         </div>
         <div class="card-info">
           <div class="card-top">
-            <span class="card-table">Mesa ${entry.table}</span>
+            <div class="card-table-wrap">
+              <span class="card-round">Rodada ${round}</span>
+              <span class="card-table">Mesa ${entry.table}</span>
+              <span class="card-time">${formatTime(entry.insertedAt)}</span>
+            </div>
             <span class="card-name">${escapeHtml(entry.name)}</span>
             <span class="card-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
-          </div>
-          <div class="card-bottom">
-            <span class="card-log">${entry.id}</span>
-            <span class="card-time">${formatTime(entry.insertedAt)}</span>
           </div>
         </div>
         <div class="card-actions">
@@ -178,7 +188,7 @@ function renderHistory() {
         <span class="history-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
       </div>
       <div class="history-meta">
-        <span class="history-log">${entry.id}</span>
+        <span class="history-time">Inserido: ${formatDateTime(entry.insertedAt)}</span>
         <span class="history-time">Cantou: ${formatDateTime(entry.doneAt)}</span>
       </div>
     </div>`
