@@ -327,7 +327,14 @@ function showStartupDialog() {
     return
   }
 
-  // Expediente em andamento — única situação que precisa de escolha
+  // Expediente em andamento há mais de 15h → inicia novo automaticamente
+  const hoursElapsed = (Date.now() - lastSession.startedAt) / 3600000
+  if (hoursElapsed > 15) {
+    resetSession()
+    return
+  }
+
+  // Expediente em andamento do mesmo dia — única situação que precisa de escolha
   const startStr = new Date(lastSession.startedAt).toLocaleString('pt-BR', {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit'
@@ -833,6 +840,12 @@ function escapeHtml(str) {
 
 // ── Init ──────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // Carrega nome do app antes de qualquer outra coisa
+  const _savedName = localStorage.getItem(KEYS.APP_NAME)
+  if (_savedName) {
+    document.getElementById('app-name').textContent = _savedName
+  }
+
   loadState()
   renderQueue()
   updateClock()
@@ -952,16 +965,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnSave    = document.getElementById('btn-name-save')
   const btnCancel  = document.getElementById('btn-name-cancel')
 
-  let savedName = localStorage.getItem(KEYS.APP_NAME)
-  if (savedName && !savedName.includes(' ')) {
-    // migrate old format that stored only the suffix (e.g. "Queue")
-    savedName = `Karaoke ${savedName}`
-    localStorage.setItem(KEYS.APP_NAME, savedName)
-  }
-  if (savedName) {
-    appNameEl.textContent = savedName
-    document.title = savedName
-  }
+  const savedName = localStorage.getItem(KEYS.APP_NAME)
+  if (savedName) appNameEl.textContent = savedName
 
   function openNamePopover() {
     popInput.value = appNameEl.textContent
@@ -973,7 +978,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function saveAppName() {
     const val = popInput.value.trim() || 'Karaoke Queue'
     appNameEl.textContent = val
-    document.title = val
     localStorage.setItem(KEYS.APP_NAME, val)
     popover.classList.add('hidden')
   }
