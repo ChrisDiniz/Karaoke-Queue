@@ -15,6 +15,11 @@ let historyFilter = {
   order:  'desc'
 }
 
+let statsFilter = {
+  name:  '',
+  table: ''
+}
+
 // ── State ─────────────────────────────────────────────
 let state = {
   queue:           [],
@@ -365,6 +370,173 @@ function setTableFilter(table) {
   renderHistory()
 }
 
+// ── Statistics ────────────────────────────────────────
+function openStats() {
+  statsFilter = { name: '', table: '' }
+  document.getElementById('stats-search-name').value  = ''
+  document.getElementById('stats-search-table').value = ''
+  document.getElementById('stats-panel').classList.remove('hidden')
+  document.getElementById('overlay').classList.remove('hidden')
+  renderStats()
+}
+
+function closeStats() {
+  document.getElementById('stats-panel').classList.add('hidden')
+  document.getElementById('overlay').classList.add('hidden')
+}
+
+function renderStats() {
+  const body = document.getElementById('stats-body')
+  let h = [...state.history]
+  if (statsFilter.name)  h = h.filter(e => e.name.toLowerCase().includes(statsFilter.name.toLowerCase()))
+  if (statsFilter.table) h = h.filter(e => e.table === statsFilter.table)
+
+  if (h.length === 0) {
+    body.innerHTML = `
+      <div class="empty-state">
+        <span class="empty-icon">📊</span>
+        <p>Nenhum dado ainda.</p>
+        <p>As estatísticas aparecerão após as primeiras músicas cantadas.</p>
+      </div>`
+    return
+  }
+
+  // ── Resumo
+  const totalSongs   = h.reduce((acc, e) => acc + 1 + (e.songNumber2 ? 1 : 0), 0)
+  const uniqueSingers = new Set(h.map(e => e.name.toLowerCase())).size
+  const uniqueTables  = new Set(h.map(e => e.table)).size
+  const duration      = calcDuration(h)
+  const avgWait       = calcAvgWait(h)
+
+  // ── Por cantor (agrupado por Mesa + Nome)
+  const bySinger = groupAndSort(h, e => `${e.name} · Mesa ${e.table}`, e => 1 + (e.songNumber2 ? 1 : 0))
+
+  // ── Por mesa
+  const byTable = groupAndSort(h, e => `Mesa ${e.table}`, e => 1 + (e.songNumber2 ? 1 : 0))
+
+  // ── Músicas mais pedidas
+  const songCounts = {}
+  h.forEach(e => {
+    if (e.songNumber)  songCounts[e.songNumber]  = (songCounts[e.songNumber]  || 0) + 1
+    if (e.songNumber2) songCounts[e.songNumber2] = (songCounts[e.songNumber2] || 0) + 1
+  })
+  const topSongs = Object.entries(songCounts).sort((a, b) => b[1] - a[1]).slice(0, 8)
+
+  // ── Horário de pico
+  const byHour = {}
+  h.forEach(e => {
+    const hour = new Date(e.doneAt).getHours()
+    byHour[hour] = (byHour[hour] || 0) + 1 + (e.songNumber2 ? 1 : 0)
+  })
+  const peakHours = Object.entries(byHour).sort((a, b) => b[1] - a[1]).slice(0, 5)
+
+  body.innerHTML = `
+    <section class="stats-section">
+      <h3 class="stats-section-title">Resumo da Sessão</h3>
+      <div class="stats-summary">
+        <div class="stat-card">
+          <span class="stat-value">${totalSongs}</span>
+          <span class="stat-label">Músicas cantadas</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value">${uniqueSingers}</span>
+          <span class="stat-label">Cantores únicos</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value">${uniqueTables}</span>
+          <span class="stat-label">Mesas ativas</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value">${duration}</span>
+          <span class="stat-label">Duração da sessão</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-value">${avgWait}</span>
+          <span class="stat-label">Espera média</span>
+        </div>
+      </div>
+    </section>
+
+    <div class="stats-grid">
+      <section class="stats-section">
+        <h3 class="stats-section-title">Por Cantor</h3>
+        <div class="stats-ranking">
+          ${bySinger.map(([ name, count ], i) => `
+            <div class="rank-row">
+              <span class="rank-pos">${i + 1}</span>
+              <span class="rank-name">${escapeHtml(name)}</span>
+              <span class="rank-bar-wrap"><span class="rank-bar" style="width:${(count / bySinger[0][1]) * 100}%"></span></span>
+              <span class="rank-count">${count} 🎵</span>
+            </div>`).join('')}
+        </div>
+      </section>
+
+      <section class="stats-section">
+        <h3 class="stats-section-title">Por Mesa</h3>
+        <div class="stats-ranking">
+          ${byTable.map(([ table, count ], i) => `
+            <div class="rank-row">
+              <span class="rank-pos">${i + 1}</span>
+              <span class="rank-name">${escapeHtml(table)}</span>
+              <span class="rank-bar-wrap"><span class="rank-bar" style="width:${(count / byTable[0][1]) * 100}%"></span></span>
+              <span class="rank-count">${count} 🎵</span>
+            </div>`).join('')}
+        </div>
+      </section>
+
+      <section class="stats-section">
+        <h3 class="stats-section-title">Músicas Mais Pedidas</h3>
+        <div class="stats-ranking">
+          ${topSongs.length === 0 ? '<p class="stats-empty">Sem dados</p>' :
+            topSongs.map(([ song, count ], i) => `
+            <div class="rank-row">
+              <span class="rank-pos">${i + 1}</span>
+              <span class="rank-name">#${escapeHtml(song)}</span>
+              <span class="rank-bar-wrap"><span class="rank-bar" style="width:${(count / topSongs[0][1]) * 100}%"></span></span>
+              <span class="rank-count">${count}x</span>
+            </div>`).join('')}
+        </div>
+      </section>
+
+      <section class="stats-section">
+        <h3 class="stats-section-title">Horário de Pico</h3>
+        <div class="stats-ranking">
+          ${peakHours.map(([ hour, count ], i) => `
+            <div class="rank-row">
+              <span class="rank-pos">${i + 1}</span>
+              <span class="rank-name">${String(hour).padStart(2,'0')}h</span>
+              <span class="rank-bar-wrap"><span class="rank-bar" style="width:${(count / peakHours[0][1]) * 100}%"></span></span>
+              <span class="rank-count">${count} 🎵</span>
+            </div>`).join('')}
+        </div>
+      </section>
+    </div>`
+}
+
+function groupAndSort(history, keyFn, countFn) {
+  const map = {}
+  history.forEach(e => {
+    const key = keyFn(e)
+    map[key] = (map[key] || 0) + countFn(e)
+  })
+  return Object.entries(map).sort((a, b) => b[1] - a[1])
+}
+
+function calcDuration(history) {
+  if (history.length < 2) return '—'
+  const timestamps = history.flatMap(e => [e.insertedAt, e.doneAt]).filter(Boolean)
+  const mins = Math.round((Math.max(...timestamps) - Math.min(...timestamps)) / 60000)
+  if (mins < 60) return `${mins} min`
+  return `${Math.floor(mins / 60)}h ${mins % 60}min`
+}
+
+function calcAvgWait(history) {
+  const waits = history.map(e => e.doneAt - e.insertedAt).filter(Boolean)
+  if (waits.length === 0) return '—'
+  const avgMin = Math.round(waits.reduce((a, b) => a + b, 0) / waits.length / 60000)
+  return `${avgMin} min`
+}
+
 // ── Drag & drop ───────────────────────────────────────
 let draggedId = null
 
@@ -565,9 +737,19 @@ document.addEventListener('DOMContentLoaded', () => {
     rows[rows.length - 1].querySelector('.b-name').focus()
   })
 
+  document.getElementById('btn-stats').addEventListener('click', openStats)
+  document.getElementById('btn-close-stats').addEventListener('click', closeStats)
+  document.getElementById('stats-search-name').addEventListener('input', e => {
+    statsFilter.name = e.target.value
+    renderStats()
+  })
+  document.getElementById('stats-search-table').addEventListener('input', e => {
+    statsFilter.table = e.target.value.trim()
+    renderStats()
+  })
   document.getElementById('btn-history').addEventListener('click', openHistory)
   document.getElementById('btn-close-history').addEventListener('click', closeHistory)
-  document.getElementById('overlay').addEventListener('click', closeHistory)
+  document.getElementById('overlay').addEventListener('click', () => { closeHistory(); closeStats() })
   document.getElementById('btn-clear-history').addEventListener('click', clearHistory)
   document.getElementById('btn-new-session').addEventListener('click', () => resetSession(true))
 
