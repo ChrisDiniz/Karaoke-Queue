@@ -21,35 +21,30 @@ function createWindow() {
     e.preventDefault()
 
     try {
-      const queueLength  = await win.webContents.executeJavaScript('window.__kqueue.queueLength()')
       const sessionEnded = await win.webContents.executeJavaScript('window.__kqueue.sessionEnded()')
 
-      if (queueLength === 0 && sessionEnded) {
+      if (sessionEnded) {
         win.destroy()
         return
       }
 
-      const warnings = []
-      if (queueLength > 0) warnings.push(`Há ${queueLength} entrada${queueLength > 1 ? 's' : ''} na fila.`)
-      if (!sessionEnded)   warnings.push('O expediente atual não foi encerrado.')
-
-      const buttons = []
-      if (!sessionEnded) buttons.push('Encerrar expediente e fechar')
-      buttons.push('Fechar assim mesmo')
-      buttons.push('Cancelar')
+      const queueLength = await win.webContents.executeJavaScript('window.__kqueue.queueLength()')
+      const detail      = queueLength > 0
+        ? `Há ${queueLength} entrada${queueLength > 1 ? 's' : ''} na fila.`
+        : ''
 
       const { response } = await dialog.showMessageBox(win, {
-        type:      'warning',
+        type:      'question',
         title:     'Karaoke Queue',
-        message:   warnings.join('\n'),
-        buttons,
-        defaultId: buttons.length - 1,
-        cancelId:  buttons.length - 1
+        message:   'Encerrar o expediente antes de sair?',
+        detail,
+        buttons:   ['Encerrar e sair', 'Sair sem encerrar', 'Cancelar'],
+        defaultId: 0,
+        cancelId:  2
       })
 
-      const chosen = buttons[response]
-      if (chosen === 'Cancelar') return
-      if (chosen === 'Encerrar expediente e fechar') {
+      if (response === 2) return
+      if (response === 0) {
         await win.webContents.executeJavaScript('window.__kqueue.endSessionSilent()')
       }
       win.destroy()

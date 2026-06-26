@@ -103,23 +103,6 @@ function sessionRunningTime(session) {
   return hours > 0 ? `${hours}h ${rest}min` : `${mins}min`
 }
 
-function endCurrentSession() {
-  const session = currentSession()
-  if (!session) return
-  if (session.endedAt) { showToast('Este expediente já foi encerrado.'); return }
-
-  const startLabel = new Date(session.startedAt).toLocaleString('pt-BR', {
-    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-  })
-  const running = sessionRunningTime(session)
-  const msg = `Expediente iniciado em ${startLabel}\nem andamento há ${running}.\n\nDeseja registrar o encerramento agora?`
-
-  if (!confirm(msg)) return
-  session.endedAt = Date.now()
-  saveState()
-  const time = new Date(session.endedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-  showToast(`Expediente encerrado às ${time}.`)
-}
 
 function getActiveSessionHistory() {
   const sid = historyFilter.sessionId || state.currentSessionId
@@ -304,26 +287,10 @@ function clearHistory() {
 }
 
 // ── Session reset ──────────────────────────────────────
-function resetSession(manual = false) {
-  if (manual) {
-    const cur = currentSession()
-    let msg = 'Deseja iniciar um novo expediente? A fila será limpa.'
-    if (cur) {
-      const startLabel = new Date(cur.startedAt).toLocaleString('pt-BR', {
-        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-      })
-      const running = sessionRunningTime(cur)
-      const status  = cur.endedAt ? 'encerrado' : `em andamento há ${running}`
-      msg = `O expediente atual foi iniciado em ${startLabel} (${status}).\n\nDeseja iniciar um novo expediente? A fila será limpa.`
-    }
-    if (!confirm(msg)) return
-  }
-
-  // End current session silently
+function resetSession() {
   const cur = currentSession()
   if (cur && !cur.endedAt) cur.endedAt = Date.now()
 
-  // Start new session
   createSession()
 
   state.queue           = []
@@ -334,16 +301,55 @@ function resetSession(manual = false) {
   saveState()
   renderQueue()
   renderHistory()
-  updateSessionStartInfo()
-  showToast(manual ? 'Novo expediente iniciado!' : 'Novo expediente iniciado automaticamente às 18:00.')
+  showToast('Novo expediente iniciado!')
 }
 
 function checkAutoReset() {
   const now       = new Date()
   const lastReset = localStorage.getItem(KEYS.LAST_RESET)
   if (now.getHours() === 18 && now.getMinutes() === 0 && lastReset !== now.toDateString()) {
-    resetSession(false)
+    resetSession()
   }
+}
+
+// ── Startup dialog ────────────────────────────────────────
+function showStartupDialog() {
+  if (state.sessions.length === 0) {
+    createSession()
+    saveState()
+    return
+  }
+
+  const lastSession = state.sessions[state.sessions.length - 1]
+
+  if (lastSession.endedAt) {
+    resetSession()
+    return
+  }
+
+  // Expediente em andamento — única situação que precisa de escolha
+  const startStr = new Date(lastSession.startedAt).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  })
+  const running = sessionRunningTime(lastSession)
+
+  document.getElementById('startup-message').textContent = 'Expediente em andamento'
+  document.getElementById('startup-detail').textContent  = `Iniciado em ${startStr}`
+  document.getElementById('startup-running').textContent = `há ${running}`
+
+  const btnPri = document.getElementById('btn-startup-primary')
+  const btnSec = document.getElementById('btn-startup-secondary')
+  btnPri.textContent = 'Continuar'
+  btnSec.textContent = 'Iniciar novo'
+  btnPri.onclick = () => closeStartupModal()
+  btnSec.onclick = () => { resetSession(); closeStartupModal() }
+
+  document.getElementById('startup-modal').classList.remove('hidden')
+}
+
+function closeStartupModal() {
+  document.getElementById('startup-modal').classList.add('hidden')
 }
 
 // ── History filters ────────────────────────────────────
@@ -885,8 +891,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-close-history').addEventListener('click', closeHistory)
   document.getElementById('overlay').addEventListener('click', () => { closeHistory(); closeStats() })
   document.getElementById('btn-clear-history').addEventListener('click', clearHistory)
-  document.getElementById('btn-new-session').addEventListener('click', () => resetSession(true))
-  document.getElementById('btn-end-session').addEventListener('click', endCurrentSession)
   document.getElementById('btn-clear-date').addEventListener('click', () => {
     statsFilter.filterDate = ''
     document.getElementById('stats-filter-date').value = ''
@@ -937,6 +941,8 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 
   setInterval(checkAutoReset, 60000)
+
+  showStartupDialog()
 
   // ── Editable app name ──────────────────────────────
   const appNameEl  = document.getElementById('app-name')

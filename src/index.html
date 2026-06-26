@@ -24,11 +24,6 @@
     </div>
     <div class="header-right">
       <span id="clock" class="clock"></span>
-      <button id="btn-new-session" class="btn btn-warning btn-session">
-        <span>↺ Novo Expediente</span>
-        <span id="session-start-info" class="session-start-info"></span>
-      </button>
-      <button id="btn-end-session" class="btn btn-outline">⏹ Encerrar Expediente</button>
       <button id="btn-stats" class="btn btn-outline">Estatísticas</button>
       <button id="btn-history" class="btn btn-outline">Histórico</button>
     </div>
@@ -193,6 +188,21 @@
           <button id="btn-cancel-edit" class="btn btn-outline">Cancelar</button>
           <button id="btn-save-edit" class="btn btn-primary">Salvar</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="startup-modal" class="modal hidden">
+    <div class="modal-box startup-box">
+      <div class="startup-icon">🎤</div>
+      <div class="startup-content">
+        <h2 id="startup-message" class="startup-message"></h2>
+        <p id="startup-detail" class="startup-detail"></p>
+        <p id="startup-running" class="startup-running"></p>
+      </div>
+      <div class="startup-actions">
+        <button id="btn-startup-secondary" class="btn btn-outline"></button>
+        <button id="btn-startup-primary" class="btn btn-primary"></button>
       </div>
     </div>
   </div>
