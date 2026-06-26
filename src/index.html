@@ -15,6 +15,7 @@
     </div>
     <div class="header-right">
       <span id="clock" class="clock"></span>
+      <button id="btn-new-session" class="btn btn-warning">↺ Nova Sessão</button>
       <button id="btn-history" class="btn btn-outline">Histórico</button>
     </div>
   </header>
@@ -68,8 +69,13 @@
       <h2>Histórico</h2>
       <button id="btn-close-history" class="btn btn-icon">✕</button>
     </div>
-    <div class="history-controls">
-      <button id="btn-clear-history" class="btn btn-danger-outline btn-sm">Limpar histórico</button>
+    <div class="history-filters">
+      <input id="history-search" type="text" placeholder="Buscar por nome..." class="history-search-input" />
+      <div id="history-table-filters" class="history-table-filters"></div>
+      <div class="history-filter-row">
+        <button id="btn-sort-history" class="btn btn-outline btn-sm" title="Alternar ordenação">↓ Recente</button>
+        <button id="btn-clear-history" class="btn btn-danger-outline btn-sm">Limpar histórico</button>
+      </div>
     </div>
     <div id="history-list" class="history-list">
       <div class="empty-state">

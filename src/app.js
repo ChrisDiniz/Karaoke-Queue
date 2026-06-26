@@ -4,7 +4,15 @@
 const KEYS = {
   QUEUE:            'kshake_queue',
   HISTORY:          'kshake_history',
-  PINNED_POSITIONS: 'kshake_pinned'
+  PINNED_POSITIONS: 'kshake_pinned',
+  LAST_RESET:       'kshake_last_reset'
+}
+
+// ── History filter state (in-memory only) ─────────────
+let historyFilter = {
+  search: '',
+  table:  null,
+  order:  'desc'
 }
 
 // ── State ─────────────────────────────────────────────
@@ -195,6 +203,47 @@ function clearHistory() {
   renderHistory()
 }
 
+// ── Session reset ──────────────────────────────────────
+function resetSession(manual = false) {
+  const msg = manual
+    ? 'Iniciar nova sessão? Fila e histórico serão limpos.'
+    : `São 18:00 — iniciar nova sessão automaticamente?`
+  if (manual && !confirm(msg)) return
+  state.queue           = []
+  state.history         = []
+  state.pinnedPositions = {}
+  historyFilter         = { search: '', table: null, order: 'desc' }
+  localStorage.setItem(KEYS.LAST_RESET, new Date().toDateString())
+  saveState()
+  renderQueue()
+  renderHistory()
+  showToast(manual ? 'Nova sessão iniciada!' : 'Sessão reiniciada automaticamente às 18:00.')
+}
+
+function checkAutoReset() {
+  const now       = new Date()
+  const lastReset = localStorage.getItem(KEYS.LAST_RESET)
+  if (now.getHours() === 18 && now.getMinutes() === 0 && lastReset !== now.toDateString()) {
+    resetSession(false)
+  }
+}
+
+// ── History filters ────────────────────────────────────
+function getFilteredHistory() {
+  let result = [...state.history]
+  if (historyFilter.search) {
+    const s = historyFilter.search.toLowerCase()
+    result = result.filter(e => e.name.toLowerCase().includes(s))
+  }
+  if (historyFilter.table) {
+    result = result.filter(e => e.table === historyFilter.table)
+  }
+  if (historyFilter.order === 'asc') {
+    result.reverse()
+  }
+  return result
+}
+
 // ── Render: Queue ─────────────────────────────────────
 function renderQueue() {
   const list    = document.getElementById('queue-list')
@@ -264,18 +313,39 @@ function renderQueue() {
 
 // ── Render: History ───────────────────────────────────
 function renderHistory() {
-  const list = document.getElementById('history-list')
+  const list    = document.getElementById('history-list')
+  const filtered = getFilteredHistory()
 
-  if (state.history.length === 0) {
+  // Render table filter buttons
+  const tables     = [...new Set(state.history.map(e => e.table))].sort((a, b) => Number(a) - Number(b))
+  const tableFilters = document.getElementById('history-table-filters')
+  if (tableFilters) {
+    tableFilters.innerHTML = tables.map(t => `
+      <button class="btn-table-filter ${historyFilter.table === t ? 'active' : ''}"
+        onclick="setTableFilter('${t}')">Mesa ${t}</button>
+    `).join('')
+    if (tables.length > 0) {
+      tableFilters.innerHTML = `
+        <button class="btn-table-filter ${historyFilter.table === null ? 'active' : ''}"
+          onclick="setTableFilter(null)">Todas</button>
+      ` + tableFilters.innerHTML
+    }
+  }
+
+  // Update sort button label
+  const sortBtn = document.getElementById('btn-sort-history')
+  if (sortBtn) sortBtn.textContent = historyFilter.order === 'desc' ? '↓ Recente' : '↑ Antiga'
+
+  if (filtered.length === 0) {
     list.innerHTML = `
       <div class="empty-state">
         <span class="empty-icon">📋</span>
-        <p>Nenhum registro no histórico.</p>
+        <p>${state.history.length === 0 ? 'Nenhum registro no histórico.' : 'Nenhum resultado para os filtros.'}</p>
       </div>`
     return
   }
 
-  list.innerHTML = state.history.map(entry => `
+  list.innerHTML = filtered.map(entry => `
     <div class="history-card">
       <div class="history-card-top">
         <span class="history-badge-table">Mesa ${entry.table}</span>
@@ -288,6 +358,11 @@ function renderHistory() {
       </div>
     </div>`
   ).join('')
+}
+
+function setTableFilter(table) {
+  historyFilter.table = table
+  renderHistory()
 }
 
 // ── Drag & drop ───────────────────────────────────────
@@ -494,4 +569,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-close-history').addEventListener('click', closeHistory)
   document.getElementById('overlay').addEventListener('click', closeHistory)
   document.getElementById('btn-clear-history').addEventListener('click', clearHistory)
+  document.getElementById('btn-new-session').addEventListener('click', () => resetSession(true))
+
+  document.getElementById('history-search').addEventListener('input', e => {
+    historyFilter.search = e.target.value
+    renderHistory()
+  })
+
+  document.getElementById('btn-sort-history').addEventListener('click', () => {
+    historyFilter.order = historyFilter.order === 'desc' ? 'asc' : 'desc'
+    renderHistory()
+  })
+
+  setInterval(checkAutoReset, 60000)
 })
