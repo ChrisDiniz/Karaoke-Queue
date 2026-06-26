@@ -11,7 +11,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true
     },
-    title: 'Karaoke Shake',
+    title: 'Karaoke Queue',
     autoHideMenuBar: true
   })
 
