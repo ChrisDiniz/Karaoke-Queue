@@ -2,25 +2,29 @@
 
 // ── Storage keys ──────────────────────────────────────
 const KEYS = {
-  QUEUE:   'kshake_queue',
-  HISTORY: 'kshake_history'
+  QUEUE:            'kshake_queue',
+  HISTORY:          'kshake_history',
+  PINNED_POSITIONS: 'kshake_pinned'
 }
 
 // ── State ─────────────────────────────────────────────
 let state = {
-  queue:   [],
-  history: []
+  queue:           [],
+  history:         [],
+  pinnedPositions: {}  // { [id]: targetIndex } — cards pinned by drag
 }
 
 // ── Persistence ───────────────────────────────────────
 function loadState() {
-  state.queue   = JSON.parse(localStorage.getItem(KEYS.QUEUE)   || '[]')
-  state.history = JSON.parse(localStorage.getItem(KEYS.HISTORY) || '[]')
+  state.queue           = JSON.parse(localStorage.getItem(KEYS.QUEUE)            || '[]')
+  state.history         = JSON.parse(localStorage.getItem(KEYS.HISTORY)          || '[]')
+  state.pinnedPositions = JSON.parse(localStorage.getItem(KEYS.PINNED_POSITIONS) || '{}')
 }
 
 function saveState() {
-  localStorage.setItem(KEYS.QUEUE,   JSON.stringify(state.queue))
-  localStorage.setItem(KEYS.HISTORY, JSON.stringify(state.history))
+  localStorage.setItem(KEYS.QUEUE,            JSON.stringify(state.queue))
+  localStorage.setItem(KEYS.HISTORY,          JSON.stringify(state.history))
+  localStorage.setItem(KEYS.PINNED_POSITIONS, JSON.stringify(state.pinnedPositions))
 }
 
 // ── Helpers ───────────────────────────────────────────
@@ -45,6 +49,17 @@ function formatDateTime(ts) {
 // Round = (entries from same table in history) + (entries from same table
 // in queue inserted before this one) + 1.
 // Lower round = higher priority. Ties broken by insertion time (FIFO).
+function adjustPinsAfterRemoval(removedId) {
+  const sorted     = sortedQueue()
+  const removedPos = sorted.findIndex(e => e.id === removedId)
+  if (removedPos === -1) return
+  Object.keys(state.pinnedPositions).forEach(id => {
+    if (id !== removedId && state.pinnedPositions[id] >= removedPos) {
+      state.pinnedPositions[id]--
+    }
+  })
+}
+
 function getRoundColor(round) {
   const colors = ['#10b981', '#06b6d4', '#f59e0b', '#f97316', '#ef4444']
   return colors[Math.min(round - 1, colors.length - 1)]
@@ -57,12 +72,27 @@ function getRound(entry) {
 }
 
 function sortedQueue() {
-  return [...state.queue].sort((a, b) => {
-    const roundA = getRound(a)
-    const roundB = getRound(b)
-    if (roundA !== roundB) return roundA - roundB
-    return a.insertedAt - b.insertedAt
-  })
+  const pinnedIds = Object.keys(state.pinnedPositions)
+
+  // Sort non-pinned cards by round-robin
+  const nonPinned = state.queue
+    .filter(e => !pinnedIds.includes(e.id))
+    .sort((a, b) => {
+      const rA = getRound(a), rB = getRound(b)
+      if (rA !== rB) return rA - rB
+      return a.insertedAt - b.insertedAt
+    })
+
+  // Build result: start with non-pinned, then inject pinned at their target positions
+  const result = [...nonPinned]
+  Object.entries(state.pinnedPositions)
+    .sort(([, a], [, b]) => a - b)
+    .forEach(([id, pos]) => {
+      const entry = state.queue.find(e => e.id === id)
+      if (entry) result.splice(Math.min(pos, result.length), 0, entry)
+    })
+
+  return result
 }
 
 // ── Actions ───────────────────────────────────────────
@@ -136,7 +166,9 @@ function removeEntry(id) {
   const entry = state.queue.find(e => e.id === id)
   if (!entry) return
   if (!confirm(`Remover ${entry.name} (Mesa ${entry.table}) da fila?`)) return
+  adjustPinsAfterRemoval(id)
   state.queue = state.queue.filter(e => e.id !== id)
+  delete state.pinnedPositions[id]
   saveState()
   renderQueue()
   showToast(`${entry.name} removido(a) da fila.`)
@@ -145,8 +177,10 @@ function removeEntry(id) {
 function markDone(id) {
   const idx = state.queue.findIndex(e => e.id === id)
   if (idx === -1) return
+  adjustPinsAfterRemoval(state.queue[idx].id)
   const [entry] = state.queue.splice(idx, 1)
   entry.doneAt = Date.now()
+  delete state.pinnedPositions[entry.id]
   state.history.unshift(entry)
   saveState()
   renderQueue()
@@ -182,23 +216,26 @@ function renderQueue() {
   list.innerHTML = sorted.map((entry, i) => {
     const posClass  = i === 0 ? 'first' : ''
     const cardClass = entry.checked ? 'queue-card is-checked' : 'queue-card'
-    const round     = getRound(entry)
+    const round    = getRound(entry)
+    const isPinned = state.pinnedPositions[entry.id] !== undefined
+    const pinClass = isPinned ? ' is-pinned' : ''
     return `
-      <div class="${cardClass}" data-id="${entry.id}">
+      <div class="${cardClass}${pinClass}" data-id="${entry.id}" draggable="true"
+        ondragstart="dragStart(event,'${entry.id}')" ondragend="dragEnd(event)"
+        ondragover="dragOver(event)" ondrop="drop(event,'${entry.id}')"
+        ondragleave="event.currentTarget.classList.remove('drag-over')"
+      >
         <div class="card-left-actions">
           <button class="btn-remove" onclick="removeEntry('${entry.id}')" title="Remover da fila">✕</button>
           <button class="btn-edit" onclick="openEdit('${entry.id}')" title="Editar registro">✏️</button>
         </div>
+        <div class="card-pin-col">${isPinned ? '<span class="card-pin-icon" title="Prioridade manual">📌</span>' : ''}</div>
         <div class="card-position-wrap">
           <span class="card-position ${posClass}">${i + 1}</span>
         </div>
         <div class="card-info">
           <div class="card-top">
             <div class="card-table-wrap">
-              <div class="card-inserted">
-                <span class="card-inserted-label">Inserido às</span>
-                <span class="card-inserted-time">${formatTime(entry.insertedAt)}</span>
-              </div>
               <span class="card-table">Mesa ${entry.table}</span>
               <span class="card-round" style="color:${getRoundColor(round)}">Rodada ${round}</span>
             </div>
@@ -207,6 +244,7 @@ function renderQueue() {
                 <span class="card-name">${escapeHtml(entry.name)}</span>
                 <span class="card-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
               </div>
+              <span class="card-inserted">&#9201; Inserido às ${formatTime(entry.insertedAt)}</span>
             </div>
           </div>
         </div>
@@ -250,6 +288,39 @@ function renderHistory() {
       </div>
     </div>`
   ).join('')
+}
+
+// ── Drag & drop ───────────────────────────────────────
+let draggedId = null
+
+function dragStart(event, id) {
+  draggedId = id
+  setTimeout(() => event.target.closest('.queue-card').classList.add('dragging'), 0)
+}
+
+function dragEnd(event) {
+  event.target.closest('.queue-card').classList.remove('dragging')
+  document.querySelectorAll('.queue-card').forEach(c => c.classList.remove('drag-over'))
+}
+
+function dragOver(event) {
+  event.preventDefault()
+  const card = event.target.closest('.queue-card')
+  if (card) {
+    document.querySelectorAll('.queue-card').forEach(c => c.classList.remove('drag-over'))
+    card.classList.add('drag-over')
+  }
+}
+
+function drop(event, targetId) {
+  event.preventDefault()
+  if (!draggedId || draggedId === targetId) return
+  const sorted = sortedQueue()
+  const toIdx  = sorted.findIndex(e => e.id === targetId)
+  state.pinnedPositions[draggedId] = toIdx
+  draggedId = null
+  saveState()
+  renderQueue()
 }
 
 // ── Batch add ─────────────────────────────────────────

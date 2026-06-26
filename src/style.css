@@ -246,7 +246,7 @@ input::placeholder {
   border-radius: var(--radius-lg);
   padding: 14px 16px;
   display: grid;
-  grid-template-columns: auto 48px 1fr auto auto;
+  grid-template-columns: auto 20px 48px 1fr auto auto;
   gap: 72px;
   align-items: center;
   transition: border-color 0.15s, background 0.15s;
@@ -258,8 +258,39 @@ input::placeholder {
   border-color: var(--border-light);
 }
 
+.queue-card[draggable="true"] {
+  cursor: grab;
+}
+
+.queue-card.dragging {
+  opacity: 0.35;
+  cursor: grabbing;
+}
+
+.queue-card.drag-over {
+  border-color: var(--accent);
+  background: var(--bg-card-hover);
+  transform: scale(1.01);
+}
+
 .queue-card.is-checked {
   border-left: 3px solid var(--success);
+}
+
+.queue-card.is-pinned {
+  border-left: 3px solid var(--accent);
+  background: linear-gradient(90deg, #2a1a4a 0%, var(--bg-card) 60%);
+}
+
+.card-pin-col {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card-pin-icon {
+  font-size: 0.85rem;
+  line-height: 1;
 }
 
 @keyframes slideIn {
@@ -350,22 +381,8 @@ input::placeholder {
 }
 
 .card-inserted {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.card-inserted-label {
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
-}
-
-.card-inserted-time {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-muted);
 }
 
 .card-actions {
