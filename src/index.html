@@ -11,11 +11,22 @@
   <header class="app-header">
     <div class="header-left">
       <span class="header-icon">🎤</span>
-      <h1>Karaoke Queue</h1>
+      <div class="app-title-wrap">
+        <h1><span id="app-name">Karaoke Queue</span></h1>
+        <button id="btn-edit-name" class="btn-edit-name" title="Editar nome">✏️</button>
+        <div id="name-popover" class="name-popover hidden">
+          <input id="name-popover-input" type="text" class="name-popover-input" maxlength="30" />
+          <button id="btn-name-save" class="btn-name-action btn-name-save" title="Salvar">✓</button>
+          <button id="btn-name-cancel" class="btn-name-action btn-name-cancel" title="Cancelar">✕</button>
+        </div>
+      </div>
     </div>
     <div class="header-right">
       <span id="clock" class="clock"></span>
-      <button id="btn-new-session" class="btn btn-warning">↺ Novo Expediente</button>
+      <button id="btn-new-session" class="btn btn-warning btn-session">
+        <span>↺ Novo Expediente</span>
+        <span id="session-start-info" class="session-start-info"></span>
+      </button>
       <button id="btn-end-session" class="btn btn-outline">⏹ Encerrar Expediente</button>
       <button id="btn-stats" class="btn btn-outline">Estatísticas</button>
       <button id="btn-history" class="btn btn-outline">Histórico</button>

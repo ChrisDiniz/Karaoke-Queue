@@ -2,6 +2,7 @@
 
 // ── Storage keys ──────────────────────────────────────
 const KEYS = {
+  APP_NAME:           'kshake_app_name',
   QUEUE:              'kshake_queue',
   HISTORY:            'kshake_history',
   SESSIONS:           'kshake_sessions',
@@ -83,6 +84,16 @@ function formatSessionLabel(session) {
 
 function currentSession() {
   return state.sessions.find(s => s.id === state.currentSessionId)
+}
+
+function updateSessionStartInfo() {
+  const el = document.getElementById('session-start-info')
+  if (!el) return
+  const session = currentSession()
+  if (!session) { el.textContent = ''; return }
+  const time = new Date(session.startedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  const date = new Date(session.startedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+  el.textContent = `Iniciado ${date} às ${time}`
 }
 
 function sessionRunningTime(session) {
@@ -323,6 +334,7 @@ function resetSession(manual = false) {
   saveState()
   renderQueue()
   renderHistory()
+  updateSessionStartInfo()
   showToast(manual ? 'Novo expediente iniciado!' : 'Novo expediente iniciado automaticamente às 18:00.')
 }
 
@@ -818,6 +830,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadState()
   renderQueue()
   updateClock()
+  updateSessionStartInfo()
   setInterval(updateClock, 1000)
 
   document.getElementById('form-entry').addEventListener('submit', e => {
@@ -924,6 +937,52 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 
   setInterval(checkAutoReset, 60000)
+
+  // ── Editable app name ──────────────────────────────
+  const appNameEl  = document.getElementById('app-name')
+  const popover    = document.getElementById('name-popover')
+  const popInput   = document.getElementById('name-popover-input')
+  const btnEdit    = document.getElementById('btn-edit-name')
+  const btnSave    = document.getElementById('btn-name-save')
+  const btnCancel  = document.getElementById('btn-name-cancel')
+
+  let savedName = localStorage.getItem(KEYS.APP_NAME)
+  if (savedName && !savedName.includes(' ')) {
+    // migrate old format that stored only the suffix (e.g. "Queue")
+    savedName = `Karaoke ${savedName}`
+    localStorage.setItem(KEYS.APP_NAME, savedName)
+  }
+  if (savedName) {
+    appNameEl.textContent = savedName
+    document.title = savedName
+  }
+
+  function openNamePopover() {
+    popInput.value = appNameEl.textContent
+    popover.classList.remove('hidden')
+    popInput.focus()
+    popInput.select()
+  }
+
+  function saveAppName() {
+    const val = popInput.value.trim() || 'Karaoke Queue'
+    appNameEl.textContent = val
+    document.title = val
+    localStorage.setItem(KEYS.APP_NAME, val)
+    popover.classList.add('hidden')
+  }
+
+  function cancelNameEdit() {
+    popover.classList.add('hidden')
+  }
+
+  btnEdit.addEventListener('click', openNamePopover)
+  btnSave.addEventListener('click', saveAppName)
+  btnCancel.addEventListener('click', cancelNameEdit)
+  popInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  { e.preventDefault(); saveAppName() }
+    if (e.key === 'Escape') cancelNameEdit()
+  })
 
   // Expose state to main process for close event handling
   window.__kqueue = {

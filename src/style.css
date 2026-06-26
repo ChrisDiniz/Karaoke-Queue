@@ -67,6 +67,96 @@ body {
   letter-spacing: 0.5px;
 }
 
+.app-title-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-edit-name {
+  background: transparent;
+  border: none;
+  font-size: 0.85rem;
+  cursor: pointer;
+  opacity: 0.45;
+  padding: 2px 4px;
+  border-radius: var(--radius);
+  transition: opacity 0.15s, background 0.15s;
+  line-height: 1;
+}
+
+.btn-edit-name:hover {
+  opacity: 1;
+  background: var(--bg-card-hover);
+}
+
+.name-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: var(--shadow);
+  z-index: 50;
+  animation: slideIn 0.15s ease;
+}
+
+.name-popover.hidden {
+  display: none;
+}
+
+.name-popover-input {
+  background: #1a1a2e;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 10px;
+  color: #e2e8f0;
+  font-size: 1rem;
+  font-weight: 600;
+  outline: none;
+  width: 260px;
+  color-scheme: normal;
+}
+
+.name-popover-input:focus {
+  border-color: var(--accent);
+}
+
+.btn-name-action {
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 6px 10px;
+  transition: background 0.15s;
+}
+
+.btn-name-save {
+  background: var(--success);
+  color: #fff;
+}
+
+.btn-name-save:hover {
+  background: #059669;
+}
+
+.btn-name-cancel {
+  background: var(--bg-card-hover);
+  color: var(--text-muted);
+}
+
+.btn-name-cancel:hover {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
 .header-right {
   display: flex;
   align-items: center;
@@ -185,6 +275,21 @@ input::placeholder {
   color: var(--warning);
 }
 .btn-warning:hover { background: rgba(245,158,11,0.1); }
+
+.btn-session {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  line-height: 1.2;
+}
+
+.session-start-info {
+  font-size: 0.68rem;
+  font-weight: 400;
+  opacity: 0.75;
+  white-space: nowrap;
+}
 
 .session-select {
   background: var(--bg-base);
