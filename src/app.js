@@ -984,6 +984,23 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Escape') cancelNameEdit()
   })
 
+  // ── Theme toggle ───────────────────────────────────
+  const btnThemeToggle = document.getElementById('btn-theme-toggle')
+  let currentTheme = localStorage.getItem('kshake_theme') || 'dark'
+
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme)
+    btnThemeToggle.textContent = theme === 'dark' ? '☀️' : '🌙'
+    currentTheme = theme
+    localStorage.setItem('kshake_theme', theme)
+  }
+
+  applyTheme(currentTheme)
+
+  btnThemeToggle.addEventListener('click', () => {
+    applyTheme(currentTheme === 'dark' ? 'light' : 'dark')
+  })
+
   // Expose state to main process for close event handling
   window.__kqueue = {
     queueLength:      () => state.queue.length,
