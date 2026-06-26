@@ -85,11 +85,25 @@ function currentSession() {
   return state.sessions.find(s => s.id === state.currentSessionId)
 }
 
+function sessionRunningTime(session) {
+  const mins  = Math.floor((Date.now() - session.startedAt) / 60000)
+  const hours = Math.floor(mins / 60)
+  const rest  = mins % 60
+  return hours > 0 ? `${hours}h ${rest}min` : `${mins}min`
+}
+
 function endCurrentSession() {
-  if (!confirm('Encerrar o expediente atual? O horário de encerramento será registrado.')) return
   const session = currentSession()
   if (!session) return
   if (session.endedAt) { showToast('Este expediente já foi encerrado.'); return }
+
+  const startLabel = new Date(session.startedAt).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+  })
+  const running = sessionRunningTime(session)
+  const msg = `Expediente iniciado em ${startLabel}\nem andamento há ${running}.\n\nDeseja registrar o encerramento agora?`
+
+  if (!confirm(msg)) return
   session.endedAt = Date.now()
   saveState()
   const time = new Date(session.endedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
@@ -280,10 +294,19 @@ function clearHistory() {
 
 // ── Session reset ──────────────────────────────────────
 function resetSession(manual = false) {
-  const msg = manual
-    ? 'Iniciar novo expediente? A fila será limpa.'
-    : `São 18:00 — iniciando novo expediente automaticamente.`
-  if (manual && !confirm(msg)) return
+  if (manual) {
+    const cur = currentSession()
+    let msg = 'Deseja iniciar um novo expediente? A fila será limpa.'
+    if (cur) {
+      const startLabel = new Date(cur.startedAt).toLocaleString('pt-BR', {
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+      })
+      const running = sessionRunningTime(cur)
+      const status  = cur.endedAt ? 'encerrado' : `em andamento há ${running}`
+      msg = `O expediente atual foi iniciado em ${startLabel} (${status}).\n\nDeseja iniciar um novo expediente? A fila será limpa.`
+    }
+    if (!confirm(msg)) return
+  }
 
   // End current session silently
   const cur = currentSession()
@@ -851,6 +874,19 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-clear-history').addEventListener('click', clearHistory)
   document.getElementById('btn-new-session').addEventListener('click', () => resetSession(true))
   document.getElementById('btn-end-session').addEventListener('click', endCurrentSession)
+  document.getElementById('btn-clear-date').addEventListener('click', () => {
+    statsFilter.filterDate = ''
+    document.getElementById('stats-filter-date').value = ''
+    renderStats()
+  })
+
+  document.getElementById('btn-clear-period').addEventListener('click', () => {
+    statsFilter.filterFrom = ''; statsFilter.filterTo = ''
+    document.getElementById('stats-filter-from').value = ''
+    document.getElementById('stats-filter-to').value   = ''
+    renderStats()
+  })
+
   document.getElementById('stats-filter-date').addEventListener('change', e => {
     statsFilter.filterDate = e.target.value
     if (e.target.value) {
@@ -888,4 +924,14 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 
   setInterval(checkAutoReset, 60000)
+
+  // Expose state to main process for close event handling
+  window.__kqueue = {
+    queueLength:      () => state.queue.length,
+    sessionEnded:     () => { const s = currentSession(); return !s || !!s.endedAt },
+    endSessionSilent: () => {
+      const s = currentSession()
+      if (s && !s.endedAt) { s.endedAt = Date.now(); saveState() }
+    }
+  }
 })

@@ -25,6 +25,10 @@
   padding: 0;
 }
 
+html {
+  color-scheme: dark;
+}
+
 body {
   font-family: 'Segoe UI', system-ui, sans-serif;
   background: var(--bg-base);
@@ -942,10 +946,44 @@ input::placeholder {
   border-color: var(--accent);
 }
 
+.stats-date-input::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.stats-date-input::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+.stats-date-with-clear {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .stats-period-inputs {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.btn-clear-date {
+  background: transparent;
+  border: 1px solid var(--border-light);
+  color: var(--text-dim);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 6px 8px;
+  transition: all 0.15s;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.btn-clear-date:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .stats-period-dash {

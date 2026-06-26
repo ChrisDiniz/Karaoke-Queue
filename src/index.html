@@ -96,7 +96,10 @@
       <div class="stats-date-row">
         <div class="stats-date-group">
           <label class="stats-range-label">Data</label>
-          <input type="date" id="stats-filter-date" class="stats-date-input" />
+          <div class="stats-date-with-clear">
+            <input type="date" id="stats-filter-date" class="stats-date-input" />
+            <button class="btn-clear-date" id="btn-clear-date" title="Limpar">✕</button>
+          </div>
         </div>
         <div class="stats-date-sep">ou</div>
         <div class="stats-date-group stats-date-group--period">
@@ -105,6 +108,7 @@
             <input type="date" id="stats-filter-from" class="stats-date-input" />
             <span class="stats-period-dash">—</span>
             <input type="date" id="stats-filter-to" class="stats-date-input" />
+            <button class="btn-clear-date" id="btn-clear-period" title="Limpar">✕</button>
           </div>
         </div>
       </div>
