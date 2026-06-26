@@ -195,14 +195,14 @@ function renderQueue() {
         <div class="card-info">
           <div class="card-top">
             <div class="card-table-wrap">
-              <span class="card-table">Mesa ${entry.table}</span>
-              <span class="card-round" style="color:${getRoundColor(round)}">Rodada ${round}</span>
-            </div>
-            <div class="card-info-main">
               <div class="card-inserted">
                 <span class="card-inserted-label">Inserido às</span>
                 <span class="card-inserted-time">${formatTime(entry.insertedAt)}</span>
               </div>
+              <span class="card-table">Mesa ${entry.table}</span>
+              <span class="card-round" style="color:${getRoundColor(round)}">Rodada ${round}</span>
+            </div>
+            <div class="card-info-main">
               <div class="card-info-top">
                 <span class="card-name">${escapeHtml(entry.name)}</span>
                 <span class="card-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
