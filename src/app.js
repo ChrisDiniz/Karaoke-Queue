@@ -2,13 +2,15 @@
 
 // ── Storage keys ──────────────────────────────────────
 const KEYS = {
-  QUEUE:            'kshake_queue',
-  HISTORY:          'kshake_history',
-  PINNED_POSITIONS: 'kshake_pinned',
-  LAST_RESET:       'kshake_last_reset'
+  QUEUE:              'kshake_queue',
+  HISTORY:            'kshake_history',
+  SESSIONS:           'kshake_sessions',
+  CURRENT_SESSION_ID: 'kshake_current_session',
+  PINNED_POSITIONS:   'kshake_pinned',
+  LAST_RESET:         'kshake_last_reset'
 }
 
-// ── History filter state (in-memory only) ─────────────
+// ── Filter state (in-memory only) ─────────────────────
 let historyFilter = {
   search: '',
   table:  null,
@@ -16,28 +18,95 @@ let historyFilter = {
 }
 
 let statsFilter = {
-  name:  '',
-  table: ''
+  name:       '',
+  table:      '',
+  filterDate: '',  // single date "YYYY-MM-DD"
+  filterFrom: '',  // period start
+  filterTo:   ''   // period end
 }
 
 // ── State ─────────────────────────────────────────────
 let state = {
-  queue:           [],
-  history:         [],
-  pinnedPositions: {}  // { [id]: targetIndex } — cards pinned by drag
+  queue:            [],
+  history:          [],   // permanent — never cleared
+  sessions:         [],
+  currentSessionId: null,
+  pinnedPositions:  {}
 }
 
 // ── Persistence ───────────────────────────────────────
 function loadState() {
-  state.queue           = JSON.parse(localStorage.getItem(KEYS.QUEUE)            || '[]')
-  state.history         = JSON.parse(localStorage.getItem(KEYS.HISTORY)          || '[]')
-  state.pinnedPositions = JSON.parse(localStorage.getItem(KEYS.PINNED_POSITIONS) || '{}')
+  state.queue            = JSON.parse(localStorage.getItem(KEYS.QUEUE)              || '[]')
+  state.history          = JSON.parse(localStorage.getItem(KEYS.HISTORY)            || '[]')
+  state.sessions         = JSON.parse(localStorage.getItem(KEYS.SESSIONS)           || '[]')
+  state.currentSessionId = localStorage.getItem(KEYS.CURRENT_SESSION_ID)            || null
+  state.pinnedPositions  = JSON.parse(localStorage.getItem(KEYS.PINNED_POSITIONS)   || '{}')
+
+  // First run or migration: create a session if none exists
+  if (state.sessions.length === 0) {
+    const session = createSession()
+    // Tag any existing history entries with this session
+    state.history.forEach(e => { if (!e.sessionId) e.sessionId = session.id })
+  } else if (!state.currentSessionId) {
+    state.currentSessionId = state.sessions[state.sessions.length - 1].id
+  }
 }
 
 function saveState() {
-  localStorage.setItem(KEYS.QUEUE,            JSON.stringify(state.queue))
-  localStorage.setItem(KEYS.HISTORY,          JSON.stringify(state.history))
-  localStorage.setItem(KEYS.PINNED_POSITIONS, JSON.stringify(state.pinnedPositions))
+  localStorage.setItem(KEYS.QUEUE,              JSON.stringify(state.queue))
+  localStorage.setItem(KEYS.HISTORY,            JSON.stringify(state.history))
+  localStorage.setItem(KEYS.SESSIONS,           JSON.stringify(state.sessions))
+  localStorage.setItem(KEYS.CURRENT_SESSION_ID, state.currentSessionId || '')
+  localStorage.setItem(KEYS.PINNED_POSITIONS,   JSON.stringify(state.pinnedPositions))
+}
+
+// ── Session management ────────────────────────────────
+function createSession() {
+  const session = { id: `s-${Date.now()}`, startedAt: Date.now(), endedAt: null }
+  state.sessions.push(session)
+  state.currentSessionId = session.id
+  return session
+}
+
+function formatSessionLabel(session) {
+  const start   = new Date(session.startedAt)
+  const dateStr = start.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  const timeStr = start.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  let label = `Expediente ${dateStr} — ${timeStr}`
+  if (session.endedAt) {
+    label += ` até ${new Date(session.endedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+  } else if (session.id === state.currentSessionId) {
+    label += ' (em andamento)'
+  }
+  return label
+}
+
+function currentSession() {
+  return state.sessions.find(s => s.id === state.currentSessionId)
+}
+
+function endCurrentSession() {
+  if (!confirm('Encerrar o expediente atual? O horário de encerramento será registrado.')) return
+  const session = currentSession()
+  if (!session) return
+  if (session.endedAt) { showToast('Este expediente já foi encerrado.'); return }
+  session.endedAt = Date.now()
+  saveState()
+  const time = new Date(session.endedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  showToast(`Expediente encerrado às ${time}.`)
+}
+
+function getActiveSessionHistory() {
+  const sid = historyFilter.sessionId || state.currentSessionId
+  return state.history.filter(e => e.sessionId === sid)
+}
+
+
+function renderSessionSelector(currentId, onChangeFn) {
+  const sorted = [...state.sessions].sort((a, b) => b.startedAt - a.startedAt)
+  return `<select class="session-select" onchange="${onChangeFn}(this.value)">
+    ${sorted.map(s => `<option value="${s.id}" ${s.id === currentId ? 'selected' : ''}>${formatSessionLabel(s)}</option>`).join('')}
+  </select>`
 }
 
 // ── Helpers ───────────────────────────────────────────
@@ -79,7 +148,7 @@ function getRoundColor(round) {
 }
 
 function getRound(entry) {
-  const historySings  = state.history.filter(h => h.table === entry.table).length
+  const historySings  = state.history.filter(h => h.table === entry.table && h.sessionId === state.currentSessionId).length
   const queueBefore   = state.queue.filter(q => q.table === entry.table && q.insertedAt < entry.insertedAt).length
   return historySings + queueBefore + 1
 }
@@ -117,7 +186,8 @@ function addEntry(name, songNumber, songNumber2, table) {
     songNumber2: songNumber2.trim(),
     table:       String(table).trim(),
     insertedAt:  Date.now(),
-    checked:     false
+    checked:     false,
+    sessionId:   state.currentSessionId
   }
   state.queue.push(entry)
   saveState()
@@ -202,8 +272,8 @@ function markDone(id) {
 }
 
 function clearHistory() {
-  if (!confirm('Limpar todo o histórico? Esta ação não pode ser desfeita.')) return
-  state.history = []
+  if (!confirm('Limpar o histórico deste expediente? Esta ação não pode ser desfeita.')) return
+  state.history = state.history.filter(e => e.sessionId !== state.currentSessionId)
   saveState()
   renderHistory()
 }
@@ -211,18 +281,26 @@ function clearHistory() {
 // ── Session reset ──────────────────────────────────────
 function resetSession(manual = false) {
   const msg = manual
-    ? 'Iniciar nova sessão? Fila e histórico serão limpos.'
-    : `São 18:00 — iniciar nova sessão automaticamente?`
+    ? 'Iniciar novo expediente? A fila será limpa.'
+    : `São 18:00 — iniciando novo expediente automaticamente.`
   if (manual && !confirm(msg)) return
+
+  // End current session silently
+  const cur = currentSession()
+  if (cur && !cur.endedAt) cur.endedAt = Date.now()
+
+  // Start new session
+  createSession()
+
   state.queue           = []
-  state.history         = []
   state.pinnedPositions = {}
-  historyFilter         = { search: '', table: null, order: 'desc' }
+  historyFilter         = { search: '', table: null, order: 'desc', sessionId: null }
+  statsFilter           = { name: '', table: '', filterDate: '', filterFrom: '', filterTo: '' }
   localStorage.setItem(KEYS.LAST_RESET, new Date().toDateString())
   saveState()
   renderQueue()
   renderHistory()
-  showToast(manual ? 'Nova sessão iniciada!' : 'Sessão reiniciada automaticamente às 18:00.')
+  showToast(manual ? 'Novo expediente iniciado!' : 'Novo expediente iniciado automaticamente às 18:00.')
 }
 
 function checkAutoReset() {
@@ -235,7 +313,7 @@ function checkAutoReset() {
 
 // ── History filters ────────────────────────────────────
 function getFilteredHistory() {
-  let result = [...state.history]
+  let result = state.history.filter(e => e.sessionId === state.currentSessionId)
   if (historyFilter.search) {
     const s = historyFilter.search.toLowerCase()
     result = result.filter(e => e.name.toLowerCase().includes(s))
@@ -243,9 +321,7 @@ function getFilteredHistory() {
   if (historyFilter.table) {
     result = result.filter(e => e.table === historyFilter.table)
   }
-  if (historyFilter.order === 'asc') {
-    result.reverse()
-  }
+  if (historyFilter.order === 'asc') result.reverse()
   return result
 }
 
@@ -322,7 +398,7 @@ function renderHistory() {
   const filtered = getFilteredHistory()
 
   // Render table filter buttons
-  const tables     = [...new Set(state.history.map(e => e.table))].sort((a, b) => Number(a) - Number(b))
+  const tables = [...new Set(state.history.filter(e => e.sessionId === state.currentSessionId).map(e => e.table))].sort((a, b) => Number(a) - Number(b))
   const tableFilters = document.getElementById('history-table-filters')
   if (tableFilters) {
     tableFilters.innerHTML = tables.map(t => `
@@ -372,7 +448,7 @@ function setTableFilter(table) {
 
 // ── Statistics ────────────────────────────────────────
 function openStats() {
-  statsFilter = { name: '', table: '' }
+  statsFilter = { name: '', table: '', filterDate: '', filterFrom: '', filterTo: '' }
   document.getElementById('stats-search-name').value  = ''
   document.getElementById('stats-search-table').value = ''
   document.getElementById('stats-panel').classList.remove('hidden')
@@ -385,9 +461,31 @@ function closeStats() {
   document.getElementById('overlay').classList.add('hidden')
 }
 
+function sessionDateStr(session) {
+  return new Date(session.startedAt).toISOString().slice(0, 10)
+}
+
+function getSessionsForStats() {
+  if (statsFilter.filterDate) {
+    return state.sessions
+      .filter(s => sessionDateStr(s) === statsFilter.filterDate)
+      .map(s => s.id)
+  }
+  if (statsFilter.filterFrom || statsFilter.filterTo) {
+    const from = statsFilter.filterFrom || '0000-01-01'
+    const to   = statsFilter.filterTo   || '9999-12-31'
+    return state.sessions
+      .filter(s => { const d = sessionDateStr(s); return d >= from && d <= to })
+      .map(s => s.id)
+  }
+  return [state.currentSessionId]
+}
+
 function renderStats() {
   const body = document.getElementById('stats-body')
-  let h = [...state.history]
+
+  const sessionIds = getSessionsForStats()
+  let h = state.history.filter(e => sessionIds.includes(e.sessionId))
   if (statsFilter.name)  h = h.filter(e => e.name.toLowerCase().includes(statsFilter.name.toLowerCase()))
   if (statsFilter.table) h = h.filter(e => e.table === statsFilter.table)
 
@@ -752,6 +850,32 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('overlay').addEventListener('click', () => { closeHistory(); closeStats() })
   document.getElementById('btn-clear-history').addEventListener('click', clearHistory)
   document.getElementById('btn-new-session').addEventListener('click', () => resetSession(true))
+  document.getElementById('btn-end-session').addEventListener('click', endCurrentSession)
+  document.getElementById('stats-filter-date').addEventListener('change', e => {
+    statsFilter.filterDate = e.target.value
+    if (e.target.value) {
+      statsFilter.filterFrom = ''; statsFilter.filterTo = ''
+      document.getElementById('stats-filter-from').value = ''
+      document.getElementById('stats-filter-to').value   = ''
+    }
+    renderStats()
+  })
+  document.getElementById('stats-filter-from').addEventListener('change', e => {
+    statsFilter.filterFrom = e.target.value
+    if (e.target.value) {
+      statsFilter.filterDate = ''
+      document.getElementById('stats-filter-date').value = ''
+    }
+    renderStats()
+  })
+  document.getElementById('stats-filter-to').addEventListener('change', e => {
+    statsFilter.filterTo = e.target.value
+    if (e.target.value) {
+      statsFilter.filterDate = ''
+      document.getElementById('stats-filter-date').value = ''
+    }
+    renderStats()
+  })
 
   document.getElementById('history-search').addEventListener('input', e => {
     historyFilter.search = e.target.value

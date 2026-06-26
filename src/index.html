@@ -15,7 +15,8 @@
     </div>
     <div class="header-right">
       <span id="clock" class="clock"></span>
-      <button id="btn-new-session" class="btn btn-warning">↺ Nova Sessão</button>
+      <button id="btn-new-session" class="btn btn-warning">↺ Novo Expediente</button>
+      <button id="btn-end-session" class="btn btn-outline">⏹ Encerrar Expediente</button>
       <button id="btn-stats" class="btn btn-outline">Estatísticas</button>
       <button id="btn-history" class="btn btn-outline">Histórico</button>
     </div>
@@ -92,6 +93,21 @@
       <button id="btn-close-stats" class="btn btn-icon">✕</button>
     </div>
     <div class="stats-filters">
+      <div class="stats-date-row">
+        <div class="stats-date-group">
+          <label class="stats-range-label">Data</label>
+          <input type="date" id="stats-filter-date" class="stats-date-input" />
+        </div>
+        <div class="stats-date-sep">ou</div>
+        <div class="stats-date-group stats-date-group--period">
+          <label class="stats-range-label">Período</label>
+          <div class="stats-period-inputs">
+            <input type="date" id="stats-filter-from" class="stats-date-input" />
+            <span class="stats-period-dash">—</span>
+            <input type="date" id="stats-filter-to" class="stats-date-input" />
+          </div>
+        </div>
+      </div>
       <input id="stats-search-name" type="text" placeholder="Buscar por cantor..." class="history-search-input" />
       <input id="stats-search-table" type="number" placeholder="Mesa..." class="history-search-input stats-search-table" min="1" />
     </div>
