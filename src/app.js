@@ -166,9 +166,19 @@ function lastSungTable() {
   return sung.reduce((a, b) => (b.doneAt > a.doneAt ? b : a)).table
 }
 
-// Safety net: an entry waiting longer than this is pushed to the front so
-// nobody is forgotten in a long queue. Dormant on a normal night.
-const MAX_WAIT_MIN = 40
+// Safety-net threshold, adaptive to how busy the queue is. A full rotation
+// cycle ≈ (distinct tables waiting) × MIN_PER_TURN. The boost must fire only
+// ABOVE one cycle, or it triggers constantly and degrades to plain FIFO — so
+// the threshold scales with the crowd: small queue → short (quick rescue),
+// big queue → long (stays dormant). WAIT_MARGIN gives headroom above a cycle.
+const MIN_PER_TURN   = 6    // estimated minutes a table occupies (up to 2 songs)
+const WAIT_MARGIN    = 1.5  // boost only after ~1.5 full rotations
+const MIN_WAIT_FLOOR = 30   // never below this, for tiny queues
+
+function maxWaitMinutes() {
+  const distinct = new Set(state.queue.map(e => e.table)).size
+  return Math.max(MIN_WAIT_FLOOR, Math.round(WAIT_MARGIN * distinct * MIN_PER_TURN))
+}
 
 // Only sings within this recent window count toward a table's priority weight,
 // so a regular that sang a lot earlier in the night isn't penalised forever —
@@ -180,11 +190,12 @@ const RECENT_WINDOW_MIN = 90
 // time this entry sings = (recent sings in the window) + (its own entries
 // waiting ahead). Tables that sang less recently go first, so in a busy queue
 // nobody racks up turns just by arriving early or re-adding fast. Ties broken
-// by insertedAt (FIFO). Overdue entries (waiting > MAX_WAIT_MIN) jump ahead of
-// everyone, longest wait first, so nobody is ever forgotten.
+// by insertedAt (FIFO). Overdue entries (waiting > the adaptive threshold)
+// jump ahead of everyone, longest wait first, so nobody is ever forgotten.
 function fairOrder(entries, seedLastTable) {
   const now         = Date.now()
-  const overdue     = e => (now - e.insertedAt) >= MAX_WAIT_MIN * 60000
+  const maxWaitMs   = maxWaitMinutes() * 60000
+  const overdue     = e => (now - e.insertedAt) >= maxWaitMs
   const windowStart = now - RECENT_WINDOW_MIN * 60000
   const sungByTable = {}
   sungEntries().forEach(e => {
@@ -659,13 +670,13 @@ function renderQueue() {
   // ── Próximo recomendado
   if (next) {
     const pinned       = state.priorityIds.includes(next.id)
-    const isOverdue    = (Date.now() - next.insertedAt) >= MAX_WAIT_MIN * 60000
+    const isOverdue    = (Date.now() - next.insertedAt) >= maxWaitMinutes() * 60000
     const minPending   = Math.min(...[next, ...waiting].map(e => e.insertedAt))
     const skipped      = !pinned && current && next.insertedAt > minPending
     const reason       = pinned
       ? '📌 Fixado manualmente'
       : isOverdue
-        ? `⏰ Esperando há mais de ${MAX_WAIT_MIN} min`
+        ? `⏰ Esperando há mais de ${maxWaitMinutes()} min`
         : skipped
           ? 'ⓘ Priorizado para girar a fila (mesas que cantaram menos primeiro)'
           : ''
