@@ -359,6 +359,141 @@ function closeStartupModal() {
   document.getElementById('startup-modal').classList.add('hidden')
 }
 
+// ── Table detail modal ────────────────────────────────────
+function openTableModal(table) {
+  const entries = state.history.filter(e =>
+    e.sessionId === state.currentSessionId && e.table === table
+  )
+  if (entries.length === 0) return
+
+  // Summary stats
+  const totalSongs    = entries.reduce((a, e) => a + 1 + (e.songNumber2 ? 1 : 0), 0)
+  const uniqueSingers = [...new Set(entries.map(e => e.name))]
+  const waits         = entries.map(e => e.doneAt - e.insertedAt).filter(Boolean)
+  const avgWaitMin    = waits.length ? Math.round(waits.reduce((a, b) => a + b, 0) / waits.length / 60000) : 0
+  const timestamps    = entries.flatMap(e => [e.insertedAt, e.doneAt]).filter(Boolean)
+  const firstTime     = Math.min(...timestamps)
+  const lastTime      = Math.max(...timestamps)
+  const durMins       = Math.round((lastTime - firstTime) / 60000)
+  const duration      = durMins < 60 ? `${durMins}min` : `${Math.floor(durMins / 60)}h ${durMins % 60}min`
+  const currentRound  = entries.length + 1
+
+  // Singers grouped
+  const singerMap = {}
+  entries.forEach(e => {
+    if (!singerMap[e.name]) singerMap[e.name] = []
+    singerMap[e.name].push(e)
+  })
+  const singers = Object.entries(singerMap).sort((a, b) => b[1].length - a[1].length)
+
+  // Songs
+  const songCounts = {}
+  entries.forEach(e => {
+    [e.songNumber, e.songNumber2].filter(Boolean).forEach(s => {
+      songCounts[s] = (songCounts[s] || 0) + 1
+    })
+  })
+  const topSongs = Object.entries(songCounts).sort((a, b) => b[1] - a[1])
+
+  document.getElementById('table-modal-title').textContent = `Mesa ${table}`
+  document.getElementById('table-modal-body').innerHTML = `
+    <div class="tmodal-section">
+      <h3 class="tmodal-section-title">Resumo</h3>
+      <div class="tmodal-summary">
+        <div class="tmodal-stat">
+          <span class="tmodal-stat-value">${totalSongs}</span>
+          <span class="tmodal-stat-label">Músicas</span>
+        </div>
+        <div class="tmodal-stat">
+          <span class="tmodal-stat-value">${uniqueSingers.length}</span>
+          <span class="tmodal-stat-label">Cantores</span>
+        </div>
+        <div class="tmodal-stat">
+          <span class="tmodal-stat-value">${duration}</span>
+          <span class="tmodal-stat-label">Duração</span>
+        </div>
+        <div class="tmodal-stat">
+          <span class="tmodal-stat-value">${avgWaitMin}min</span>
+          <span class="tmodal-stat-label">Espera média</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tmodal-section">
+      <h3 class="tmodal-section-title">Atividade</h3>
+      <div class="tmodal-activity">
+        <div class="tmodal-activity-row">
+          <span class="tmodal-activity-label">Rodada atual</span>
+          <span class="tmodal-activity-value">${currentRound}ª rodada</span>
+        </div>
+        <div class="tmodal-activity-row">
+          <span class="tmodal-activity-label">Primeira inserção</span>
+          <span class="tmodal-activity-value">${formatTime(firstTime)}</span>
+        </div>
+        <div class="tmodal-activity-row">
+          <span class="tmodal-activity-label">Último canto</span>
+          <span class="tmodal-activity-value">${formatTime(lastTime)}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tmodal-section">
+      <h3 class="tmodal-section-title">Cantores</h3>
+      <div class="tmodal-singers">
+        ${singers.map(([name, entries]) => `
+          <div class="tmodal-singer">
+            <div class="tmodal-singer-header">
+              <span class="tmodal-singer-name">${escapeHtml(name)}</span>
+              <span class="tmodal-singer-count">${entries.reduce((a, e) => a + 1 + (e.songNumber2 ? 1 : 0), 0)} músicas</span>
+            </div>
+            ${entries.map(e => `
+              <div class="tmodal-singer-entry">
+                <div class="tmodal-entry-songs">
+                  <span class="tmodal-entry-song">🎵 ${escapeHtml(e.songNumber)}</span>
+                  ${e.songNumber2 ? `<span class="tmodal-entry-song">🎵 ${escapeHtml(e.songNumber2)}</span>` : ''}
+                </div>
+                <div class="tmodal-entry-times">
+                  <span class="tmodal-entry-time"><span class="tmodal-entry-time-label">Inserido</span> ${formatTime(e.insertedAt)}</span>
+                  <span class="tmodal-entry-arrow">→</span>
+                  <span class="tmodal-entry-time"><span class="tmodal-entry-time-label">Cantou</span> ${formatTime(e.doneAt)}</span>
+                </div>
+              </div>`).join('')}
+          </div>`).join('')}
+      </div>
+    </div>
+
+    <div class="tmodal-section">
+      <h3 class="tmodal-section-title">Músicas pedidas</h3>
+      <div class="tmodal-songs">
+        ${topSongs.map(([song, count]) => `
+          <span class="tmodal-song-badge">#${escapeHtml(song)}${count > 1 ? ` ×${count}` : ''}</span>
+        `).join('')}
+      </div>
+    </div>`
+
+  document.getElementById('btn-reset-table').onclick = () => resetTable(table)
+  document.getElementById('table-modal').classList.remove('hidden')
+  document.getElementById('overlay').classList.remove('hidden')
+}
+
+function closeTableModal() {
+  document.getElementById('table-modal').classList.add('hidden')
+  document.getElementById('overlay').classList.add('hidden')
+}
+
+function resetTable(table) {
+  if (!confirm(`Resetar Mesa ${table}? O histórico desta mesa na sessão atual será apagado.`)) return
+  state.history = state.history.filter(e =>
+    !(e.sessionId === state.currentSessionId && e.table === table)
+  )
+  historyFilter.table = null
+  saveState()
+  renderQueue()
+  renderHistory()
+  closeTableModal()
+  showToast(`Mesa ${table} resetada.`)
+}
+
 // ── History filters ────────────────────────────────────
 function getFilteredHistory() {
   let result = state.history.filter(e => e.sessionId === state.currentSessionId)
@@ -474,19 +609,45 @@ function renderHistory() {
     return
   }
 
-  list.innerHTML = filtered.map(entry => `
+  // Compute song counts and last sang time per singer, and counts per table
+  const sessionHistory = state.history.filter(e => e.sessionId === state.currentSessionId)
+  const singerCounts   = {}
+  const singerLastSang = {}
+  const tableCounts    = {}
+  sessionHistory.forEach(e => {
+    const n   = 1 + (e.songNumber2 ? 1 : 0)
+    const key = e.name.toLowerCase()
+    singerCounts[key]    = (singerCounts[key]    || 0) + n
+    tableCounts[e.table] = (tableCounts[e.table] || 0) + n
+    if (!singerLastSang[key] || e.doneAt > singerLastSang[key]) {
+      singerLastSang[key] = e.doneAt
+    }
+  })
+
+  list.innerHTML = filtered.map(entry => {
+    const key         = entry.name.toLowerCase()
+    const singerTotal = singerCounts[key] || 0
+    const lastSang    = singerLastSang[key] || 0
+    const tableTotal  = tableCounts[entry.table] || 0
+    return `
     <div class="history-card">
       <div class="history-card-top">
-        <span class="history-badge-table">Mesa ${entry.table}</span>
         <span class="history-name">${escapeHtml(entry.name)}</span>
+        <button class="history-badge-table history-badge-clickable" onclick="openTableModal('${entry.table}')" title="Ver detalhes da mesa">Mesa ${entry.table}</button>
         <span class="history-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
       </div>
-      <div class="history-meta">
-        <span class="history-time">Inserido: ${formatDateTime(entry.insertedAt)}</span>
-        <span class="history-time">Cantou: ${formatDateTime(entry.doneAt)}</span>
+      <div class="history-card-bottom">
+        <div class="history-times">
+          <span class="history-time"><span class="history-time-label">Inserido</span> ${formatTime(entry.insertedAt)}</span>
+          <span class="history-time-arrow">→</span>
+          <span class="history-time"><span class="history-time-label">Cantou</span> ${formatTime(entry.doneAt)}</span>
+        </div>
+        <div class="history-counts">
+          <span class="history-count">🎤 ${singerTotal} música${singerTotal !== 1 ? 's' : ''} · último às ${formatTime(lastSang)}</span>
+        </div>
       </div>
     </div>`
-  ).join('')
+  }).join('')
 }
 
 function setTableFilter(table) {
@@ -902,7 +1063,8 @@ document.addEventListener('DOMContentLoaded', () => {
   })
   document.getElementById('btn-history').addEventListener('click', openHistory)
   document.getElementById('btn-close-history').addEventListener('click', closeHistory)
-  document.getElementById('overlay').addEventListener('click', () => { closeHistory(); closeStats() })
+  document.getElementById('overlay').addEventListener('click', () => { closeHistory(); closeStats(); closeTableModal() })
+  document.getElementById('btn-close-table-modal').addEventListener('click', closeTableModal)
   document.getElementById('btn-clear-history').addEventListener('click', clearHistory)
   document.getElementById('btn-clear-date').addEventListener('click', () => {
     statsFilter.filterDate = ''
