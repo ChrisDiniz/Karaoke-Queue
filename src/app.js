@@ -150,6 +150,25 @@ function adjustPinsAfterRemoval(removedId) {
   })
 }
 
+function calcWait(insertedAt) {
+  const mins = Math.floor((Date.now() - insertedAt) / 60000)
+  if (mins < 1) return 'agora'
+  if (mins < 60) return `há ${mins}min`
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return m > 0 ? `há ${h}h ${m}min` : `há ${h}h`
+}
+
+function updateWaitTimes() {
+  document.querySelectorAll('.card-wait[data-inserted]').forEach(el => {
+    const insertedAt = parseInt(el.dataset.inserted)
+    const mins       = Math.floor((Date.now() - insertedAt) / 60000)
+    el.textContent   = calcWait(insertedAt)
+    el.className     = 'card-wait' +
+      (mins >= 30 ? ' card-wait--danger' : mins >= 15 ? ' card-wait--warning' : '')
+  })
+}
+
 function getRoundColor(round) {
   const colors = ['#10b981', '#06b6d4', '#f59e0b', '#f97316', '#ef4444']
   return colors[Math.min(round - 1, colors.length - 1)]
@@ -364,7 +383,10 @@ function openTableModal(table) {
   const entries = state.history.filter(e =>
     e.sessionId === state.currentSessionId && e.table === table
   )
-  if (entries.length === 0) return
+  if (entries.length === 0) {
+    showToast(`Mesa ${table} ainda não tem histórico nesta sessão.`)
+    return
+  }
 
   // Summary stats
   const totalSongs    = entries.reduce((a, e) => a + 1 + (e.songNumber2 ? 1 : 0), 0)
@@ -549,7 +571,7 @@ function renderQueue() {
         <div class="card-info">
           <div class="card-top">
             <div class="card-table-wrap">
-              <span class="card-table">Mesa ${entry.table}</span>
+              <button class="card-table card-table-clickable" onclick="openTableModal('${entry.table}')" title="Ver detalhes da mesa">Mesa ${entry.table}</button>
               <span class="card-round" style="color:${getRoundColor(round)}">Rodada ${round}</span>
             </div>
             <div class="card-info-main">
@@ -557,7 +579,10 @@ function renderQueue() {
                 <span class="card-name">${escapeHtml(entry.name)}</span>
                 <span class="card-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
               </div>
-              <span class="card-inserted">&#9201; Inserido às ${formatTime(entry.insertedAt)}</span>
+              <div class="card-inserted-row">
+                <span class="card-inserted">&#9201; ${formatTime(entry.insertedAt)}</span>
+                <span class="card-wait" data-inserted="${entry.insertedAt}">${calcWait(entry.insertedAt)}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -1116,6 +1141,7 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 
   setInterval(checkAutoReset, 60000)
+  setInterval(updateWaitTimes, 30000)
 
   showStartupDialog()
 
