@@ -29,7 +29,7 @@ function createWindow() {
       }
 
       const queueLength = await win.webContents.executeJavaScript('window.__kqueue.queueLength()')
-      const detail      = queueLength > 0
+      const detail = queueLength > 0
         ? `Há ${queueLength} entrada${queueLength > 1 ? 's' : ''} na fila.`
         : ''
 

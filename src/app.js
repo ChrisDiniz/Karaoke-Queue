@@ -327,14 +327,14 @@ function showStartupDialog() {
     return
   }
 
-  // Expediente em andamento há mais de 15h → inicia novo automaticamente
+  // Session running for more than 15h → auto-start a new one
   const hoursElapsed = (Date.now() - lastSession.startedAt) / 3600000
   if (hoursElapsed > 15) {
     resetSession()
     return
   }
 
-  // Expediente em andamento do mesmo dia — única situação que precisa de escolha
+  // Session in progress from the same day — only case that needs user input
   const startStr = new Date(lastSession.startedAt).toLocaleString('pt-BR', {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit'
@@ -547,20 +547,20 @@ function renderStats() {
     return
   }
 
-  // ── Resumo
+  // ── Summary
   const totalSongs   = h.reduce((acc, e) => acc + 1 + (e.songNumber2 ? 1 : 0), 0)
   const uniqueSingers = new Set(h.map(e => e.name.toLowerCase())).size
   const uniqueTables  = new Set(h.map(e => e.table)).size
   const duration      = calcDuration(h)
   const avgWait       = calcAvgWait(h)
 
-  // ── Por cantor (agrupado por Mesa + Nome)
+  // ── By singer (grouped by table + name)
   const bySinger = groupAndSort(h, e => `${e.name} · Mesa ${e.table}`, e => 1 + (e.songNumber2 ? 1 : 0))
 
-  // ── Por mesa
+  // ── By table
   const byTable = groupAndSort(h, e => `Mesa ${e.table}`, e => 1 + (e.songNumber2 ? 1 : 0))
 
-  // ── Músicas mais pedidas
+  // ── Most requested songs
   const songCounts = {}
   h.forEach(e => {
     if (e.songNumber)  songCounts[e.songNumber]  = (songCounts[e.songNumber]  || 0) + 1
@@ -568,7 +568,7 @@ function renderStats() {
   })
   const topSongs = Object.entries(songCounts).sort((a, b) => b[1] - a[1]).slice(0, 8)
 
-  // ── Horário de pico
+  // ── Peak hours
   const byHour = {}
   h.forEach(e => {
     const hour = new Date(e.doneAt).getHours()
@@ -840,7 +840,7 @@ function escapeHtml(str) {
 
 // ── Init ──────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  // Carrega nome do app antes de qualquer outra coisa
+  // Load app name before anything else to prevent it from being overwritten
   const _savedName = localStorage.getItem(KEYS.APP_NAME)
   if (_savedName) {
     document.getElementById('app-name').textContent = _savedName
