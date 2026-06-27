@@ -7,7 +7,8 @@ const KEYS = {
   HISTORY:            'kshake_history',
   SESSIONS:           'kshake_sessions',
   CURRENT_SESSION_ID: 'kshake_current_session',
-  PINNED_POSITIONS:   'kshake_pinned',
+  PRIORITY_IDS:       'kshake_priority',
+  CURRENT_TURN_ID:    'kshake_current_turn',
   LAST_RESET:         'kshake_last_reset'
 }
 
@@ -32,7 +33,16 @@ let state = {
   history:          [],   // permanent — never cleared
   sessions:         [],
   currentSessionId: null,
-  pinnedPositions:  {}
+  priorityIds:      [],   // manually pinned entries (drag override), front = first
+  currentTurnId:    null  // locked "vez atual" — stays put until Cantou/Cancelar
+}
+
+// Strictly-increasing insertion timestamp. Guarantees a stable, correct order
+// even when several entries are added in the same millisecond (batch add).
+let lastInsertedAt = 0
+function nextInsertedAt() {
+  lastInsertedAt = Math.max(Date.now(), lastInsertedAt + 1)
+  return lastInsertedAt
 }
 
 // ── Persistence ───────────────────────────────────────
@@ -41,7 +51,8 @@ function loadState() {
   state.history          = JSON.parse(localStorage.getItem(KEYS.HISTORY)            || '[]')
   state.sessions         = JSON.parse(localStorage.getItem(KEYS.SESSIONS)           || '[]')
   state.currentSessionId = localStorage.getItem(KEYS.CURRENT_SESSION_ID)            || null
-  state.pinnedPositions  = JSON.parse(localStorage.getItem(KEYS.PINNED_POSITIONS)   || '{}')
+  state.priorityIds      = JSON.parse(localStorage.getItem(KEYS.PRIORITY_IDS)       || '[]')
+  state.currentTurnId    = localStorage.getItem(KEYS.CURRENT_TURN_ID)               || null
 
   // First run or migration: create a session if none exists
   if (state.sessions.length === 0) {
@@ -58,7 +69,8 @@ function saveState() {
   localStorage.setItem(KEYS.HISTORY,            JSON.stringify(state.history))
   localStorage.setItem(KEYS.SESSIONS,           JSON.stringify(state.sessions))
   localStorage.setItem(KEYS.CURRENT_SESSION_ID, state.currentSessionId || '')
-  localStorage.setItem(KEYS.PINNED_POSITIONS,   JSON.stringify(state.pinnedPositions))
+  localStorage.setItem(KEYS.PRIORITY_IDS,       JSON.stringify(state.priorityIds))
+  localStorage.setItem(KEYS.CURRENT_TURN_ID,    state.currentTurnId || '')
 }
 
 // ── Session management ────────────────────────────────
@@ -136,18 +148,68 @@ function formatDateTime(ts) {
 }
 
 // ── Queue ordering ─────────────────────────────────────
-// Round = (entries from same table in history) + (entries from same table
-// in queue inserted before this one) + 1.
-// Lower round = higher priority. Ties broken by insertion time (FIFO).
-function adjustPinsAfterRemoval(removedId) {
-  const sorted     = sortedQueue()
-  const removedPos = sorted.findIndex(e => e.id === removedId)
-  if (removedPos === -1) return
-  Object.keys(state.pinnedPositions).forEach(id => {
-    if (id !== removedId && state.pinnedPositions[id] >= removedPos) {
-      state.pinnedPositions[id]--
-    }
+// Base order is FIFO by insertedAt. A single anti-repetition rule applies:
+// when picking the next entry, if the front entry belongs to the same table
+// that just sang (or is singing now = the current top), skip to the next entry
+// of a different table. If no other table is waiting, the same table repeats.
+// Pinned entries (manual drag override) are forced to be the next ones to sing.
+
+// Entries from the current session that actually sang (excludes cancelled).
+function sungEntries(sessionId = state.currentSessionId) {
+  return state.history.filter(e => e.sessionId === sessionId && e.status !== 'cancelled')
+}
+
+// Table of the most recently sung entry in the current session (null if none).
+function lastSungTable() {
+  const sung = sungEntries()
+  if (sung.length === 0) return null
+  return sung.reduce((a, b) => (b.doneAt > a.doneAt ? b : a)).table
+}
+
+// Safety net: an entry waiting longer than this is pushed to the front so
+// nobody is forgotten in a long queue. Dormant on a normal night.
+const MAX_WAIT_MIN = 40
+
+// Only sings within this recent window count toward a table's priority weight,
+// so a regular that sang a lot earlier in the night isn't penalised forever —
+// the weight measures who is monopolising *now*, not lifetime loyalty.
+const RECENT_WINDOW_MIN = 90
+
+// Rotating order with anti-repetition, seeded by the last sung table.
+// Primary key: tableTurns = how many turns this table will have had by the
+// time this entry sings = (recent sings in the window) + (its own entries
+// waiting ahead). Tables that sang less recently go first, so in a busy queue
+// nobody racks up turns just by arriving early or re-adding fast. Ties broken
+// by insertedAt (FIFO). Overdue entries (waiting > MAX_WAIT_MIN) jump ahead of
+// everyone, longest wait first, so nobody is ever forgotten.
+function fairOrder(entries, seedLastTable) {
+  const now         = Date.now()
+  const overdue     = e => (now - e.insertedAt) >= MAX_WAIT_MIN * 60000
+  const windowStart = now - RECENT_WINDOW_MIN * 60000
+  const sungByTable = {}
+  sungEntries().forEach(e => {
+    if (e.doneAt >= windowStart) sungByTable[e.table] = (sungByTable[e.table] || 0) + 1
   })
+  const queueRound  = e => entries.filter(o => o.table === e.table && o.insertedAt < e.insertedAt).length
+  const tableTurns  = e => (sungByTable[e.table] || 0) + queueRound(e)
+  const remaining   = [...entries].sort((a, b) => {
+    const oa = overdue(a), ob = overdue(b)
+    if (oa !== ob) return oa ? -1 : 1              // overdue entries first
+    if (oa && ob) return a.insertedAt - b.insertedAt // longest wait first
+    const ta = tableTurns(a), tb = tableTurns(b)
+    if (ta !== tb) return ta - tb
+    return a.insertedAt - b.insertedAt
+  })
+  const result    = []
+  let lastTable   = seedLastTable
+  while (remaining.length > 0) {
+    let idx = remaining.findIndex(e => e.table !== lastTable)
+    if (idx === -1) idx = 0 // all remaining are the same table → allow repeat
+    const [picked] = remaining.splice(idx, 1)
+    result.push(picked)
+    lastTable = picked.table
+  }
+  return result
 }
 
 function calcWait(insertedAt) {
@@ -175,32 +237,26 @@ function getRoundColor(round) {
 }
 
 function getRound(entry) {
-  const historySings  = state.history.filter(h => h.table === entry.table && h.sessionId === state.currentSessionId).length
+  const historySings  = sungEntries().filter(h => h.table === entry.table).length
   const queueBefore   = state.queue.filter(q => q.table === entry.table && q.insertedAt < entry.insertedAt).length
   return historySings + queueBefore + 1
 }
 
+// Full ordered queue. Pinned entries are injected right after the current
+// turn (slot 1+), so a manual drag bumps someone to "próximo" without
+// interrupting whoever is the current turn.
 function sortedQueue() {
-  const pinnedIds = Object.keys(state.pinnedPositions)
+  const pinnedSet  = new Set(state.priorityIds)
+  const nonPinned  = state.queue.filter(e => !pinnedSet.has(e.id))
+  const fair       = fairOrder(nonPinned, lastSungTable())
+  const pinned     = state.priorityIds
+    .map(id => state.queue.find(e => e.id === id))
+    .filter(Boolean)
 
-  // Sort non-pinned cards by round-robin
-  const nonPinned = state.queue
-    .filter(e => !pinnedIds.includes(e.id))
-    .sort((a, b) => {
-      const rA = getRound(a), rB = getRound(b)
-      if (rA !== rB) return rA - rB
-      return a.insertedAt - b.insertedAt
-    })
+  if (pinned.length === 0) return fair
 
-  // Build result: start with non-pinned, then inject pinned at their target positions
-  const result = [...nonPinned]
-  Object.entries(state.pinnedPositions)
-    .sort(([, a], [, b]) => a - b)
-    .forEach(([id, pos]) => {
-      const entry = state.queue.find(e => e.id === id)
-      if (entry) result.splice(Math.min(pos, result.length), 0, entry)
-    })
-
+  const result = [...fair]
+  result.splice(1, 0, ...pinned) // insert pinned as the next ones to sing
   return result
 }
 
@@ -212,22 +268,14 @@ function addEntry(name, songNumber, songNumber2, table) {
     songNumber:  songNumber.trim(),
     songNumber2: songNumber2.trim(),
     table:       String(table).trim(),
-    insertedAt:  Date.now(),
-    checked:     false,
+    insertedAt:  nextInsertedAt(),
+    status:      'pending',
     sessionId:   state.currentSessionId
   }
   state.queue.push(entry)
   saveState()
   renderQueue()
   showToast(`${entry.name} adicionado(a) à fila!`)
-}
-
-function toggleChecked(id) {
-  const entry = state.queue.find(e => e.id === id)
-  if (!entry) return
-  entry.checked = !entry.checked
-  saveState()
-  renderQueue()
 }
 
 function openEdit(id) {
@@ -272,30 +320,49 @@ function saveEdit() {
   showToast('Registro atualizado!')
 }
 
-function removeEntry(id) {
+function cancelEntry(id) {
   const entry = state.queue.find(e => e.id === id)
   if (!entry) return
-  if (!confirm(`Remover ${entry.name} (Mesa ${entry.table}) da fila?`)) return
-  adjustPinsAfterRemoval(id)
+  if (!confirm(`Cancelar ${entry.name} (Mesa ${entry.table})? A entrada sai da fila e fica registrada como cancelada.`)) return
   state.queue = state.queue.filter(e => e.id !== id)
-  delete state.pinnedPositions[id]
+  state.priorityIds = state.priorityIds.filter(p => p !== id)
+  if (state.currentTurnId === id) state.currentTurnId = null
+  entry.status      = 'cancelled'
+  entry.cancelledAt = Date.now()
+  state.history.unshift(entry)
   saveState()
   renderQueue()
-  showToast(`${entry.name} removido(a) da fila.`)
+  renderHistory()
+  showToast(`${entry.name} (Mesa ${entry.table}) cancelado(a).`)
 }
 
 function markDone(id) {
   const idx = state.queue.findIndex(e => e.id === id)
   if (idx === -1) return
-  adjustPinsAfterRemoval(state.queue[idx].id)
   const [entry] = state.queue.splice(idx, 1)
+  entry.status = 'done'
   entry.doneAt = Date.now()
-  delete state.pinnedPositions[entry.id]
+  state.priorityIds = state.priorityIds.filter(p => p !== entry.id)
+  if (state.currentTurnId === entry.id) state.currentTurnId = null
   state.history.unshift(entry)
   saveState()
   renderQueue()
   renderHistory()
   showToast(`${entry.name} (Mesa ${entry.table}) marcado como cantado!`)
+}
+
+// ── Manual priority (drag override) ───────────────────────
+function pinNext(id) {
+  state.priorityIds = state.priorityIds.filter(p => p !== id)
+  state.priorityIds.unshift(id)
+  saveState()
+  renderQueue()
+}
+
+function unpin(id) {
+  state.priorityIds = state.priorityIds.filter(p => p !== id)
+  saveState()
+  renderQueue()
 }
 
 function clearHistory() {
@@ -313,7 +380,8 @@ function resetSession() {
   createSession()
 
   state.queue           = []
-  state.pinnedPositions = {}
+  state.priorityIds     = []
+  state.currentTurnId   = null
   historyFilter         = { search: '', table: null, order: 'desc', sessionId: null }
   statsFilter           = { name: '', table: '', filterDate: '', filterFrom: '', filterTo: '' }
   localStorage.setItem(KEYS.LAST_RESET, new Date().toDateString())
@@ -380,9 +448,7 @@ function closeStartupModal() {
 
 // ── Table detail modal ────────────────────────────────────
 function openTableModal(table) {
-  const entries = state.history.filter(e =>
-    e.sessionId === state.currentSessionId && e.table === table
-  )
+  const entries = sungEntries().filter(e => e.table === table)
   if (entries.length === 0) {
     showToast(`Mesa ${table} ainda não tem histórico nesta sessão.`)
     return
@@ -531,53 +597,135 @@ function getFilteredHistory() {
 }
 
 // ── Render: Queue ─────────────────────────────────────
+function songsHtml(entry) {
+  return `🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}`
+}
+
+function tableBadgeHtml(table) {
+  return `<button class="card-table card-table-clickable" onclick="openTableModal('${table}')" title="Ver detalhes da mesa">Mesa ${table}</button>`
+}
+
 function renderQueue() {
-  const list    = document.getElementById('queue-list')
-  const counter = document.getElementById('queue-count')
-  const sorted  = sortedQueue()
+  const nowBlock  = document.getElementById('now-block')
+  const nextBlock = document.getElementById('next-block')
+  const list      = document.getElementById('queue-list')
+  const counter   = document.getElementById('queue-count')
 
-  counter.textContent = sorted.length
+  const fair = sortedQueue()
 
-  if (sorted.length === 0) {
+  // Lock the current turn: once shown as "vez atual" it stays until the
+  // operator marks Cantou/Cancelar — new arrivals and the overdue boost
+  // only affect "próximo" onwards, never the person already at the mic.
+  let current = state.currentTurnId
+    ? state.queue.find(e => e.id === state.currentTurnId) || null
+    : null
+  if (!current) {
+    current = fair[0] || null
+    state.currentTurnId = current ? current.id : null
+    saveState()
+  }
+  const next   = fair.find(e => e.id !== current?.id) || null
+
+  const topIds  = new Set([current?.id, next?.id].filter(Boolean))
+  const waiting = state.queue
+    .filter(e => !topIds.has(e.id))
+    .sort((a, b) => a.insertedAt - b.insertedAt)
+
+  counter.textContent = state.queue.length
+
+  // ── Vez atual
+  if (current) {
+    const pinned = state.priorityIds.includes(current.id)
+    nowBlock.classList.remove('hidden')
+    nowBlock.innerHTML = `
+      <div class="now-card${pinned ? ' is-pinned' : ''}">
+        <div class="now-label">🎤 Vez atual</div>
+        <div class="now-main">
+          ${tableBadgeHtml(current.table)}
+          <span class="now-name">${escapeHtml(current.name)}</span>
+          <span class="now-song">${songsHtml(current)}</span>
+        </div>
+        <div class="now-actions">
+          <button class="btn btn-outline btn-sm" onclick="openEdit('${current.id}')" title="Editar">✏️</button>
+          <button class="btn btn-danger-outline btn-sm" onclick="cancelEntry('${current.id}')">Cancelar</button>
+          <button class="btn-done-lg" onclick="markDone('${current.id}')">✓ Cantou</button>
+        </div>
+      </div>`
+  } else {
+    nowBlock.classList.add('hidden')
+    nowBlock.innerHTML = ''
+  }
+
+  // ── Próximo recomendado
+  if (next) {
+    const pinned       = state.priorityIds.includes(next.id)
+    const isOverdue    = (Date.now() - next.insertedAt) >= MAX_WAIT_MIN * 60000
+    const minPending   = Math.min(...[next, ...waiting].map(e => e.insertedAt))
+    const skipped      = !pinned && current && next.insertedAt > minPending
+    const reason       = pinned
+      ? '📌 Fixado manualmente'
+      : isOverdue
+        ? `⏰ Esperando há mais de ${MAX_WAIT_MIN} min`
+        : skipped
+          ? 'ⓘ Priorizado para girar a fila (mesas que cantaram menos primeiro)'
+          : ''
+    nextBlock.classList.remove('hidden')
+    nextBlock.innerHTML = `
+      <div class="next-card${pinned ? ' is-pinned' : ''}">
+        <div class="next-label">Próximo recomendado</div>
+        <div class="next-main">
+          ${tableBadgeHtml(next.table)}
+          <span class="next-name">${escapeHtml(next.name)}</span>
+          <span class="next-song">${songsHtml(next)}</span>
+        </div>
+        ${reason ? `<div class="next-reason">${reason}</div>` : ''}
+        <div class="next-actions">
+          ${pinned ? `<button class="btn btn-outline btn-sm" onclick="unpin('${next.id}')">Soltar 📌</button>` : ''}
+          <button class="btn btn-outline btn-sm" onclick="openEdit('${next.id}')" title="Editar">✏️</button>
+          <button class="btn btn-danger-outline btn-sm" onclick="cancelEntry('${next.id}')">Cancelar</button>
+        </div>
+      </div>`
+  } else {
+    nextBlock.classList.add('hidden')
+    nextBlock.innerHTML = ''
+  }
+
+  // ── Fila de espera (ordem de chegada)
+  if (state.queue.length === 0) {
     list.innerHTML = `
       <div class="empty-state">
         <span class="empty-icon">🎵</span>
         <p>Nenhuma entrada na fila.</p>
         <p>Adicione a primeira música acima!</p>
       </div>`
-    return
-  }
-
-  list.innerHTML = sorted.map((entry, i) => {
-    const posClass  = i === 0 ? 'first' : ''
-    const cardClass = entry.checked ? 'queue-card is-checked' : 'queue-card'
-    const round    = getRound(entry)
-    const isPinned = state.pinnedPositions[entry.id] !== undefined
-    const pinClass = isPinned ? ' is-pinned' : ''
-    return `
-      <div class="${cardClass}${pinClass}" data-id="${entry.id}" draggable="true"
+  } else if (waiting.length === 0) {
+    list.innerHTML = `<div class="queue-empty-sm">Sem mais ninguém na espera.</div>`
+  } else {
+    list.innerHTML = waiting.map((entry, i) => {
+      const pinned = state.priorityIds.includes(entry.id)
+      return `
+      <div class="queue-card${pinned ? ' is-pinned' : ''}" data-id="${entry.id}" draggable="true"
         ondragstart="dragStart(event,'${entry.id}')" ondragend="dragEnd(event)"
         ondragover="dragOver(event)" ondrop="drop(event,'${entry.id}')"
         ondragleave="event.currentTarget.classList.remove('drag-over')"
       >
         <div class="card-left-actions">
-          <button class="btn-remove" onclick="removeEntry('${entry.id}')" title="Remover da fila">✕</button>
+          <button class="btn-remove" onclick="cancelEntry('${entry.id}')" title="Cancelar">✕</button>
           <button class="btn-edit" onclick="openEdit('${entry.id}')" title="Editar registro">✏️</button>
         </div>
-        <div class="card-pin-col">${isPinned ? '<span class="card-pin-icon" title="Prioridade manual">📌</span>' : ''}</div>
+        <div class="card-pin-col">${pinned ? `<button class="card-pin-icon" onclick="unpin('${entry.id}')" title="Soltar prioridade">📌</button>` : ''}</div>
         <div class="card-position-wrap">
-          <span class="card-position ${posClass}">${i + 1}</span>
+          <span class="card-position">${i + 1}</span>
         </div>
         <div class="card-info">
           <div class="card-top">
             <div class="card-table-wrap">
-              <button class="card-table card-table-clickable" onclick="openTableModal('${entry.table}')" title="Ver detalhes da mesa">Mesa ${entry.table}</button>
-              <span class="card-round" style="color:${getRoundColor(round)}">Rodada ${round}</span>
+              ${tableBadgeHtml(entry.table)}
             </div>
             <div class="card-info-main">
               <div class="card-info-top">
                 <span class="card-name">${escapeHtml(entry.name)}</span>
-                <span class="card-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
+                <span class="card-song">${songsHtml(entry)}</span>
               </div>
               <div class="card-inserted-row">
                 <span class="card-inserted">&#9201; ${formatTime(entry.insertedAt)}</span>
@@ -586,18 +734,11 @@ function renderQueue() {
             </div>
           </div>
         </div>
-        <div class="card-actions">
-          <label class="check-toggle" title="Inserido no sistema de karaoke">
-            <input type="checkbox" ${entry.checked ? 'checked' : ''} onchange="toggleChecked('${entry.id}')" />
-            <span class="check-box">✓</span>
-            <span class="check-label">No sistema</span>
-          </label>
-        </div>
-        <div class="card-actions">
-          <button class="btn-done" onclick="markDone('${entry.id}')">✓ Cantou</button>
-        </div>
       </div>`
-  }).join('')
+    }).join('')
+  }
+
+  updateWaitTimes()
 }
 
 // ── Render: History ───────────────────────────────────
@@ -635,11 +776,11 @@ function renderHistory() {
   }
 
   // Compute song counts and last sang time per singer, and counts per table
-  const sessionHistory = state.history.filter(e => e.sessionId === state.currentSessionId)
+  // (cancelled entries never count as sung)
   const singerCounts   = {}
   const singerLastSang = {}
   const tableCounts    = {}
-  sessionHistory.forEach(e => {
+  sungEntries().forEach(e => {
     const n   = 1 + (e.songNumber2 ? 1 : 0)
     const key = e.name.toLowerCase()
     singerCounts[key]    = (singerCounts[key]    || 0) + n
@@ -650,16 +791,34 @@ function renderHistory() {
   })
 
   list.innerHTML = filtered.map(entry => {
+    const cancelled = entry.status === 'cancelled'
+    if (cancelled) {
+      return `
+    <div class="history-card history-card--cancelled">
+      <div class="history-card-top">
+        <span class="history-name">${escapeHtml(entry.name)}</span>
+        <span class="history-badge-table history-badge-cancelled">Mesa ${entry.table}</span>
+        <span class="history-song">${songsHtml(entry)}</span>
+        <span class="history-cancelled-tag">Cancelada</span>
+      </div>
+      <div class="history-card-bottom">
+        <div class="history-times">
+          <span class="history-time"><span class="history-time-label">Inserido</span> ${formatTime(entry.insertedAt)}</span>
+          <span class="history-time-arrow">→</span>
+          <span class="history-time"><span class="history-time-label">Cancelada</span> ${formatTime(entry.cancelledAt)}</span>
+        </div>
+      </div>
+    </div>`
+    }
     const key         = entry.name.toLowerCase()
     const singerTotal = singerCounts[key] || 0
     const lastSang    = singerLastSang[key] || 0
-    const tableTotal  = tableCounts[entry.table] || 0
     return `
     <div class="history-card">
       <div class="history-card-top">
         <span class="history-name">${escapeHtml(entry.name)}</span>
         <button class="history-badge-table history-badge-clickable" onclick="openTableModal('${entry.table}')" title="Ver detalhes da mesa">Mesa ${entry.table}</button>
-        <span class="history-song">🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}</span>
+        <span class="history-song">${songsHtml(entry)}</span>
       </div>
       <div class="history-card-bottom">
         <div class="history-times">
@@ -719,7 +878,7 @@ function renderStats() {
   const body = document.getElementById('stats-body')
 
   const sessionIds = getSessionsForStats()
-  let h = state.history.filter(e => sessionIds.includes(e.sessionId))
+  let h = state.history.filter(e => sessionIds.includes(e.sessionId) && e.status !== 'cancelled')
   if (statsFilter.name)  h = h.filter(e => e.name.toLowerCase().includes(statsFilter.name.toLowerCase()))
   if (statsFilter.table) h = h.filter(e => e.table === statsFilter.table)
 
@@ -893,13 +1052,11 @@ function dragOver(event) {
 
 function drop(event, targetId) {
   event.preventDefault()
-  if (!draggedId || draggedId === targetId) return
-  const sorted = sortedQueue()
-  const toIdx  = sorted.findIndex(e => e.id === targetId)
-  state.pinnedPositions[draggedId] = toIdx
+  const dragged = draggedId
   draggedId = null
-  saveState()
-  renderQueue()
+  if (!dragged || dragged === targetId) return
+  // Dragging a card bumps it to be the next one to sing (manual override).
+  pinNext(dragged)
 }
 
 // ── Batch add ─────────────────────────────────────────
@@ -1142,6 +1299,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   setInterval(checkAutoReset, 60000)
   setInterval(updateWaitTimes, 30000)
+  // Recompute the order periodically so the overdue (>30min) boost kicks in
+  // even without a queue event.
+  setInterval(renderQueue, 60000)
 
   showStartupDialog()
 

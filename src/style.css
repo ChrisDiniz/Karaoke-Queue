@@ -407,11 +407,6 @@ input::placeholder { color: var(--text-dim); }
   background: var(--accent-dim);
 }
 
-.queue-card.is-checked {
-  border-left: 4px solid var(--success);
-  background: linear-gradient(90deg, rgba(34,197,94,0.19) 0%, var(--bg-surface) 55%);
-}
-
 .queue-card.is-pinned {
   border-left: 4px solid var(--accent);
   background: linear-gradient(90deg, rgba(99,102,241,0.22) 0%, var(--bg-surface) 55%);
@@ -556,6 +551,130 @@ input::placeholder { color: var(--text-dim); }
 
 .card-wait--warning { color: var(--warning); font-weight: 600; }
 .card-wait--danger  { color: var(--danger);  font-weight: 600; }
+
+/* ── Now playing / Next blocks ────────────────────────────── */
+.now-block.hidden, .next-block.hidden { display: none; }
+
+.now-card {
+  background: linear-gradient(90deg, var(--accent-dim), var(--bg-surface) 70%);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.now-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.now-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.now-name {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.now-song {
+  font-size: 1.15rem;
+  color: var(--text-muted);
+}
+
+.now-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btn-done-lg {
+  background: var(--success);
+  color: #fff;
+  border: none;
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 10px 24px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-done-lg:hover { background: #16a34a; }
+
+.next-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-mid);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-lg);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.next-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-dim);
+}
+
+.next-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.next-name {
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.next-song {
+  font-size: 1rem;
+  color: var(--text-muted);
+}
+
+.next-reason {
+  font-size: 0.8rem;
+  color: var(--warning);
+}
+
+.next-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.queue-empty-sm {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  padding: 16px 4px;
+  text-align: center;
+}
+
+/* pin icon is now a button */
+.card-pin-col .card-pin-icon {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
 
 .card-actions {
   display: flex;
@@ -817,6 +936,29 @@ input::placeholder { color: var(--text-dim); }
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.history-card--cancelled { opacity: 0.55; }
+.history-card--cancelled .history-name { text-decoration: line-through; }
+.history-card--cancelled .history-song { margin-left: 0; }
+
+.history-badge-cancelled {
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 99px;
+  border: 1px solid var(--border-mid);
+}
+
+.history-cancelled-tag {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--danger);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .history-badge-table {
