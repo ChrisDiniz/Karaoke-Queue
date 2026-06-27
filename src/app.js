@@ -376,13 +376,6 @@ function unpin(id) {
   renderQueue()
 }
 
-function clearHistory() {
-  if (!confirm('Limpar o histórico deste expediente? Esta ação não pode ser desfeita.')) return
-  state.history = state.history.filter(e => e.sessionId !== state.currentSessionId)
-  saveState()
-  renderHistory()
-}
-
 // ── Session reset ──────────────────────────────────────
 function resetSession() {
   const cur = currentSession()
@@ -1258,7 +1251,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-close-history').addEventListener('click', closeHistory)
   document.getElementById('overlay').addEventListener('click', () => { closeHistory(); closeStats(); closeTableModal() })
   document.getElementById('btn-close-table-modal').addEventListener('click', closeTableModal)
-  document.getElementById('btn-clear-history').addEventListener('click', clearHistory)
   document.getElementById('btn-clear-date').addEventListener('click', () => {
     statsFilter.filterDate = ''
     document.getElementById('stats-filter-date').value = ''
