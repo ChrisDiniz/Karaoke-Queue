@@ -20,7 +20,11 @@
     },
     "files": [
       "main.js",
+      "preload.js",
       "src/**/*"
     ]
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
   }
 }

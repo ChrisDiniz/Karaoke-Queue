@@ -1,5 +1,12 @@
-const { app, BrowserWindow, dialog } = require('electron')
+const { app, BrowserWindow, dialog, ipcMain } = require('electron')
 const path = require('path')
+const Store = require('electron-store')
+
+// Disk-backed store (atomic writes survive power loss / crashes — no 5MB cap).
+const store = new Store({ name: 'karaoke-data' })
+
+ipcMain.handle('kstore:load', () => store.store)
+ipcMain.handle('kstore:save', (_e, data) => { store.set(data); return true })
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -9,7 +16,8 @@ function createWindow() {
     minHeight: 600,
     webPreferences: {
       nodeIntegration: false,
-      contextIsolation: true
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js')
     },
     title: 'Karaoke Queue',
     autoHideMenuBar: true

@@ -34,8 +34,15 @@ let state = {
   sessions:         [],
   currentSessionId: null,
   priorityIds:      [],   // manually pinned entries (drag override), front = first
-  currentTurnId:    null  // locked "vez atual" — stays put until Cantou/Cancelar
+  currentTurnId:    null, // locked "vez atual" — stays put until Cantou/Cancelar
+  lastReset:        null  // toDateString() of the last auto-reset (18h)
 }
+
+// All critical state lives in electron-store (durable, synchronous disk writes,
+// no 5MB cap). localStorage is NOT durable on an abrupt window close — Chromium
+// flushes it lazily — so it must not hold the queue/history. STORE_KEY is only
+// the browser-dev fallback (theme/app-name keep their own localStorage keys).
+const STORE_KEY = 'kshake_store'
 
 // Strictly-increasing insertion timestamp. Guarantees a stable, correct order
 // even when several entries are added in the same millisecond (batch add).
@@ -46,13 +53,67 @@ function nextInsertedAt() {
 }
 
 // ── Persistence ───────────────────────────────────────
-function loadState() {
-  state.queue            = JSON.parse(localStorage.getItem(KEYS.QUEUE)              || '[]')
-  state.history          = JSON.parse(localStorage.getItem(KEYS.HISTORY)            || '[]')
-  state.sessions         = JSON.parse(localStorage.getItem(KEYS.SESSIONS)           || '[]')
-  state.currentSessionId = localStorage.getItem(KEYS.CURRENT_SESSION_ID)            || null
-  state.priorityIds      = JSON.parse(localStorage.getItem(KEYS.PRIORITY_IDS)       || '[]')
-  state.currentTurnId    = localStorage.getItem(KEYS.CURRENT_TURN_ID)               || null
+// PERMANENT (grows): history + sessions → electron-store (disk, no 5MB cap),
+// with a localStorage fallback when opened directly in a browser (dev).
+const store = {
+  async load() {
+    if (window.kstore) return (await window.kstore.load()) || {}
+    const raw = localStorage.getItem(STORE_KEY)
+    return raw ? JSON.parse(raw) : {}
+  },
+  save(blob) {
+    if (window.kstore) return window.kstore.save(blob) // returns a promise
+    localStorage.setItem(STORE_KEY, JSON.stringify(blob))
+    return Promise.resolve()
+  }
+}
+
+function saveState() {
+  return store.save({
+    queue:            state.queue,
+    history:          state.history,
+    sessions:         state.sessions,
+    currentSessionId: state.currentSessionId,
+    priorityIds:      state.priorityIds,
+    currentTurnId:    state.currentTurnId,
+    lastReset:        state.lastReset
+  })
+}
+
+// One-time migration: the old layout kept everything in multi-key localStorage.
+function legacyFromLocalStorage() {
+  if (localStorage.getItem(KEYS.QUEUE) === null &&
+      localStorage.getItem(KEYS.HISTORY) === null &&
+      localStorage.getItem(KEYS.SESSIONS) === null) return null
+  return {
+    queue:            JSON.parse(localStorage.getItem(KEYS.QUEUE)            || '[]'),
+    history:          JSON.parse(localStorage.getItem(KEYS.HISTORY)          || '[]'),
+    sessions:         JSON.parse(localStorage.getItem(KEYS.SESSIONS)         || '[]'),
+    currentSessionId: localStorage.getItem(KEYS.CURRENT_SESSION_ID)          || null,
+    priorityIds:      JSON.parse(localStorage.getItem(KEYS.PRIORITY_IDS)     || '[]'),
+    currentTurnId:    localStorage.getItem(KEYS.CURRENT_TURN_ID)             || null,
+    lastReset:        localStorage.getItem(KEYS.LAST_RESET)                  || null
+  }
+}
+
+async function loadState() {
+  let data = await store.load()
+  let migrated = false
+
+  // First run on the store: migrate any legacy multi-key localStorage data so
+  // existing users keep their history.
+  if (data.queue === undefined && data.history === undefined && data.sessions === undefined) {
+    const legacy = legacyFromLocalStorage()
+    if (legacy) { data = legacy; migrated = true }
+  }
+
+  state.queue            = data.queue            || []
+  state.history          = data.history          || []
+  state.sessions         = data.sessions         || []
+  state.currentSessionId = data.currentSessionId || null
+  state.priorityIds      = data.priorityIds      || []
+  state.currentTurnId    = data.currentTurnId    || null
+  state.lastReset        = data.lastReset        || null
 
   // First run or migration: create a session if none exists
   if (state.sessions.length === 0) {
@@ -62,15 +123,15 @@ function loadState() {
   } else if (!state.currentSessionId) {
     state.currentSessionId = state.sessions[state.sessions.length - 1].id
   }
-}
 
-function saveState() {
-  localStorage.setItem(KEYS.QUEUE,              JSON.stringify(state.queue))
-  localStorage.setItem(KEYS.HISTORY,            JSON.stringify(state.history))
-  localStorage.setItem(KEYS.SESSIONS,           JSON.stringify(state.sessions))
-  localStorage.setItem(KEYS.CURRENT_SESSION_ID, state.currentSessionId || '')
-  localStorage.setItem(KEYS.PRIORITY_IDS,       JSON.stringify(state.priorityIds))
-  localStorage.setItem(KEYS.CURRENT_TURN_ID,    state.currentTurnId || '')
+  saveState() // persist in the new split layout (also completes migration)
+
+  // Free the old multi-key localStorage copy once safely migrated.
+  if (migrated) {
+    [KEYS.QUEUE, KEYS.HISTORY, KEYS.SESSIONS, KEYS.CURRENT_SESSION_ID,
+     KEYS.PRIORITY_IDS, KEYS.CURRENT_TURN_ID, KEYS.LAST_RESET]
+      .forEach(k => localStorage.removeItem(k))
+  }
 }
 
 // ── Session management ────────────────────────────────
@@ -388,7 +449,7 @@ function resetSession() {
   state.currentTurnId   = null
   historyFilter         = { search: '', table: null, order: 'desc', sessionId: null }
   statsFilter           = { name: '', table: '', filterDate: '', filterFrom: '', filterTo: '' }
-  localStorage.setItem(KEYS.LAST_RESET, new Date().toDateString())
+  state.lastReset = new Date().toDateString()
   saveState()
   renderQueue()
   renderHistory()
@@ -396,9 +457,8 @@ function resetSession() {
 }
 
 function checkAutoReset() {
-  const now       = new Date()
-  const lastReset = localStorage.getItem(KEYS.LAST_RESET)
-  if (now.getHours() === 18 && now.getMinutes() === 0 && lastReset !== now.toDateString()) {
+  const now = new Date()
+  if (now.getHours() === 18 && now.getMinutes() === 0 && state.lastReset !== now.toDateString()) {
     resetSession()
   }
 }
@@ -1186,14 +1246,14 @@ function escapeHtml(str) {
 }
 
 // ── Init ──────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   // Load app name before anything else to prevent it from being overwritten
   const _savedName = localStorage.getItem(KEYS.APP_NAME)
   if (_savedName) {
     document.getElementById('app-name').textContent = _savedName
   }
 
-  loadState()
+  await loadState() // disk-backed store is async; finish before first render
   renderQueue()
   updateClock()
   updateSessionStartInfo()
@@ -1366,9 +1426,11 @@ document.addEventListener('DOMContentLoaded', () => {
   window.__kqueue = {
     queueLength:      () => state.queue.length,
     sessionEnded:     () => { const s = currentSession(); return !s || !!s.endedAt },
-    endSessionSilent: () => {
+    // async + awaited by main.js so the final write completes before the
+    // window is destroyed (the store save is an async IPC roundtrip).
+    endSessionSilent: async () => {
       const s = currentSession()
-      if (s && !s.endedAt) { s.endedAt = Date.now(); saveState() }
+      if (s && !s.endedAt) { s.endedAt = Date.now(); await saveState() }
     }
   }
 })
