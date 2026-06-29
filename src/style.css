@@ -568,6 +568,10 @@ input::placeholder { color: var(--text-dim); }
 /* ── Now playing / Next blocks ────────────────────────────── */
 .now-block.hidden, .next-block.hidden { display: none; }
 
+/* drop-target highlight when dragging a waiting card over a block */
+.now-card.drag-over  { outline: 2px dashed var(--success); outline-offset: 3px; }
+.next-card.drag-over { outline: 2px dashed var(--accent);  outline-offset: 3px; }
+
 .now-card {
   background: linear-gradient(90deg, var(--success-dim), var(--bg-surface) 70%);
   border: 1px solid var(--success);

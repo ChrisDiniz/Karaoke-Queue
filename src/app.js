@@ -706,7 +706,12 @@ function renderQueue() {
     state.currentTurnId = current ? current.id : null
     saveState()
   }
-  const next   = fair.find(e => e.id !== current?.id) || null
+  // Próximo: a manually pinned entry (drag override) wins; otherwise the
+  // natural next by fair order. Either way, never the current.
+  const pinnedNext = state.priorityIds
+    .map(id => state.queue.find(e => e.id === id))
+    .find(e => e && e.id !== current?.id)
+  const next = pinnedNext || fair.find(e => e.id !== current?.id) || null
 
   const topIds  = new Set([current?.id, next?.id].filter(Boolean))
   const waiting = state.queue
@@ -730,7 +735,9 @@ function renderQueue() {
     const pinned = state.priorityIds.includes(current.id)
     nowBlock.classList.remove('hidden')
     nowBlock.innerHTML = `
-      <div class="now-card${pinned ? ' is-pinned' : ''}">
+      <div class="now-card${pinned ? ' is-pinned' : ''}"
+        ondragover="dragOverTarget(event)" ondrop="dropOnCurrent(event)"
+        ondragleave="event.currentTarget.classList.remove('drag-over')">
         <div class="now-label">🎤 Vez atual</div>
         <div class="now-main">
           ${tableBadgeHtml(current.table)}
@@ -760,7 +767,9 @@ function renderQueue() {
         : ''
     nextBlock.classList.remove('hidden')
     nextBlock.innerHTML = `
-      <div class="next-card${pinned ? ' is-pinned' : ''}">
+      <div class="next-card${pinned ? ' is-pinned' : ''}"
+        ondragover="dragOverTarget(event)" ondrop="dropOnNext(event)"
+        ondragleave="event.currentTarget.classList.remove('drag-over')">
         <div class="next-label">Próximo recomendado</div>
         <div class="next-main">
           ${tableBadgeHtml(next.table)}
@@ -801,8 +810,6 @@ function renderQueue() {
       return `
       <div class="queue-card${pinned ? ' is-pinned' : ''}${overdue ? ' has-boost' : ''}" data-id="${entry.id}" draggable="true"
         ondragstart="dragStart(event,'${entry.id}')" ondragend="dragEnd(event)"
-        ondragover="dragOver(event)" ondrop="drop(event,'${entry.id}')"
-        ondragleave="event.currentTarget.classList.remove('drag-over')"
       >
         <span class="queue-pos">${i + 1}</span>
         ${tableBadgeHtml(entry.table)}
@@ -1123,34 +1130,60 @@ function calcAvgWait(history) {
 }
 
 // ── Drag & drop ───────────────────────────────────────
+// Waiting cards are the drag SOURCES. The only valid drop targets are the
+// "Vez atual" and "Próximo recomendado" blocks — dropping anywhere in the
+// waiting list does nothing.
 let draggedId = null
+
+// Confirmation shown when dropping onto "Vez atual" (interrupts who's singing).
+const PROMOTE_TO_CURRENT_MSG = 'Colocar esta mesa para cantar AGORA? A mesa que está na vez passa a ser a próxima.'
 
 function dragStart(event, id) {
   draggedId = id
-  setTimeout(() => event.target.closest('.queue-card').classList.add('dragging'), 0)
+  setTimeout(() => { const c = event.target.closest('.queue-card'); if (c) c.classList.add('dragging') }, 0)
 }
 
 function dragEnd(event) {
-  event.target.closest('.queue-card').classList.remove('dragging')
-  document.querySelectorAll('.queue-card').forEach(c => c.classList.remove('drag-over'))
+  const c = event.target.closest('.queue-card')
+  if (c) c.classList.remove('dragging')
+  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'))
 }
 
-function dragOver(event) {
+// dragover handler for the now/next blocks — required so drop can fire.
+function dragOverTarget(event) {
   event.preventDefault()
-  const card = event.target.closest('.queue-card')
-  if (card) {
-    document.querySelectorAll('.queue-card').forEach(c => c.classList.remove('drag-over'))
-    card.classList.add('drag-over')
-  }
+  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'))
+  event.currentTarget.classList.add('drag-over')
 }
 
-function drop(event, targetId) {
+function dropOnNext(event) {
   event.preventDefault()
+  event.currentTarget.classList.remove('drag-over')
   const dragged = draggedId
   draggedId = null
-  if (!dragged || dragged === targetId) return
-  // Dragging a card bumps it to be the next one to sing (manual override).
-  pinNext(dragged)
+  if (!dragged || dragged === state.currentTurnId) return
+  pinNext(dragged) // promote to "Próximo recomendado"
+}
+
+function dropOnCurrent(event) {
+  event.preventDefault()
+  event.currentTarget.classList.remove('drag-over')
+  const dragged = draggedId
+  draggedId = null
+  if (!dragged || dragged === state.currentTurnId) return
+  if (!state.queue.some(e => e.id === dragged)) return
+  if (!confirm(PROMOTE_TO_CURRENT_MSG)) return
+  const oldCurrentId = state.currentTurnId
+  clearBoostState(dragged)
+  state.priorityIds = state.priorityIds.filter(p => p !== dragged)
+  state.currentTurnId = dragged
+  // the displaced current becomes the "Próximo recomendado"
+  if (oldCurrentId && oldCurrentId !== dragged && state.queue.some(e => e.id === oldCurrentId)) {
+    state.priorityIds = state.priorityIds.filter(p => p !== oldCurrentId)
+    state.priorityIds.unshift(oldCurrentId)
+  }
+  saveState()
+  renderQueue()
 }
 
 // ── Batch add ─────────────────────────────────────────
