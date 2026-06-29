@@ -289,22 +289,17 @@ function updateWaitTimes() {
   })
 }
 
-// Full ordered queue. Pinned entries are injected right after the current
-// turn (slot 1+), so a manual drag bumps someone to "próximo" without
-// interrupting whoever is the current turn.
-function sortedQueue() {
-  const pinnedSet  = new Set(state.priorityIds)
-  const nonPinned  = state.queue.filter(e => !pinnedSet.has(e.id))
-  const fair       = fairOrder(nonPinned, lastSungTable())
-  const pinned     = state.priorityIds
-    .map(id => state.queue.find(e => e.id === id))
-    .filter(Boolean)
+// How many "Próximos" slots are shown. Manual pins are bounded to these slots.
+const PROXIMOS_COUNT = 3
 
-  if (pinned.length === 0) return fair
-
-  const result = [...fair]
-  result.splice(1, 0, ...pinned) // insert pinned as the next ones to sing
-  return result
+// Full play order: manual pins first (in the operator's chosen order), then the
+// rest by fair rotation. Pins only ever occupy the Próximos slots; the general
+// waiting list below is never pinned.
+function playOrder() {
+  const pinnedSet = new Set(state.priorityIds)
+  const pinned    = state.priorityIds.map(id => state.queue.find(e => e.id === id)).filter(Boolean)
+  const fair      = fairOrder(state.queue.filter(e => !pinnedSet.has(e.id)), lastSungTable())
+  return [...pinned, ...fair]
 }
 
 // ── Actions ───────────────────────────────────────────
@@ -401,9 +396,12 @@ function markDone(id) {
 }
 
 // ── Manual priority (drag override) ───────────────────────
+// Pins are bounded to the Próximos slots; a pin beyond PROXIMOS_COUNT overflows
+// back to the general queue (loses its pin).
 function pinNext(id) {
   state.priorityIds = state.priorityIds.filter(p => p !== id)
   state.priorityIds.unshift(id)
+  if (state.priorityIds.length > PROXIMOS_COUNT) state.priorityIds = state.priorityIds.slice(0, PROXIMOS_COUNT)
   clearBoostState(id)
   saveState()
   renderQueue()
@@ -693,34 +691,31 @@ function renderQueue() {
   const list      = document.getElementById('queue-list')
   const counter   = document.getElementById('queue-count')
 
-  const fair = sortedQueue()
+  const order = playOrder()
 
   // Lock the current turn: once shown as "vez atual" it stays until the
-  // operator marks Cantou/Cancelar — new arrivals and manual boosts only
-  // affect "próximo" onwards, never the person already at the mic.
+  // operator marks Cantou/Cancelar — never displaced by new arrivals.
   let current = state.currentTurnId
     ? state.queue.find(e => e.id === state.currentTurnId) || null
     : null
   if (!current) {
-    current = fair[0] || null
+    current = order[0] || null
     state.currentTurnId = current ? current.id : null
     saveState()
   }
-  // Próximo: a manually pinned entry (drag override) wins; otherwise the
-  // natural next by fair order. Either way, never the current.
-  const pinnedNext = state.priorityIds
-    .map(id => state.queue.find(e => e.id === id))
-    .find(e => e && e.id !== current?.id)
-  const next = pinnedNext || fair.find(e => e.id !== current?.id) || null
 
-  const topIds  = new Set([current?.id, next?.id].filter(Boolean))
-  const waiting = state.queue
-    .filter(e => !topIds.has(e.id))
+  // Próximos: the next few in play order (pins first, then fair). The waiting
+  // list below is whatever is left, by arrival — and never carries a pin.
+  const afterCurrent = order.filter(e => e.id !== current?.id)
+  const proximos     = afterCurrent.slice(0, PROXIMOS_COUNT)
+  const shownIds     = new Set([current?.id, ...proximos.map(e => e.id)].filter(Boolean))
+  const waiting      = state.queue
+    .filter(e => !shownIds.has(e.id))
     .sort((a, b) => a.insertedAt - b.insertedAt)
 
-  // Prune boost state for entries no longer in the waiting list (promoted to
-  // vez atual/próximo, sung, cancelled, or wiped by a new expediente), clearing
-  // any pending auto-collapse timer so it can't fire after the entry left.
+  // Prune boost state for entries no longer in the waiting list (promoted,
+  // sung, cancelled, or wiped by a new expediente), clearing any pending
+  // auto-collapse timer so it can't fire after the entry left.
   const waitingIds = new Set(waiting.map(e => e.id))
   Object.keys(boostTimers).forEach(id => {
     if (!waitingIds.has(id)) { clearTimeout(boostTimers[id]); delete boostTimers[id] }
@@ -732,10 +727,9 @@ function renderQueue() {
 
   // ── Vez atual
   if (current) {
-    const pinned = state.priorityIds.includes(current.id)
     nowBlock.classList.remove('hidden')
     nowBlock.innerHTML = `
-      <div class="now-card${pinned ? ' is-pinned' : ''}"
+      <div class="now-card"
         ondragover="dragOverTarget(event)" ondrop="dropOnCurrent(event)"
         ondragleave="event.currentTarget.classList.remove('drag-over')">
         <div class="now-label">🎤 Vez atual</div>
@@ -755,33 +749,32 @@ function renderQueue() {
     nowBlock.innerHTML = ''
   }
 
-  // ── Próximo recomendado
-  if (next) {
-    const pinned       = state.priorityIds.includes(next.id)
-    const minPending   = Math.min(...[next, ...waiting].map(e => e.insertedAt))
-    const skipped      = !pinned && current && next.insertedAt > minPending
-    const reason       = pinned
-      ? '📌 Fixado manualmente'
-      : skipped
-        ? 'ⓘ Ajustado para a mesma mesa não cantar em seguida'
-        : ''
+  // ── Próximos (até PROXIMOS_COUNT)
+  if (proximos.length > 0) {
     nextBlock.classList.remove('hidden')
     nextBlock.innerHTML = `
-      <div class="next-card${pinned ? ' is-pinned' : ''}"
-        ondragover="dragOverTarget(event)" ondrop="dropOnNext(event)"
-        ondragleave="event.currentTarget.classList.remove('drag-over')">
-        <div class="next-label">Próximo recomendado</div>
-        <div class="next-main">
-          ${tableBadgeHtml(next.table)}
-          <span class="next-name">${escapeHtml(next.name)}</span>
-          <span class="next-song">${songsHtml(next)}</span>
-        </div>
-        ${reason ? `<div class="next-reason">${reason}</div>` : ''}
-        <div class="next-actions">
-          ${pinned ? `<button class="btn btn-outline btn-sm" onclick="unpin('${next.id}')">Soltar 📌</button>` : ''}
-          <button class="btn btn-outline btn-sm" onclick="openEdit('${next.id}')" title="Editar">✏️</button>
-          <button class="btn btn-danger-outline btn-sm" onclick="cancelEntry('${next.id}')">Cancelar</button>
-        </div>
+      <div class="next-label">Próximos recomendados</div>
+      <div class="next-list">
+        ${proximos.map((e, i) => {
+          const pinned = state.priorityIds.includes(e.id)
+          return `
+          <div class="next-card${pinned ? ' is-pinned' : ''}" data-id="${e.id}" draggable="true"
+            ondragstart="dragStart(event,'${e.id}')" ondragend="dragEnd(event)"
+            ondragover="dragOverTarget(event)" ondrop="dropOnProximo(event,'${e.id}')"
+            ondragleave="event.currentTarget.classList.remove('drag-over')">
+            <span class="next-pos">${i + 1}º</span>
+            ${tableBadgeHtml(e.table)}
+            <div class="next-main">
+              <span class="next-name">${escapeHtml(e.name)}</span>
+              <span class="next-song">${songsHtml(e)}</span>
+            </div>
+            <div class="next-actions">
+              ${pinned ? `<button class="btn btn-outline btn-sm" onclick="unpin('${e.id}')" title="Soltar prioridade">Soltar 📌</button>` : ''}
+              <button class="btn btn-outline btn-sm" onclick="openEdit('${e.id}')" title="Editar">✏️</button>
+              <button class="btn btn-danger-outline btn-sm" onclick="cancelEntry('${e.id}')">Cancelar</button>
+            </div>
+          </div>`
+        }).join('')}
       </div>`
   } else {
     nextBlock.classList.add('hidden')
@@ -800,15 +793,14 @@ function renderQueue() {
     list.innerHTML = `<div class="queue-empty-sm">Sem mais ninguém na espera.</div>`
   } else {
     list.innerHTML = waiting.map((entry, i) => {
-      const pinned    = state.priorityIds.includes(entry.id)
       const waitedMin = Math.floor((Date.now() - entry.insertedAt) / 60000)
-      const overdue   = !pinned && boostOverdue(entry) && !boostDismissed.has(entry.id)
+      const overdue   = boostOverdue(entry) && !boostDismissed.has(entry.id)
       const collapsed = boostCollapsed.has(entry.id)
       const showFull  = overdue && !collapsed
       const showBadge = overdue && collapsed
       if (showFull) scheduleBoostCollapse(entry.id)
       return `
-      <div class="queue-card${pinned ? ' is-pinned' : ''}${overdue ? ' has-boost' : ''}" data-id="${entry.id}" draggable="true"
+      <div class="queue-card${overdue ? ' has-boost' : ''}" data-id="${entry.id}" draggable="true"
         ondragstart="dragStart(event,'${entry.id}')" ondragend="dragEnd(event)"
       >
         <span class="queue-pos">${i + 1}</span>
@@ -823,7 +815,6 @@ function renderQueue() {
           ${showBadge ? `<button class="boost-badge" onclick="expandBoost('${entry.id}')" title="Esperando há muito — ver opções">⏰ furar?</button>` : ''}
         </div>
         <div class="queue-actions">
-          ${pinned ? `<button class="btn btn-outline btn-sm" onclick="unpin('${entry.id}')">Soltar 📌</button>` : ''}
           <button class="btn btn-outline btn-sm" onclick="openEdit('${entry.id}')" title="Editar">✏️</button>
           <button class="btn btn-danger-outline btn-sm" onclick="cancelEntry('${entry.id}')">Cancelar</button>
         </div>
@@ -1140,11 +1131,11 @@ const PROMOTE_TO_CURRENT_MSG = 'Colocar esta mesa para cantar AGORA? A mesa que 
 
 function dragStart(event, id) {
   draggedId = id
-  setTimeout(() => { const c = event.target.closest('.queue-card'); if (c) c.classList.add('dragging') }, 0)
+  setTimeout(() => { const c = event.target.closest('.queue-card, .next-card'); if (c) c.classList.add('dragging') }, 0)
 }
 
 function dragEnd(event) {
-  const c = event.target.closest('.queue-card')
+  const c = event.target.closest('.queue-card, .next-card')
   if (c) c.classList.remove('dragging')
   document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'))
 }
@@ -1156,13 +1147,26 @@ function dragOverTarget(event) {
   event.currentTarget.classList.add('drag-over')
 }
 
-function dropOnNext(event) {
+// Drop onto a Próximos slot: the dragged table takes that slot. If the slot
+// holds a pinned entry, the dragged is inserted right before it (the pinned one
+// slides down a position, still pinned). If the slot holds a non-pinned entry,
+// the dragged becomes the last pin (lands just after the existing pins). A pin
+// pushed past PROXIMOS_COUNT overflows back to the general queue.
+function dropOnProximo(event, targetId) {
   event.preventDefault()
   event.currentTarget.classList.remove('drag-over')
   const dragged = draggedId
   draggedId = null
-  if (!dragged || dragged === state.currentTurnId) return
-  pinNext(dragged) // promote to "Próximo recomendado"
+  if (!dragged || dragged === state.currentTurnId || dragged === targetId) return
+  if (!state.queue.some(e => e.id === dragged)) return
+  state.priorityIds = state.priorityIds.filter(p => p !== dragged)
+  const ti = state.priorityIds.indexOf(targetId)
+  if (ti >= 0) state.priorityIds.splice(ti, 0, dragged) // before the pinned target
+  else state.priorityIds.push(dragged)                  // target not pinned → last pin
+  if (state.priorityIds.length > PROXIMOS_COUNT) state.priorityIds = state.priorityIds.slice(0, PROXIMOS_COUNT)
+  clearBoostState(dragged)
+  saveState()
+  renderQueue()
 }
 
 function dropOnCurrent(event) {
@@ -1177,10 +1181,11 @@ function dropOnCurrent(event) {
   clearBoostState(dragged)
   state.priorityIds = state.priorityIds.filter(p => p !== dragged)
   state.currentTurnId = dragged
-  // the displaced current becomes the "Próximo recomendado"
+  // the displaced current becomes the 1st "Próximo" (pinned at the front)
   if (oldCurrentId && oldCurrentId !== dragged && state.queue.some(e => e.id === oldCurrentId)) {
     state.priorityIds = state.priorityIds.filter(p => p !== oldCurrentId)
     state.priorityIds.unshift(oldCurrentId)
+    if (state.priorityIds.length > PROXIMOS_COUNT) state.priorityIds = state.priorityIds.slice(0, PROXIMOS_COUNT)
   }
   saveState()
   renderQueue()
