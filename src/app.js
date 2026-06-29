@@ -227,13 +227,13 @@ function lastSungTable() {
   return sung.reduce((a, b) => (b.doneAt > a.doneAt ? b : a)).table
 }
 
-// Safety-net threshold, adaptive to how busy the queue is. A full rotation
-// cycle ≈ (distinct tables waiting) × MIN_PER_TURN. The boost must fire only
-// ABOVE one cycle, or it triggers constantly and degrades to plain FIFO — so
-// the threshold scales with the crowd: small queue → short (quick rescue),
-// big queue → long (stays dormant). WAIT_MARGIN gives headroom above a cycle.
+// When to *offer* the operator a boost prompt on a waiting card. Adaptive to
+// how busy the queue is: a full rotation cycle ≈ (distinct tables) × MIN_PER_TURN,
+// so the prompt only appears once someone waited clearly longer than a normal
+// rotation — small queue → short, big queue → longer. It never auto-reorders;
+// the operator decides with Sim/Não on the card.
 const MIN_PER_TURN   = 6    // estimated minutes a table occupies (up to 2 songs)
-const WAIT_MARGIN    = 1.5  // boost only after ~1.5 full rotations
+const WAIT_MARGIN    = 1.5  // offer the boost only after ~1.5 full rotations
 const MIN_WAIT_FLOOR = 30   // never below this, for tiny queues
 
 function maxWaitMinutes() {
@@ -251,12 +251,10 @@ const RECENT_WINDOW_MIN = 90
 // time this entry sings = (recent sings in the window) + (its own entries
 // waiting ahead). Tables that sang less recently go first, so in a busy queue
 // nobody racks up turns just by arriving early or re-adding fast. Ties broken
-// by insertedAt (FIFO). Overdue entries (waiting > the adaptive threshold)
-// jump ahead of everyone, longest wait first, so nobody is ever forgotten.
+// by insertedAt (FIFO). Long waits are not auto-promoted here — the operator
+// is offered a boost prompt on the card instead.
 function fairOrder(entries, seedLastTable) {
   const now         = Date.now()
-  const maxWaitMs   = maxWaitMinutes() * 60000
-  const overdue     = e => (now - e.insertedAt) >= maxWaitMs
   const windowStart = now - RECENT_WINDOW_MIN * 60000
   const sungByTable = {}
   sungEntries().forEach(e => {
@@ -265,9 +263,6 @@ function fairOrder(entries, seedLastTable) {
   const queueRound  = e => entries.filter(o => o.table === e.table && o.insertedAt < e.insertedAt).length
   const tableTurns  = e => (sungByTable[e.table] || 0) + queueRound(e)
   const remaining   = [...entries].sort((a, b) => {
-    const oa = overdue(a), ob = overdue(b)
-    if (oa !== ob) return oa ? -1 : 1              // overdue entries first
-    if (oa && ob) return a.insertedAt - b.insertedAt // longest wait first
     const ta = tableTurns(a), tb = tableTurns(b)
     if (ta !== tb) return ta - tb
     return a.insertedAt - b.insertedAt
@@ -398,6 +393,7 @@ function cancelEntry(id) {
   if (!confirm(`Cancelar ${entry.name} (Mesa ${entry.table})? A entrada sai da fila e fica registrada como cancelada.`)) return
   state.queue = state.queue.filter(e => e.id !== id)
   state.priorityIds = state.priorityIds.filter(p => p !== id)
+  clearBoostState(id)
   if (state.currentTurnId === id) state.currentTurnId = null
   entry.status      = 'cancelled'
   entry.cancelledAt = Date.now()
@@ -415,6 +411,7 @@ function markDone(id) {
   entry.status = 'done'
   entry.doneAt = Date.now()
   state.priorityIds = state.priorityIds.filter(p => p !== entry.id)
+  clearBoostState(entry.id)
   if (state.currentTurnId === entry.id) state.currentTurnId = null
   state.history.unshift(entry)
   saveState()
@@ -427,6 +424,7 @@ function markDone(id) {
 function pinNext(id) {
   state.priorityIds = state.priorityIds.filter(p => p !== id)
   state.priorityIds.unshift(id)
+  clearBoostState(id)
   saveState()
   renderQueue()
 }
@@ -436,6 +434,43 @@ function unpin(id) {
   saveState()
   renderQueue()
 }
+
+// ── Overdue boost prompt (operator decides) ───────────────
+// Non-blocking: the entry keeps flowing in the queue normally. When it has
+// waited past the threshold the full prompt shows; if untouched for
+// BOOST_COLLAPSE_MS it collapses to a small ⏰ marker that stays on the card —
+// the operator can click it any time to reopen the message and decide. So a
+// busy operator never loses the alert, and it never clutters for long.
+let boostTimers          = {}      // id -> auto-collapse timeout handle
+let boostCollapsed       = new Set() // ids whose prompt is collapsed to the marker
+const BOOST_COLLAPSE_MS  = 120000  // collapse the full prompt after 2 min untouched
+
+function boostOverdue(entry) {
+  return (Date.now() - entry.insertedAt) / 60000 >= maxWaitMinutes()
+}
+
+function clearBoostState(id) {
+  if (boostTimers[id]) { clearTimeout(boostTimers[id]); delete boostTimers[id] }
+  boostCollapsed.delete(id)
+}
+
+// Schedule the auto-collapse (once per expanded streak).
+function scheduleBoostCollapse(id) {
+  if (boostTimers[id]) return
+  boostTimers[id] = setTimeout(() => {
+    delete boostTimers[id]
+    boostCollapsed.add(id)
+    renderQueue()
+  }, BOOST_COLLAPSE_MS)
+}
+
+function acceptBoost(id)  { clearBoostState(id); pinNext(id) }   // Sim → bump to "próximo"
+function dismissBoost(id) {                                       // Não → collapse to marker now
+  if (boostTimers[id]) { clearTimeout(boostTimers[id]); delete boostTimers[id] }
+  boostCollapsed.add(id)
+  renderQueue()
+}
+function expandBoost(id) { boostCollapsed.delete(id); renderQueue() } // click marker → reopen
 
 // ── Session reset ──────────────────────────────────────
 function resetSession() {
@@ -678,8 +713,8 @@ function renderQueue() {
   const fair = sortedQueue()
 
   // Lock the current turn: once shown as "vez atual" it stays until the
-  // operator marks Cantou/Cancelar — new arrivals and the overdue boost
-  // only affect "próximo" onwards, never the person already at the mic.
+  // operator marks Cantou/Cancelar — new arrivals and manual boosts only
+  // affect "próximo" onwards, never the person already at the mic.
   let current = state.currentTurnId
     ? state.queue.find(e => e.id === state.currentTurnId) || null
     : null
@@ -723,16 +758,13 @@ function renderQueue() {
   // ── Próximo recomendado
   if (next) {
     const pinned       = state.priorityIds.includes(next.id)
-    const isOverdue    = (Date.now() - next.insertedAt) >= maxWaitMinutes() * 60000
     const minPending   = Math.min(...[next, ...waiting].map(e => e.insertedAt))
     const skipped      = !pinned && current && next.insertedAt > minPending
     const reason       = pinned
       ? '📌 Fixado manualmente'
-      : isOverdue
-        ? `⏰ Esperando há mais de ${maxWaitMinutes()} min`
-        : skipped
-          ? 'ⓘ Priorizado para girar a fila (mesas que cantaram menos primeiro)'
-          : ''
+      : skipped
+        ? 'ⓘ Priorizado para girar a fila (mesas que cantaram menos primeiro)'
+        : ''
     nextBlock.classList.remove('hidden')
     nextBlock.innerHTML = `
       <div class="next-card${pinned ? ' is-pinned' : ''}">
@@ -766,9 +798,15 @@ function renderQueue() {
     list.innerHTML = `<div class="queue-empty-sm">Sem mais ninguém na espera.</div>`
   } else {
     list.innerHTML = waiting.map((entry, i) => {
-      const pinned = state.priorityIds.includes(entry.id)
+      const pinned    = state.priorityIds.includes(entry.id)
+      const waitedMin = Math.floor((Date.now() - entry.insertedAt) / 60000)
+      const overdue   = !pinned && boostOverdue(entry)
+      const collapsed = boostCollapsed.has(entry.id)
+      const showFull  = overdue && !collapsed
+      const showBadge = overdue && collapsed
+      if (showFull) scheduleBoostCollapse(entry.id)
       return `
-      <div class="queue-card${pinned ? ' is-pinned' : ''}" data-id="${entry.id}" draggable="true"
+      <div class="queue-card${pinned ? ' is-pinned' : ''}${overdue ? ' has-boost' : ''}" data-id="${entry.id}" draggable="true"
         ondragstart="dragStart(event,'${entry.id}')" ondragend="dragEnd(event)"
         ondragover="dragOver(event)" ondrop="drop(event,'${entry.id}')"
         ondragleave="event.currentTarget.classList.remove('drag-over')"
@@ -794,10 +832,19 @@ function renderQueue() {
               <div class="card-inserted-row">
                 <span class="card-inserted">&#9201; ${formatTime(entry.insertedAt)}</span>
                 <span class="card-wait" data-inserted="${entry.insertedAt}">${calcWait(entry.insertedAt)}</span>
+                ${showBadge ? `<button class="boost-badge" onclick="expandBoost('${entry.id}')" title="Esperando há muito — ver opções">⏰ furar?</button>` : ''}
               </div>
             </div>
           </div>
         </div>
+        ${showFull ? `
+        <div class="card-boost">
+          <span class="card-boost-msg">⏰ Mesa ${entry.table} espera há ${waitedMin} min. Furar pra frente?</span>
+          <span class="card-boost-actions">
+            <button class="btn-boost-yes" onclick="acceptBoost('${entry.id}')">Sim</button>
+            <button class="btn-boost-no" onclick="dismissBoost('${entry.id}')">Não</button>
+          </span>
+        </div>` : ''}
       </div>`
     }).join('')
   }
@@ -1362,8 +1409,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   setInterval(checkAutoReset, 60000)
   setInterval(updateWaitTimes, 30000)
-  // Recompute the order periodically so the overdue (>30min) boost kicks in
-  // even without a queue event.
+  // Re-render periodically so the "furar pra frente?" prompt appears once a
+  // card crosses the wait threshold, even without a queue event.
   setInterval(renderQueue, 60000)
 
   showStartupDialog()

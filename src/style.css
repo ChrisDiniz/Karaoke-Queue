@@ -385,10 +385,72 @@ input::placeholder { color: var(--text-dim); }
   padding: 13px 16px;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 14px;
   transition: border-color 0.15s, background 0.15s;
   animation: fadeUp 0.18s ease;
 }
+
+.queue-card.has-boost {
+  border-color: var(--warning);
+  background: linear-gradient(90deg, var(--warning-dim) 0%, var(--bg-surface) 60%);
+}
+
+/* ── Overdue boost prompt (inline on the card) ────────────── */
+.card-boost {
+  flex: 0 0 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--warning-dim);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+}
+
+.card-boost-msg {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--warning);
+}
+
+.card-boost-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.btn-boost-yes,
+.btn-boost-no {
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 6px 16px;
+  transition: opacity 0.15s;
+}
+
+.btn-boost-yes { background: var(--success); color: #fff; }
+.btn-boost-no  { background: var(--bg-elevated); color: var(--text-muted); }
+.btn-boost-yes:hover,
+.btn-boost-no:hover { opacity: 0.85; }
+
+/* Collapsed marker — stays on the card, click to reopen the prompt */
+.boost-badge {
+  background: var(--warning-dim);
+  border: 1px solid var(--warning);
+  color: var(--warning);
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 99px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+.boost-badge:hover { opacity: 0.8; }
 
 .queue-card:hover {
   background: var(--bg-elevated);
