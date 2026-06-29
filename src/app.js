@@ -417,12 +417,13 @@ function unpin(id) {
 
 // ── Overdue boost prompt (operator decides) ───────────────
 // Non-blocking: the entry keeps flowing in the queue normally. When it has
-// waited past the threshold the full prompt shows; if untouched for
-// BOOST_COLLAPSE_MS it collapses to a small ⏰ marker that stays on the card —
-// the operator can click it any time to reopen the message and decide. So a
-// busy operator never loses the alert, and it never clutters for long.
-let boostTimers          = {}      // id -> auto-collapse timeout handle
-let boostCollapsed       = new Set() // ids whose prompt is collapsed to the marker
+// waited past the threshold the full prompt shows. Two outcomes:
+//   • "Não" (explicit decision) → the alert is fully dismissed for this entry.
+//   • untouched for BOOST_COLLAPSE_MS → it collapses to a small ⏰ marker the
+//     operator can click to reopen — so an ignored alert isn't lost.
+let boostTimers          = {}        // id -> auto-collapse timeout handle
+let boostCollapsed       = new Set()  // ids collapsed to the ⏰ marker (untouched)
+let boostDismissed       = new Set()  // ids the operator said "Não" to (fully hidden)
 const BOOST_COLLAPSE_MS  = 120000  // collapse the full prompt after 2 min untouched
 
 function boostOverdue(entry) {
@@ -432,6 +433,7 @@ function boostOverdue(entry) {
 function clearBoostState(id) {
   if (boostTimers[id]) { clearTimeout(boostTimers[id]); delete boostTimers[id] }
   boostCollapsed.delete(id)
+  boostDismissed.delete(id)
 }
 
 // Schedule the auto-collapse (once per expanded streak).
@@ -445,9 +447,10 @@ function scheduleBoostCollapse(id) {
 }
 
 function acceptBoost(id)  { clearBoostState(id); pinNext(id) }   // Sim → bump to "próximo"
-function dismissBoost(id) {                                       // Não → collapse to marker now
+function dismissBoost(id) {                                       // Não → fully hide the alert
   if (boostTimers[id]) { clearTimeout(boostTimers[id]); delete boostTimers[id] }
-  boostCollapsed.add(id)
+  boostCollapsed.delete(id)
+  boostDismissed.add(id)
   renderQueue()
 }
 function expandBoost(id) { boostCollapsed.delete(id); renderQueue() } // click marker → reopen
@@ -718,6 +721,7 @@ function renderQueue() {
     if (!waitingIds.has(id)) { clearTimeout(boostTimers[id]); delete boostTimers[id] }
   })
   boostCollapsed.forEach(id => { if (!waitingIds.has(id)) boostCollapsed.delete(id) })
+  boostDismissed.forEach(id => { if (!waitingIds.has(id)) boostDismissed.delete(id) })
 
   counter.textContent = waiting.length
 
@@ -789,7 +793,7 @@ function renderQueue() {
     list.innerHTML = waiting.map((entry, i) => {
       const pinned    = state.priorityIds.includes(entry.id)
       const waitedMin = Math.floor((Date.now() - entry.insertedAt) / 60000)
-      const overdue   = !pinned && boostOverdue(entry)
+      const overdue   = !pinned && boostOverdue(entry) && !boostDismissed.has(entry.id)
       const collapsed = boostCollapsed.has(entry.id)
       const showFull  = overdue && !collapsed
       const showBadge = overdue && collapsed
