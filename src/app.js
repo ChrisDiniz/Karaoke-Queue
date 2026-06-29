@@ -241,30 +241,21 @@ function maxWaitMinutes() {
   return Math.max(MIN_WAIT_FLOOR, Math.round(WAIT_MARGIN * distinct * MIN_PER_TURN))
 }
 
-// Only sings within this recent window count toward a table's priority weight,
-// so a regular that sang a lot earlier in the night isn't penalised forever —
-// the weight measures who is monopolising *now*, not lifetime loyalty.
-const RECENT_WINDOW_MIN = 90
-
-// Rotating order with anti-repetition, seeded by the last sung table.
-// Primary key: tableTurns = how many turns this table will have had by the
-// time this entry sings = (recent sings in the window) + (its own entries
-// waiting ahead). Tables that sang less recently go first, so in a busy queue
-// nobody racks up turns just by arriving early or re-adding fast. Ties broken
-// by insertedAt (FIFO). Long waits are not auto-promoted here — the operator
-// is offered a boost prompt on the card instead.
+// Arrival-order queue (FIFO) with two anti-monopoly safeguards, seeded by the
+// last sung table. No history penalty: a table that already sang is NOT pushed
+// back for having sung — it simply competes by when it (re-)entered, and since
+// re-adding lands at the back, it naturally waits a full lap.
+//   1. queueRound = how many entries of the SAME table are waiting ahead. The
+//      extra entries of a table that registered several at once drop behind
+//      other tables, so it never takes many turns in a row.
+//   2. anti-repetition (greedy below): the same table doesn't sing twice in a
+//      row while another table is waiting.
+// Ties broken by insertedAt (arrival order).
 function fairOrder(entries, seedLastTable) {
-  const now         = Date.now()
-  const windowStart = now - RECENT_WINDOW_MIN * 60000
-  const sungByTable = {}
-  sungEntries().forEach(e => {
-    if (e.doneAt >= windowStart) sungByTable[e.table] = (sungByTable[e.table] || 0) + 1
-  })
-  const queueRound  = e => entries.filter(o => o.table === e.table && o.insertedAt < e.insertedAt).length
-  const tableTurns  = e => (sungByTable[e.table] || 0) + queueRound(e)
-  const remaining   = [...entries].sort((a, b) => {
-    const ta = tableTurns(a), tb = tableTurns(b)
-    if (ta !== tb) return ta - tb
+  const queueRound = e => entries.filter(o => o.table === e.table && o.insertedAt < e.insertedAt).length
+  const remaining  = [...entries].sort((a, b) => {
+    const qa = queueRound(a), qb = queueRound(b)
+    if (qa !== qb) return qa - qb
     return a.insertedAt - b.insertedAt
   })
   const result    = []
@@ -296,17 +287,6 @@ function updateWaitTimes() {
     el.className     = 'card-wait' +
       (mins >= 30 ? ' card-wait--danger' : mins >= 15 ? ' card-wait--warning' : '')
   })
-}
-
-function getRoundColor(round) {
-  const colors = ['#10b981', '#06b6d4', '#f59e0b', '#f97316', '#ef4444']
-  return colors[Math.min(round - 1, colors.length - 1)]
-}
-
-function getRound(entry) {
-  const historySings  = sungEntries().filter(h => h.table === entry.table).length
-  const queueBefore   = state.queue.filter(q => q.table === entry.table && q.insertedAt < entry.insertedAt).length
-  return historySings + queueBefore + 1
 }
 
 // Full ordered queue. Pinned entries are injected right after the current
@@ -730,7 +710,16 @@ function renderQueue() {
     .filter(e => !topIds.has(e.id))
     .sort((a, b) => a.insertedAt - b.insertedAt)
 
-  counter.textContent = state.queue.length
+  // Prune boost state for entries no longer in the waiting list (promoted to
+  // vez atual/próximo, sung, cancelled, or wiped by a new expediente), clearing
+  // any pending auto-collapse timer so it can't fire after the entry left.
+  const waitingIds = new Set(waiting.map(e => e.id))
+  Object.keys(boostTimers).forEach(id => {
+    if (!waitingIds.has(id)) { clearTimeout(boostTimers[id]); delete boostTimers[id] }
+  })
+  boostCollapsed.forEach(id => { if (!waitingIds.has(id)) boostCollapsed.delete(id) })
+
+  counter.textContent = waiting.length
 
   // ── Vez atual
   if (current) {
@@ -763,7 +752,7 @@ function renderQueue() {
     const reason       = pinned
       ? '📌 Fixado manualmente'
       : skipped
-        ? 'ⓘ Priorizado para girar a fila (mesas que cantaram menos primeiro)'
+        ? 'ⓘ Ajustado para a mesma mesa não cantar em seguida'
         : ''
     nextBlock.classList.remove('hidden')
     nextBlock.innerHTML = `
@@ -811,31 +800,21 @@ function renderQueue() {
         ondragover="dragOver(event)" ondrop="drop(event,'${entry.id}')"
         ondragleave="event.currentTarget.classList.remove('drag-over')"
       >
-        <div class="card-left-actions">
-          <button class="btn-remove" onclick="cancelEntry('${entry.id}')" title="Cancelar">✕</button>
-          <button class="btn-edit" onclick="openEdit('${entry.id}')" title="Editar registro">✏️</button>
+        <span class="queue-pos">${i + 1}</span>
+        ${tableBadgeHtml(entry.table)}
+        <div class="queue-main">
+          <span class="card-name">${escapeHtml(entry.name)}</span>
+          <span class="card-song">${songsHtml(entry)}</span>
         </div>
-        <div class="card-pin-col">${pinned ? `<button class="card-pin-icon" onclick="unpin('${entry.id}')" title="Soltar prioridade">📌</button>` : ''}</div>
-        <div class="card-position-wrap">
-          <span class="card-position">${i + 1}</span>
+        <div class="queue-meta">
+          <span class="card-inserted">&#9201; ${formatTime(entry.insertedAt)}</span>
+          <span class="card-wait" data-inserted="${entry.insertedAt}">${calcWait(entry.insertedAt)}</span>
+          ${showBadge ? `<button class="boost-badge" onclick="expandBoost('${entry.id}')" title="Esperando há muito — ver opções">⏰ furar?</button>` : ''}
         </div>
-        <div class="card-info">
-          <div class="card-top">
-            <div class="card-table-wrap">
-              ${tableBadgeHtml(entry.table)}
-            </div>
-            <div class="card-info-main">
-              <div class="card-info-top">
-                <span class="card-name">${escapeHtml(entry.name)}</span>
-                <span class="card-song">${songsHtml(entry)}</span>
-              </div>
-              <div class="card-inserted-row">
-                <span class="card-inserted">&#9201; ${formatTime(entry.insertedAt)}</span>
-                <span class="card-wait" data-inserted="${entry.insertedAt}">${calcWait(entry.insertedAt)}</span>
-                ${showBadge ? `<button class="boost-badge" onclick="expandBoost('${entry.id}')" title="Esperando há muito — ver opções">⏰ furar?</button>` : ''}
-              </div>
-            </div>
-          </div>
+        <div class="queue-actions">
+          ${pinned ? `<button class="btn btn-outline btn-sm" onclick="unpin('${entry.id}')">Soltar 📌</button>` : ''}
+          <button class="btn btn-outline btn-sm" onclick="openEdit('${entry.id}')" title="Editar">✏️</button>
+          <button class="btn btn-danger-outline btn-sm" onclick="cancelEntry('${entry.id}')">Cancelar</button>
         </div>
         ${showFull ? `
         <div class="card-boost">
