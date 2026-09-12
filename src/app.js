@@ -26,6 +26,7 @@ let state = {
   sessions:         [],
   currentSessionId: null,
   priorityIds:      [],   // manually pinned entries (drag override), front = first
+  nextTurnId:       null, // entry displaced by a manual current-turn promotion
   currentTurnId:    null, // locked "vez atual" — stays put until Cantou/Cancelar
   lastReset:        null  // toDateString() of the last auto-reset (18h)
 }
@@ -67,6 +68,7 @@ function saveState() {
     sessions:         state.sessions,
     currentSessionId: state.currentSessionId,
     priorityIds:      state.priorityIds,
+    nextTurnId:       state.nextTurnId,
     currentTurnId:    state.currentTurnId,
     lastReset:        state.lastReset
   })
@@ -104,6 +106,7 @@ async function loadState() {
   state.sessions         = data.sessions         || []
   state.currentSessionId = data.currentSessionId || null
   state.priorityIds      = data.priorityIds      || []
+  state.nextTurnId       = data.nextTurnId       || null
   state.currentTurnId    = data.currentTurnId    || null
   state.lastReset        = data.lastReset        || null
 
@@ -289,9 +292,14 @@ const PROXIMOS_COUNT = 3
 // waiting list below is never pinned.
 function playOrder() {
   const pinnedSet = new Set(state.priorityIds)
-  const pinned    = state.priorityIds.map(id => state.queue.find(e => e.id === id)).filter(Boolean)
-  const fair      = fairOrder(state.queue.filter(e => !pinnedSet.has(e.id)), lastSungTable())
-  return [...pinned, ...fair]
+  const forcedNext = state.queue.find(e => e.id === state.nextTurnId) || null
+  const pinned    = state.priorityIds
+    .filter(id => id !== forcedNext?.id)
+    .map(id => state.queue.find(e => e.id === id))
+    .filter(Boolean)
+  const excludedIds = new Set([...pinnedSet, forcedNext?.id].filter(Boolean))
+  const fair = fairOrder(state.queue.filter(e => !excludedIds.has(e.id)), lastSungTable())
+  return [forcedNext, ...pinned, ...fair].filter(Boolean)
 }
 
 // ── Actions ───────────────────────────────────────────
@@ -362,6 +370,7 @@ function cancelEntry(id) {
   state.priorityIds = state.priorityIds.filter(p => p !== id)
   clearBoostState(id)
   if (state.currentTurnId === id) state.currentTurnId = null
+  if (state.nextTurnId === id) state.nextTurnId = null
   entry.status      = 'cancelled'
   entry.cancelledAt = Date.now()
   state.history.unshift(entry)
@@ -380,6 +389,7 @@ function markDone(id) {
   state.priorityIds = state.priorityIds.filter(p => p !== entry.id)
   clearBoostState(entry.id)
   if (state.currentTurnId === entry.id) state.currentTurnId = null
+  if (state.nextTurnId === entry.id) state.nextTurnId = null
   state.history.unshift(entry)
   saveState()
   renderQueue()
@@ -454,6 +464,7 @@ function resetSession() {
 
   state.queue           = []
   state.priorityIds     = []
+  state.nextTurnId      = null
   state.currentTurnId   = null
   historyFilter         = { search: '', table: null, order: 'desc', sessionId: null }
   state.lastReset = new Date().toDateString()
@@ -691,6 +702,7 @@ function renderQueue() {
     : null
   if (!current) {
     current = order[0] || null
+    if (current && current.id === state.nextTurnId) state.nextTurnId = null
     state.currentTurnId = current ? current.id : null
     saveState()
   }
@@ -983,11 +995,11 @@ function dropOnCurrent(event) {
   clearBoostState(dragged)
   state.priorityIds = state.priorityIds.filter(p => p !== dragged)
   state.currentTurnId = dragged
-  // the displaced current becomes the 1st "Próximo" (pinned at the front)
   if (oldCurrentId && oldCurrentId !== dragged && state.queue.some(e => e.id === oldCurrentId)) {
     state.priorityIds = state.priorityIds.filter(p => p !== oldCurrentId)
-    state.priorityIds.unshift(oldCurrentId)
-    if (state.priorityIds.length > PROXIMOS_COUNT) state.priorityIds = state.priorityIds.slice(0, PROXIMOS_COUNT)
+    state.nextTurnId = oldCurrentId
+  } else {
+    state.nextTurnId = null
   }
   saveState()
   renderQueue()
