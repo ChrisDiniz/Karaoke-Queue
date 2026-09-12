@@ -12,6 +12,10 @@ const KEYS = {
   LAST_RESET:         'kshake_last_reset'
 }
 
+const TRIAL_DAYS = 30
+const LICENSE_CODE = 'karaokequeue'
+const DAY_MS = 24 * 60 * 60 * 1000
+
 // ── Filter state (in-memory only) ─────────────────────
 let historyFilter = {
   search: '',
@@ -28,7 +32,9 @@ let state = {
   priorityIds:      [],   // manually pinned entries (drag override), front = first
   nextTurnId:       null, // entry displaced by a manual current-turn promotion
   currentTurnId:    null, // locked "vez atual" — stays put until Cantou/Cancelar
-  lastReset:        null  // toDateString() of the last auto-reset (18h)
+  lastReset:        null, // toDateString() of the last auto-reset (18h)
+  trialStartedAt:   null,
+  licenseActivated: false
 }
 
 // All critical state lives in electron-store (durable, synchronous disk writes,
@@ -70,7 +76,9 @@ function saveState() {
     priorityIds:      state.priorityIds,
     nextTurnId:       state.nextTurnId,
     currentTurnId:    state.currentTurnId,
-    lastReset:        state.lastReset
+    lastReset:        state.lastReset,
+    trialStartedAt:   state.trialStartedAt,
+    licenseActivated: state.licenseActivated
   })
 }
 
@@ -109,6 +117,8 @@ async function loadState() {
   state.nextTurnId       = data.nextTurnId       || null
   state.currentTurnId    = data.currentTurnId    || null
   state.lastReset        = data.lastReset        || null
+  state.trialStartedAt   = data.trialStartedAt   || Date.now()
+  state.licenseActivated = data.licenseActivated === true
 
   // First run or migration: create a session if none exists
   if (state.sessions.length === 0) {
@@ -534,6 +544,33 @@ function showStartupDialog() {
 
 function closeStartupModal() {
   document.getElementById('startup-modal').classList.add('hidden')
+}
+
+function trialExpired() {
+  return !state.licenseActivated && Date.now() >= state.trialStartedAt + TRIAL_DAYS * DAY_MS
+}
+
+function showLicenseModal() {
+  document.getElementById('license-modal').classList.remove('hidden')
+  document.getElementById('license-code').focus()
+}
+
+function enforceLicense() {
+  if (trialExpired()) showLicenseModal()
+}
+
+function activateLicense(code) {
+  const error = document.getElementById('license-error')
+  if (code.trim().toLowerCase() !== LICENSE_CODE) {
+    error.textContent = 'Invalid activation code.'
+    return
+  }
+
+  state.licenseActivated = true
+  saveState()
+  document.getElementById('license-modal').classList.add('hidden')
+  error.textContent = ''
+  showToast('App activated successfully.')
 }
 
 // ── Table detail modal ────────────────────────────────────
@@ -1144,6 +1181,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   await loadState() // disk-backed store is async; finish before first render
+  const accessGranted = !trialExpired()
   renderQueue()
   updateClock()
   updateSessionStartInfo()
@@ -1191,6 +1229,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-close-history').addEventListener('click', closeHistory)
   document.getElementById('overlay').addEventListener('click', () => { closeHistory(); closeTableModal() })
   document.getElementById('btn-close-table-modal').addEventListener('click', closeTableModal)
+  document.getElementById('license-form').addEventListener('submit', e => {
+    e.preventDefault()
+    activateLicense(document.getElementById('license-code').value)
+  })
   document.getElementById('history-search').addEventListener('input', e => {
     historyFilter.search = e.target.value
     renderHistory()
@@ -1202,12 +1244,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   })
 
   setInterval(checkAutoReset, 60000)
+  setInterval(enforceLicense, 60000)
   setInterval(updateWaitTimes, 30000)
   // Re-render periodically so the "furar pra frente?" prompt appears once a
   // card crosses the wait threshold, even without a queue event.
   setInterval(renderQueue, 60000)
 
-  showStartupDialog()
+  if (accessGranted) showStartupDialog()
+  else showLicenseModal()
 
   // ── Editable app name ──────────────────────────────
   const appNameEl  = document.getElementById('app-name')

@@ -69,6 +69,16 @@ The Electron application stores queue, history, session, and preference data usi
 
 When `src/index.html` is opened directly in a browser during development, the app falls back to `localStorage` for storage.
 
+## Trial Activation
+
+New installations include a 30-day local trial. After the trial expires, the application requires the activation code before it can be used:
+
+```text
+karaokequeue
+```
+
+Successful activation is stored locally and only needs to be entered once on that installation.
+
 ## Project Structure
 
 ```text

@@ -1439,6 +1439,59 @@ input::placeholder { color: var(--text-dim); }
   justify-content: center;
 }
 
+/* ── License modal ──────────────────────────────────────── */
+.license-box {
+  max-width: 420px;
+  text-align: center;
+  padding: 36px;
+  align-items: center;
+  gap: 20px;
+}
+
+.license-icon {
+  font-size: 2.75rem;
+  line-height: 1;
+}
+
+.license-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.license-content h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.license-content p {
+  font-size: 0.95rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.license-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+.license-input {
+  width: 100%;
+  text-align: center;
+  letter-spacing: 0.08em;
+}
+
+.license-error {
+  min-height: 1.1em;
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.license-submit { width: 100%; }
+
 /* ── Overlay ──────────────────────────────────────────────── */
 .overlay {
   position: fixed;

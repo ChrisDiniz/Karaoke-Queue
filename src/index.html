@@ -189,6 +189,21 @@
     </div>
   </div>
 
+  <div id="license-modal" class="modal hidden">
+    <div class="modal-box license-box">
+      <div class="license-icon">🔒</div>
+      <div class="license-content">
+        <h2>Trial period ended</h2>
+        <p>Your 30-day trial has ended. Enter the activation code to continue using Karaoke Queue.</p>
+      </div>
+      <form id="license-form" class="license-form" autocomplete="off">
+        <input id="license-code" type="password" class="license-input" placeholder="Activation code" autocomplete="off" required />
+        <p id="license-error" class="license-error"></p>
+        <button type="submit" class="btn btn-primary license-submit">Activate</button>
+      </form>
+    </div>
+  </div>
+
   <div id="overlay" class="overlay hidden"></div>
 
   <div id="toast" class="toast hidden"></div>
