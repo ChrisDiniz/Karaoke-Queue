@@ -230,6 +230,7 @@ function lastSungTable() {
 const MIN_PER_TURN   = 6    // estimated minutes a table occupies (up to 2 songs)
 const WAIT_MARGIN    = 1.5  // offer the boost only after ~1.5 full rotations
 const MIN_WAIT_FLOOR = 30   // never below this, for tiny queues
+const RECENT_WINDOW_MIN = 90
 
 function maxWaitMinutes() {
   const distinct = new Set(state.queue.map(e => e.table)).size
@@ -237,9 +238,8 @@ function maxWaitMinutes() {
 }
 
 // Arrival-order queue (FIFO) with two anti-monopoly safeguards, seeded by the
-// last sung table. No history penalty: a table that already sang is NOT pushed
-// back for having sung — it simply competes by when it (re-)entered, and since
-// re-adding lands at the back, it naturally waits a full lap.
+// last sung table. Recent sings count as virtual turns so removing an entry
+// does not reset the rotation for the remaining entries of that table.
 //   1. queueRound = how many entries of the SAME table are waiting ahead. The
 //      extra entries of a table that registered several at once drop behind
 //      other tables, so it never takes many turns in a row.
@@ -247,10 +247,18 @@ function maxWaitMinutes() {
 //      row while another table is waiting.
 // Ties broken by insertedAt (arrival order).
 function fairOrder(entries, seedLastTable) {
+  const windowStart = Date.now() - RECENT_WINDOW_MIN * 60000
+  const sungByTable = {}
+  sungEntries().forEach(entry => {
+    if (entry.doneAt >= windowStart) {
+      sungByTable[entry.table] = (sungByTable[entry.table] || 0) + 1
+    }
+  })
   const queueRound = e => entries.filter(o => o.table === e.table && o.insertedAt < e.insertedAt).length
+  const tableTurns = e => (sungByTable[e.table] || 0) + queueRound(e)
   const remaining  = [...entries].sort((a, b) => {
-    const qa = queueRound(a), qb = queueRound(b)
-    if (qa !== qb) return qa - qb
+    const turnsA = tableTurns(a), turnsB = tableTurns(b)
+    if (turnsA !== turnsB) return turnsA - turnsB
     return a.insertedAt - b.insertedAt
   })
   const result    = []
