@@ -15,8 +15,7 @@
     "appId": "com.karaoke.queue",
     "productName": "Karaoke Queue",
     "win": {
-      "target": "nsis",
-      "icon": "src/assets/icon.ico"
+      "target": "nsis"
     },
     "files": [
       "main.js",
