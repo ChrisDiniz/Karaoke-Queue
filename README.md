@@ -25,6 +25,12 @@ The app intentionally focuses on queue operation and history rather than statist
 - Node.js 18 or newer
 - npm
 
+## Download
+
+Windows users can download the latest installer from the [latest GitHub Release](https://github.com/ChrisDiniz/Karaoke-Queue/releases/latest).
+
+The installer includes everything needed to run the application. Node.js and npm are not required for installed users.
+
 ## Installation
 
 ```bash
