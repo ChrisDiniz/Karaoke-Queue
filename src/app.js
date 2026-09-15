@@ -984,6 +984,8 @@ function setTableFilter(table) {
 // "Vez atual" and "Próximo recomendado" blocks — dropping anywhere in the
 // waiting list does nothing.
 let draggedId = null
+const DRAG_SCROLL_EDGE = 80
+const DRAG_SCROLL_MAX_SPEED = 18
 
 // Confirmation shown when dropping onto "Vez atual" (interrupts who's singing).
 const PROMOTE_TO_CURRENT_MSG = 'Colocar esta mesa para cantar AGORA? A mesa que está na vez passa a ser a próxima.'
@@ -997,6 +999,22 @@ function dragEnd(event) {
   const c = event.target.closest('.queue-card, .next-card')
   if (c) c.classList.remove('dragging')
   document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'))
+  draggedId = null
+}
+
+function autoScrollDuringDrag(event) {
+  if (!draggedId) return
+  const container = document.querySelector('.app-main')
+  if (!container) return
+
+  const bounds = container.getBoundingClientRect()
+  let scrollDelta = 0
+  if (event.clientY < bounds.top + DRAG_SCROLL_EDGE) {
+    scrollDelta = -Math.ceil((bounds.top + DRAG_SCROLL_EDGE - event.clientY) / DRAG_SCROLL_EDGE * DRAG_SCROLL_MAX_SPEED)
+  } else if (event.clientY > bounds.bottom - DRAG_SCROLL_EDGE) {
+    scrollDelta = Math.ceil((event.clientY - (bounds.bottom - DRAG_SCROLL_EDGE)) / DRAG_SCROLL_EDGE * DRAG_SCROLL_MAX_SPEED)
+  }
+  if (scrollDelta) container.scrollTop += scrollDelta
 }
 
 // dragover handler for the now/next blocks — required so drop can fire.
@@ -1227,6 +1245,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('btn-history').addEventListener('click', openHistory)
   document.getElementById('btn-close-history').addEventListener('click', closeHistory)
+  document.addEventListener('dragover', autoScrollDuringDrag)
   document.getElementById('overlay').addEventListener('click', () => { closeHistory(); closeTableModal() })
   document.getElementById('btn-close-table-modal').addEventListener('click', closeTableModal)
   document.getElementById('license-form').addEventListener('submit', e => {
