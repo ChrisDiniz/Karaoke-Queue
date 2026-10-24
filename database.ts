@@ -1,15 +1,87 @@
-'use strict'
-
-const fs = require('node:fs')
-const path = require('node:path')
-const { DatabaseSync } = require('node:sqlite')
+import fs from 'node:fs'
+import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 const DATABASE_FILENAME = 'karaoke.sqlite'
 const LEGACY_FILENAME = 'karaoke-data.json'
 const LEGACY_MIGRATION = 'electron-store-v1'
 const SCHEMA_VERSION = 1
 
-function transaction(database, operation) {
+interface DatabaseEntry {
+  id: string
+  sessionId: string | null
+  name: string
+  songNumber: string
+  songNumber2: string
+  table: string
+  insertedAt: number
+  status: EntryStatus
+  doneAt: number | null
+  cancelledAt: number | null
+  queueOrder: number | null
+  historyOrder: number | null
+}
+
+interface DatabaseSession {
+  id: string
+  startedAt: number
+  endedAt: number | null
+  order: number
+}
+
+interface DatabaseSnapshot {
+  sessions: DatabaseSession[]
+  entries: Map<string, DatabaseEntry>
+  appState: {
+    currentSessionId: string | null
+    priorityIdsJson: string
+    nextTurnId: string | null
+    currentTurnId: string | null
+    lastReset: string | null
+    trialStartedAt: number | null
+    licenseActivated: number
+  }
+}
+
+interface DatabaseEntryRow {
+  id: string
+  session_id: string | null
+  name: string
+  song_number: string
+  song_number2: string
+  table_number: string
+  inserted_at: number
+  status: EntryStatus
+  done_at: number | null
+  cancelled_at: number | null
+  queue_order: number | null
+  history_order: number | null
+}
+
+interface DatabaseSessionRow {
+  id: string
+  started_at: number
+  ended_at: number | null
+}
+
+interface DatabaseAppStateRow {
+  current_session_id: string | null
+  priority_ids_json: string
+  next_turn_id: string | null
+  current_turn_id: string | null
+  last_reset: string | null
+  trial_started_at: number | null
+  license_activated: number
+}
+
+interface KaraokeDatabase {
+  databasePath: string
+  loadState: () => StoredAppState
+  saveState: (state: AppState) => void
+  close: () => void
+}
+
+function transaction<T>(database: DatabaseSync, operation: () => T): T {
   database.exec('BEGIN IMMEDIATE')
   try {
     const result = operation()
@@ -21,8 +93,8 @@ function transaction(database, operation) {
   }
 }
 
-function initializeSchema(database) {
-  const { user_version: version } = database.prepare('PRAGMA user_version').get()
+function initializeSchema(database: DatabaseSync): void {
+  const version = Number(database.prepare('PRAGMA user_version').get()?.user_version ?? 0)
   if (version > SCHEMA_VERSION) {
     throw new Error(`Database schema version ${version} is newer than supported version ${SCHEMA_VERSION}.`)
   }
@@ -81,7 +153,7 @@ function initializeSchema(database) {
   })
 }
 
-function normalizeEntry(entry, status) {
+function normalizeEntry(entry: QueueEntry, status: EntryStatus): DatabaseEntry {
   if (!entry || typeof entry !== 'object' || !entry.id) {
     throw new Error('Cannot save an entry without an id.')
   }
@@ -96,11 +168,13 @@ function normalizeEntry(entry, status) {
     insertedAt: Number(entry.insertedAt) || 0,
     status,
     doneAt: entry.doneAt == null ? null : Number(entry.doneAt),
-    cancelledAt: entry.cancelledAt == null ? null : Number(entry.cancelledAt)
+    cancelledAt: entry.cancelledAt == null ? null : Number(entry.cancelledAt),
+    queueOrder: null,
+    historyOrder: null
   }
 }
 
-function normalizeSnapshot(state) {
+function normalizeSnapshot(state: StoredAppState): DatabaseSnapshot {
   const sessions = (Array.isArray(state.sessions) ? state.sessions : []).map((session, index) => {
     if (!session || !session.id) throw new Error('Cannot save a session without an id.')
     return {
@@ -112,7 +186,7 @@ function normalizeSnapshot(state) {
   })
 
   const entries = new Map()
-  const addEntry = (entry, status, orderKey, index) => {
+  const addEntry = (entry: QueueEntry, status: EntryStatus, orderKey: 'queueOrder' | 'historyOrder', index: number): void => {
     const row = normalizeEntry(entry, status)
     if (entries.has(row.id)) throw new Error(`Duplicate entry id "${row.id}" in saved state.`)
     row.queueOrder = orderKey === 'queueOrder' ? index : null
@@ -145,11 +219,11 @@ function normalizeSnapshot(state) {
   }
 }
 
-function snapshotsEqual(left, right) {
+function snapshotsEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
-function writeSnapshot(database, state) {
+function writeSnapshot(database: DatabaseSync, state: StoredAppState): void {
   const queue = Array.isArray(state.queue) ? state.queue : []
   const history = Array.isArray(state.history) ? state.history : []
   const sessions = Array.isArray(state.sessions) ? state.sessions : []
@@ -204,11 +278,11 @@ function writeSnapshot(database, state) {
   )
 }
 
-function migrateLegacyStore(database, legacyPath) {
+function migrateLegacyStore(database: DatabaseSync, legacyPath: string): void {
   const getMetadata = database.prepare('SELECT value FROM app_metadata WHERE name = ?')
   if (getMetadata.get(LEGACY_MIGRATION)) return
 
-  let legacyState = null
+  let legacyState: StoredAppState | null = null
   if (fs.existsSync(legacyPath)) {
     const contents = fs.readFileSync(legacyPath, 'utf8')
     legacyState = JSON.parse(contents)
@@ -229,8 +303,8 @@ function migrateLegacyStore(database, legacyPath) {
   })
 }
 
-function mapEntry(row) {
-  const entry = {
+function mapEntry(row: DatabaseEntryRow): QueueEntry {
+  const entry: QueueEntry = {
     id: row.id,
     name: row.name,
     songNumber: row.song_number,
@@ -245,7 +319,7 @@ function mapEntry(row) {
   return entry
 }
 
-function createKaraokeDatabase(userDataPath) {
+export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
   const databasePath = path.join(userDataPath, DATABASE_FILENAME)
   fs.mkdirSync(path.dirname(databasePath), { recursive: true })
 
@@ -260,37 +334,40 @@ function createKaraokeDatabase(userDataPath) {
     throw error
   }
 
-  const readState = () => {
-    const appState = database.prepare('SELECT * FROM app_state WHERE singleton = 1').get()
+  const readState = (): StoredAppState => {
+    const appState = database.prepare('SELECT * FROM app_state WHERE singleton = 1').get() as unknown as DatabaseAppStateRow | undefined
     if (!appState) return {}
 
     return {
       queue: database.prepare(
         "SELECT * FROM entries WHERE status = 'pending' ORDER BY queue_order"
-      ).all().map(mapEntry),
+      ).all().map(row => mapEntry(row as unknown as DatabaseEntryRow)),
       history: database.prepare(
         "SELECT * FROM entries WHERE status IN ('done', 'cancelled') ORDER BY history_order"
-      ).all().map(mapEntry),
+      ).all().map(row => mapEntry(row as unknown as DatabaseEntryRow)),
       sessions: database.prepare(
         'SELECT id, started_at, ended_at FROM sessions ORDER BY session_order'
-      ).all().map(session => ({
+      ).all().map(rawSession => {
+        const session = rawSession as unknown as DatabaseSessionRow
+        return ({
         id: session.id,
         startedAt: session.started_at,
         endedAt: session.ended_at
-      })),
+        })
+      }),
       currentSessionId: appState.current_session_id,
       priorityIds: JSON.parse(appState.priority_ids_json),
       nextTurnId: appState.next_turn_id,
       currentTurnId: appState.current_turn_id,
       lastReset: appState.last_reset,
-      trialStartedAt: appState.trial_started_at,
+      trialStartedAt: appState.trial_started_at ?? Date.now(),
       licenseActivated: appState.license_activated === 1
     }
   }
 
   let previousSnapshot = normalizeSnapshot(readState())
 
-  const saveState = state => {
+  const saveState = (state: AppState): void => {
     const nextSnapshot = normalizeSnapshot(state)
     const previous = previousSnapshot
 
@@ -375,5 +452,3 @@ function createKaraokeDatabase(userDataPath) {
     close: () => database.close()
   }
 }
-
-module.exports = { createKaraokeDatabase }

@@ -2,17 +2,23 @@
   "name": "karaoke-queue",
   "version": "1.0.1",
   "description": "Fair queue manager for karaoke venues",
-  "main": "main.js",
+  "main": "build/main.js",
+  "engines": {
+    "node": ">=22.12"
+  },
   "scripts": {
-    "start": "electron .",
-    "build": "electron-builder",
-    "test:e2e": "node tests/electron-smoke.cjs",
+    "compile": "tsc -p tsconfig.json && node build/scripts/copy-assets.js",
+    "start": "npm run compile && electron .",
+    "build": "npm run compile && electron-builder",
+    "test:e2e": "npm run compile && node build/tests/electron-smoke.js",
     "test:e2e:headless": "env -u WAYLAND_DISPLAY xvfb-run -a npm run test:e2e"
   },
   "devDependencies": {
+    "@types/node": "^24.19.2",
     "electron": "^45.0.0",
     "electron-builder": "^26.18.0",
-    "playwright": "^1.64.1"
+    "playwright": "^1.64.1",
+    "typescript": "^5.9.3"
   },
   "build": {
     "appId": "com.karaoke.queue",
@@ -20,11 +26,6 @@
     "win": {
       "target": "nsis"
     },
-    "files": [
-      "main.js",
-      "database.js",
-      "preload.js",
-      "src/**/*"
-    ]
+    "files": ["build/**/*"]
   }
 }

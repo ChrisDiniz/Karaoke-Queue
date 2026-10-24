@@ -4,14 +4,14 @@ const os = require('node:os')
 const path = require('node:path')
 const { _electron: electron } = require('playwright')
 
-const projectRoot = path.resolve(__dirname, '..')
+const projectRoot = path.resolve(__dirname, '../..')
 const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-queue-playwright-'))
 
 async function run() {
-  let app
+  let app: import('playwright').ElectronApplication | undefined
 
   try {
-    app = await electron.launch({
+    const electronApp = await electron.launch({
       executablePath: require('electron'),
       args: [projectRoot, `--user-data-dir=${path.join(profileRoot, 'profile')}`],
       env: {
@@ -23,7 +23,8 @@ async function run() {
       timeout: 30000
     })
 
-    const page = await app.firstWindow()
+    app = electronApp
+    const page = await electronApp.firstWindow()
     await page.locator('#form-entry').waitFor({ state: 'visible' })
 
     const continueButton = page.locator('#btn-startup-primary')
@@ -62,7 +63,7 @@ async function run() {
     console.log('PASS: add entry, edit entry, mark sung, history, and persisted state after reload')
   } finally {
     if (app) {
-      await app.evaluate(({ app: electronApp }) => electronApp.exit(0)).catch(() => {})
+      await app.evaluate(({ app: electronApp }: typeof import('electron')) => electronApp.exit(0)).catch(() => {})
       await app.close().catch(() => {})
     }
     fs.rmSync(profileRoot, { recursive: true, force: true })

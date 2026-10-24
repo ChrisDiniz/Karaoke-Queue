@@ -39,7 +39,7 @@ npm install
 
 ## Development
 
-Start the application with:
+Start the application with (this compiles TypeScript before launching Electron):
 
 ```bash
 npm start
@@ -79,7 +79,7 @@ Manual overrides are intentional and take precedence over the automatic recommen
 
 The Electron application stores queue, history, and session data in `karaoke.sqlite` under Electron's per-user data directory. On first launch after upgrading, it imports the existing `karaoke-data.json` from `electron-store` in a transaction and leaves that file in place as a backup. The SQLite file is runtime data and should not be committed.
 
-When `src/index.html` is opened directly in a browser during development, the app falls back to `localStorage` for queue and session state. The app name and theme remain in `localStorage`.
+To open the renderer directly in a browser during development, compile first and open `build/src/index.html`. In that mode the app falls back to `localStorage` for queue and session state. The app name and theme remain in `localStorage`.
 
 ## Trial Activation
 
@@ -95,13 +95,17 @@ Successful activation is stored locally and only needs to be entered once on tha
 
 ```text
 .
-├── main.js             Electron main process
-├── database.js         SQLite schema, persistence, and migration
-├── preload.js          Secure renderer/main-process bridge
+├── main.ts             Electron main process
+├── database.ts         SQLite schema, persistence, and migration
+├── preload.ts          Secure renderer/main-process bridge
+├── types.d.ts          Shared domain and bridge types
+├── tsconfig.json       TypeScript compiler configuration
 ├── src/
-│   ├── app.js          Queue logic and application behavior
+│   ├── app.ts          Queue logic and application behavior
 │   ├── index.html      Application markup
 │   └── style.css       Application styles
+├── tests/
+│   └── electron-smoke.ts Electron smoke test
 └── package.json        Scripts and Electron configuration
 ```
 

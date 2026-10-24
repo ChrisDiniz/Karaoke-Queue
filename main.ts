@@ -1,8 +1,8 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron')
-const path = require('path')
-const { createKaraokeDatabase } = require('./database')
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import path from 'node:path'
+import { createKaraokeDatabase } from './database'
 
-let database
+let database: ReturnType<typeof createKaraokeDatabase> | undefined
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -21,8 +21,8 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, 'src', 'index.html'))
 
-  win.on('close', async (e) => {
-    e.preventDefault()
+  win.on('close', async (event) => {
+    event.preventDefault()
 
     try {
       await win.webContents.executeJavaScript('window.__kqueue.flushState()')
@@ -54,7 +54,7 @@ function createWindow() {
       }
       win.destroy()
 
-    } catch (err) {
+    } catch {
       win.destroy()
     }
   })
@@ -62,18 +62,20 @@ function createWindow() {
 
 app.whenReady().then(() => {
   try {
-    database = createKaraokeDatabase(app.getPath('userData'))
-    ipcMain.handle('app-data:load', () => database.loadState())
+    const openedDatabase = createKaraokeDatabase(app.getPath('userData'))
+    database = openedDatabase
+    ipcMain.handle('app-data:load', () => openedDatabase.loadState())
     ipcMain.handle('app-data:save', (_e, data) => {
-      database.saveState(data)
+      openedDatabase.saveState(data)
       return true
     })
     createWindow()
-  } catch (error) {
+  } catch (error: unknown) {
     console.error('Failed to open Karaoke Queue database:', error)
+    const detail = error instanceof Error ? error.message : String(error)
     dialog.showErrorBox(
       'Não foi possível abrir os dados do Karaoke Queue',
-      `O banco local não pôde ser inicializado. Seus dados antigos foram preservados.\n\n${error.message}`
+      `O banco local não pôde ser inicializado. Seus dados antigos foram preservados.\n\n${detail}`
     )
     app.quit()
   }
