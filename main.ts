@@ -1,12 +1,8 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron')
-const path = require('path')
-const Store = require('electron-store')
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import path from 'node:path'
+import { createKaraokeDatabase } from './database'
 
-// Disk-backed store (atomic writes survive power loss / crashes — no 5MB cap).
-const store = new Store({ name: 'karaoke-data' })
-
-ipcMain.handle('kstore:load', () => store.store)
-ipcMain.handle('kstore:save', (_e, data) => { store.set(data); return true })
+let database: ReturnType<typeof createKaraokeDatabase> | undefined
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -25,10 +21,11 @@ function createWindow() {
 
   win.loadFile(path.join(__dirname, 'src', 'index.html'))
 
-  win.on('close', async (e) => {
-    e.preventDefault()
+  win.on('close', async (event) => {
+    event.preventDefault()
 
     try {
+      await win.webContents.executeJavaScript('window.__kqueue.flushState()')
       const sessionEnded = await win.webContents.executeJavaScript('window.__kqueue.sessionEnded()')
 
       if (sessionEnded) {
@@ -57,13 +54,34 @@ function createWindow() {
       }
       win.destroy()
 
-    } catch (err) {
+    } catch {
       win.destroy()
     }
   })
 }
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  try {
+    const openedDatabase = createKaraokeDatabase(app.getPath('userData'))
+    database = openedDatabase
+    ipcMain.handle('app-data:load', () => openedDatabase.loadState())
+    ipcMain.handle('app-data:save', (_e, data) => {
+      openedDatabase.saveState(data)
+      return true
+    })
+    createWindow()
+  } catch (error: unknown) {
+    console.error('Failed to open Karaoke Queue database:', error)
+    const detail = error instanceof Error ? error.message : String(error)
+    dialog.showErrorBox(
+      'Não foi possível abrir os dados do Karaoke Queue',
+      `O banco local não pôde ser inicializado. Seus dados antigos foram preservados.\n\n${detail}`
+    )
+    app.quit()
+  }
+})
+
+app.on('will-quit', () => database?.close())
 
 app.on('window-all-closed', () => {
   app.quit()
