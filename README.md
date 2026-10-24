@@ -15,14 +15,14 @@ Karaoke Queue is a desktop queue manager for karaoke venues. It helps operators 
 - Show long-waiting entries and let the operator manually move them forward.
 - Keep a searchable session history, including cancelled entries.
 - View table-level singing details from the history.
-- Persist queue and session data to disk with `electron-store`.
+- Persist queue, history, and session data in a local SQLite database.
 - Customize the app name and toggle the visual theme.
 
 The app intentionally focuses on queue operation and history rather than statistics or analytics dashboards.
 
 ## Requirements
 
-- Node.js 18 or newer
+- Node.js 22.12 or newer
 - npm
 
 ## Download
@@ -43,6 +43,12 @@ Start the application with:
 
 ```bash
 npm start
+```
+
+Run the Electron UI smoke test with a virtual display in WSL/Linux:
+
+```bash
+npm run test:e2e:headless
 ```
 
 ## Build
@@ -71,9 +77,9 @@ Manual overrides are intentional and take precedence over the automatic recommen
 
 ## Data Storage
 
-The Electron application stores queue, history, session, and preference data using `electron-store`. Data is persisted in the operating system's application data directory and survives normal application restarts.
+The Electron application stores queue, history, and session data in `karaoke.sqlite` under Electron's per-user data directory. On first launch after upgrading, it imports the existing `karaoke-data.json` from `electron-store` in a transaction and leaves that file in place as a backup. The SQLite file is runtime data and should not be committed.
 
-When `src/index.html` is opened directly in a browser during development, the app falls back to `localStorage` for storage.
+When `src/index.html` is opened directly in a browser during development, the app falls back to `localStorage` for queue and session state. The app name and theme remain in `localStorage`.
 
 ## Trial Activation
 
@@ -90,6 +96,7 @@ Successful activation is stored locally and only needs to be entered once on tha
 ```text
 .
 ├── main.js             Electron main process
+├── database.js         SQLite schema, persistence, and migration
 ├── preload.js          Secure renderer/main-process bridge
 ├── src/
 │   ├── app.js          Queue logic and application behavior

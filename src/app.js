@@ -32,16 +32,15 @@ let state = {
   priorityIds:      [],   // manually pinned entries (drag override), front = first
   nextTurnId:       null, // entry displaced by a manual current-turn promotion
   currentTurnId:    null, // locked "vez atual" — stays put until Cantou/Cancelar
-  lastReset:        null, // toDateString() of the last auto-reset (18h)
+  lastReset:        null, // retained for compatibility with existing saved data
   trialStartedAt:   null,
   licenseActivated: false
 }
 
-// All critical state lives in electron-store (durable, synchronous disk writes,
-// no 5MB cap). localStorage is NOT durable on an abrupt window close — Chromium
-// flushes it lazily — so it must not hold the queue/history. STORE_KEY is only
-// the browser-dev fallback (theme/app-name keep their own localStorage keys).
+// All critical Electron state lives in SQLite through the main-process bridge.
+// localStorage is a browser-dev fallback; the app name and theme remain there.
 const STORE_KEY = 'kshake_store'
+let lastSavePromise = Promise.resolve()
 
 // Strictly-increasing insertion timestamp. Guarantees a stable, correct order
 // even when several entries are added in the same millisecond (batch add).
@@ -52,23 +51,22 @@ function nextInsertedAt() {
 }
 
 // ── Persistence ───────────────────────────────────────
-// PERMANENT (grows): history + sessions → electron-store (disk, no 5MB cap),
-// with a localStorage fallback when opened directly in a browser (dev).
+// Electron data is stored in SQLite; direct browser development uses localStorage.
 const store = {
   async load() {
-    if (window.kstore) return (await window.kstore.load()) || {}
+    if (window.karaokeDatabase) return (await window.karaokeDatabase.load()) || {}
     const raw = localStorage.getItem(STORE_KEY)
     return raw ? JSON.parse(raw) : {}
   },
   save(blob) {
-    if (window.kstore) return window.kstore.save(blob) // returns a promise
+    if (window.karaokeDatabase) return window.karaokeDatabase.save(blob)
     localStorage.setItem(STORE_KEY, JSON.stringify(blob))
     return Promise.resolve()
   }
 }
 
 function saveState() {
-  return store.save({
+  lastSavePromise = store.save({
     queue:            state.queue,
     history:          state.history,
     sessions:         state.sessions,
@@ -80,6 +78,7 @@ function saveState() {
     trialStartedAt:   state.trialStartedAt,
     licenseActivated: state.licenseActivated
   })
+  return lastSavePromise
 }
 
 // One-time migration: the old layout kept everything in multi-key localStorage.
@@ -129,7 +128,7 @@ async function loadState() {
     state.currentSessionId = state.sessions[state.sessions.length - 1].id
   }
 
-  saveState() // persist in the new split layout (also completes migration)
+  await saveState() // persist the loaded state before removing migrated browser data
 
   // Free the old multi-key localStorage copy once safely migrated.
   if (migrated) {
@@ -492,13 +491,6 @@ function resetSession() {
   showToast('Novo expediente iniciado!')
 }
 
-function checkAutoReset() {
-  const now = new Date()
-  if (now.getHours() === 18 && now.getMinutes() === 0 && state.lastReset !== now.toDateString()) {
-    resetSession()
-  }
-}
-
 // ── Startup dialog ────────────────────────────────────────
 function showStartupDialog() {
   if (state.sessions.length === 0) {
@@ -514,14 +506,7 @@ function showStartupDialog() {
     return
   }
 
-  // Session running for more than 15h → auto-start a new one
-  const hoursElapsed = (Date.now() - lastSession.startedAt) / 3600000
-  if (hoursElapsed > 15) {
-    resetSession()
-    return
-  }
-
-  // Session in progress from the same day — only case that needs user input
+  // Any active session needs an explicit choice, even if it started days ago.
   const startStr = new Date(lastSession.startedAt).toLocaleString('pt-BR', {
     day: '2-digit', month: '2-digit', year: 'numeric',
     hour: '2-digit', minute: '2-digit'
@@ -1262,7 +1247,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderHistory()
   })
 
-  setInterval(checkAutoReset, 60000)
   setInterval(enforceLicense, 60000)
   setInterval(updateWaitTimes, 30000)
   // Re-render periodically so the "furar pra frente?" prompt appears once a
@@ -1330,6 +1314,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.__kqueue = {
     queueLength:      () => state.queue.length,
     sessionEnded:     () => { const s = currentSession(); return !s || !!s.endedAt },
+    flushState:       async () => { await lastSavePromise; return true },
     // async + awaited by main.js so the final write completes before the
     // window is destroyed (the store save is an async IPC roundtrip).
     endSessionSilent: async () => {

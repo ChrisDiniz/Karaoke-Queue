@@ -1,12 +1,8 @@
 const { app, BrowserWindow, dialog, ipcMain } = require('electron')
 const path = require('path')
-const Store = require('electron-store')
+const { createKaraokeDatabase } = require('./database')
 
-// Disk-backed store (atomic writes survive power loss / crashes — no 5MB cap).
-const store = new Store({ name: 'karaoke-data' })
-
-ipcMain.handle('kstore:load', () => store.store)
-ipcMain.handle('kstore:save', (_e, data) => { store.set(data); return true })
+let database
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -29,6 +25,7 @@ function createWindow() {
     e.preventDefault()
 
     try {
+      await win.webContents.executeJavaScript('window.__kqueue.flushState()')
       const sessionEnded = await win.webContents.executeJavaScript('window.__kqueue.sessionEnded()')
 
       if (sessionEnded) {
@@ -63,7 +60,26 @@ function createWindow() {
   })
 }
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  try {
+    database = createKaraokeDatabase(app.getPath('userData'))
+    ipcMain.handle('app-data:load', () => database.loadState())
+    ipcMain.handle('app-data:save', (_e, data) => {
+      database.saveState(data)
+      return true
+    })
+    createWindow()
+  } catch (error) {
+    console.error('Failed to open Karaoke Queue database:', error)
+    dialog.showErrorBox(
+      'Não foi possível abrir os dados do Karaoke Queue',
+      `O banco local não pôde ser inicializado. Seus dados antigos foram preservados.\n\n${error.message}`
+    )
+    app.quit()
+  }
+})
+
+app.on('will-quit', () => database?.close())
 
 app.on('window-all-closed', () => {
   app.quit()

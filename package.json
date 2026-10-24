@@ -22,11 +22,9 @@
     },
     "files": [
       "main.js",
+      "database.js",
       "preload.js",
       "src/**/*"
     ]
-  },
-  "dependencies": {
-    "electron-store": "^8.2.0"
   }
 }
