@@ -7,7 +7,8 @@ const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
 
-const expectedVersion = require('../package.json').version
+const appPackage = require('../package.json')
+const expectedVersion = appPackage.version
 const executable = path.resolve(process.argv[2] || 'dist/win-unpacked/Karaoke Queue.exe')
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-queue-packaged-windows-'))
 const userDataDirectory = path.join(tempRoot, 'user-data')
@@ -49,9 +50,17 @@ async function run() {
   try {
     assert.ok(fs.existsSync(executable), `packaged executable not found: ${executable}`)
     let page = await launch()
-    const appInfo = await application.evaluate(({ app }) => ({ packaged: app.isPackaged, name: app.getName(), version: app.getVersion(), userData: app.getPath('userData') }))
+    const appInfo = await application.evaluate(({ app }) => ({
+      packaged: app.isPackaged,
+      name: app.getName(),
+      executablePath: app.getPath('exe'),
+      version: app.getVersion(),
+      userData: app.getPath('userData')
+    }))
     assert.equal(appInfo.packaged, true)
-    assert.equal(appInfo.name, 'Karaoke Queue')
+    assert.equal(appInfo.name, appPackage.name, 'Electron app.getName() uses the technical package name')
+    assert.equal(path.basename(appInfo.executablePath), `${appPackage.build.productName}.exe`,
+      'the packaged executable keeps the commercial product name')
     assert.equal(appInfo.version, expectedVersion)
     assert.ok(path.resolve(appInfo.userData).startsWith(path.resolve(tempRoot)))
 
