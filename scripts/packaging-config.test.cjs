@@ -1,0 +1,63 @@
+'use strict'
+
+const fs = require('node:fs')
+const path = require('node:path')
+const test = require('node:test')
+const assert = require('node:assert/strict')
+
+const root = path.resolve(__dirname, '..')
+const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+
+test('package metadata and Windows target describe the x64 NSIS product', () => {
+  assert.match(pkg.version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/)
+  const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'))
+  assert.equal(lock.version, pkg.version)
+  assert.equal(lock.packages[''].version, pkg.version)
+  assert.equal(pkg.build.appId, 'com.karaoke.queue')
+  assert.equal(pkg.build.productName, 'Karaoke Queue')
+  assert.equal(pkg.build.win.icon, 'build-resources/karaoke-queue.ico')
+  assert.equal(pkg.build.win.forceCodeSigning, false)
+  assert.deepEqual(pkg.build.win.target, [{ target: 'nsis', arch: ['x64'] }])
+  assert.equal(pkg.build.asar, true)
+  assert.ok(pkg.build.files.includes('build/**/*'))
+  assert.ok(pkg.build.files.includes('!build/tests/**'))
+  assert.ok(pkg.build.files.includes('!build/scripts/**'))
+  assert.ok(pkg.build.artifactName.includes('${version}'))
+  assert.ok(pkg.build.artifactName.includes('${arch}'))
+})
+
+test('packaging is local-only and cannot publish from the electron-builder command', () => {
+  assert.match(pkg.scripts['build:windows'], /npm run build/)
+  assert.match(pkg.scripts.build, /electron-builder --win nsis --x64 --publish never/)
+  assert.equal(pkg.build.publish, undefined)
+})
+
+test('the Windows icon is a multi-size ICO file and the old tag-triggered publisher is removed', () => {
+  const icon = fs.readFileSync(path.join(root, pkg.build.win.icon))
+  assert.equal(icon.readUInt16LE(0), 0)
+  assert.equal(icon.readUInt16LE(2), 1)
+  assert.ok(icon.readUInt16LE(4) >= 5)
+  assert.equal(fs.existsSync(path.join(root, '.github/workflows/build-windows.yml')), false)
+})
+
+test('only PR validation builds artifacts; the manual release is the sole publisher', () => {
+  const pr = fs.readFileSync(path.join(root, '.github/workflows/pr-validation.yml'), 'utf8')
+  const release = fs.readFileSync(path.join(root, '.github/workflows/release-windows.yml'), 'utf8')
+  assert.match(pr, /pull_request:/)
+  assert.match(pr, /contents: read/)
+  assert.doesNotMatch(pr, /contents: write|gh release create|git push.*tags/)
+  assert.match(pr, /actions\/upload-artifact@v4/)
+  assert.match(release, /workflow_dispatch:/)
+  assert.doesNotMatch(release, /^\s+(?:push|pull_request|release):/m)
+  assert.match(release, /cancel-in-progress: false/)
+  assert.match(release, /--prerelease/)
+  assert.match(release, /gh release create/)
+  assert.match(release, /KQUEUE_DISPATCH_REF: \$\{\{ github\.ref \}\}/)
+  assert.match(release, /ref: \$\{\{ github\.sha \}\}/)
+  assert.match(release, /ref: \$\{\{ needs\.validate\.outputs\.sha \}\}/)
+  assert.match(release, /git tag -a "\$TAG" "\$COMMIT_SHA"/)
+  assert.match(release, /--target "\$COMMIT_SHA"/)
+  assert.match(release, /needs: \[validate, linux-validation, windows-build\]/)
+  assert.match(release, /permissions:\n      contents: write/)
+  assert.doesNotMatch(release.slice(0, release.indexOf('jobs:')), /contents: write/)
+})

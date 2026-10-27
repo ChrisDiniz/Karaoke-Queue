@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 const DATABASE_FILENAME = 'karaoke.sqlite'
 const LEGACY_FILENAME = 'karaoke-data.json'
 const LEGACY_MIGRATION = 'electron-store-v1'
-const SCHEMA_VERSION = 1
+const SCHEMA_VERSION = 4
 
 interface DatabaseEntry {
   id: string
@@ -35,6 +35,11 @@ interface DatabaseSnapshot {
   appState: {
     currentSessionId: string | null
     priorityIdsJson: string
+    fixedTurnPositionsJson: string
+    frozenTurnIdsJson: string
+    queueOrderPolicyVersion: number
+    regularsSinceDebut: number
+    currentTurnAutomatic: number
     nextTurnId: string | null
     currentTurnId: string | null
     lastReset: string | null
@@ -67,6 +72,11 @@ interface DatabaseSessionRow {
 interface DatabaseAppStateRow {
   current_session_id: string | null
   priority_ids_json: string
+  fixed_turn_positions_json: string
+  frozen_turn_ids_json: string
+  queue_order_policy_version: number
+  regulars_since_debut: number
+  current_turn_automatic: number
   next_turn_id: string | null
   current_turn_id: string | null
   last_reset: string | null
@@ -99,6 +109,39 @@ function initializeSchema(database: DatabaseSync): void {
     throw new Error(`Database schema version ${version} is newer than supported version ${SCHEMA_VERSION}.`)
   }
   if (version === SCHEMA_VERSION) return
+
+  if (version === 1) {
+    transaction(database, () => {
+      database.exec("ALTER TABLE app_state ADD COLUMN fixed_turn_positions_json TEXT NOT NULL DEFAULT '{}';")
+      database.exec("ALTER TABLE app_state ADD COLUMN frozen_turn_ids_json TEXT NOT NULL DEFAULT '[]';")
+      database.exec('ALTER TABLE app_state ADD COLUMN queue_order_policy_version INTEGER NOT NULL DEFAULT 0;')
+      database.exec('ALTER TABLE app_state ADD COLUMN regulars_since_debut INTEGER NOT NULL DEFAULT 0;')
+      database.exec('ALTER TABLE app_state ADD COLUMN current_turn_automatic INTEGER NOT NULL DEFAULT 0;')
+      database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`)
+    })
+    return
+  }
+
+  if (version === 2) {
+    transaction(database, () => {
+      database.exec("ALTER TABLE app_state ADD COLUMN frozen_turn_ids_json TEXT NOT NULL DEFAULT '[]';")
+      database.exec('ALTER TABLE app_state ADD COLUMN queue_order_policy_version INTEGER NOT NULL DEFAULT 0;')
+      database.exec('ALTER TABLE app_state ADD COLUMN regulars_since_debut INTEGER NOT NULL DEFAULT 0;')
+      database.exec('ALTER TABLE app_state ADD COLUMN current_turn_automatic INTEGER NOT NULL DEFAULT 0;')
+      database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`)
+    })
+    return
+  }
+
+  if (version === 3) {
+    transaction(database, () => {
+      database.exec('ALTER TABLE app_state ADD COLUMN queue_order_policy_version INTEGER NOT NULL DEFAULT 0;')
+      database.exec('ALTER TABLE app_state ADD COLUMN regulars_since_debut INTEGER NOT NULL DEFAULT 0;')
+      database.exec('ALTER TABLE app_state ADD COLUMN current_turn_automatic INTEGER NOT NULL DEFAULT 0;')
+      database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`)
+    })
+    return
+  }
 
   transaction(database, () => {
     database.exec(`
@@ -136,6 +179,11 @@ function initializeSchema(database: DatabaseSync): void {
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
         current_session_id TEXT,
         priority_ids_json TEXT NOT NULL DEFAULT '[]',
+        fixed_turn_positions_json TEXT NOT NULL DEFAULT '{}',
+        frozen_turn_ids_json TEXT NOT NULL DEFAULT '[]',
+        queue_order_policy_version INTEGER NOT NULL DEFAULT 0,
+        regulars_since_debut INTEGER NOT NULL DEFAULT 0,
+        current_turn_automatic INTEGER NOT NULL DEFAULT 0,
         next_turn_id TEXT,
         current_turn_id TEXT,
         last_reset TEXT,
@@ -198,6 +246,13 @@ function normalizeSnapshot(state: StoredAppState): DatabaseSnapshot {
     addEntry(entry, 'pending', 'queueOrder', index)
   })
   ;(Array.isArray(state.history) ? state.history : []).forEach((entry, index) => {
+    if (entry.status === 'pending') {
+      // Pending entries from an ended session remain pending in the archive.
+      // They keep queue_order in SQLite, but are loaded into history because
+      // their session_id differs from app_state.current_session_id.
+      addEntry(entry, 'pending', 'queueOrder', index)
+      return
+    }
     if (entry.status !== 'done' && entry.status !== 'cancelled') {
       throw new Error(`Cannot save history entry with status "${entry.status}".`)
     }
@@ -210,11 +265,18 @@ function normalizeSnapshot(state: StoredAppState): DatabaseSnapshot {
     appState: {
       currentSessionId: state.currentSessionId == null ? null : String(state.currentSessionId),
       priorityIdsJson: JSON.stringify(Array.isArray(state.priorityIds) ? state.priorityIds : []),
+      fixedTurnPositionsJson: JSON.stringify(state.fixedTurnPositions && typeof state.fixedTurnPositions === 'object'
+        ? state.fixedTurnPositions : {}),
+      frozenTurnIdsJson: JSON.stringify(Array.isArray(state.frozenTurnIds) ? state.frozenTurnIds : []),
+      queueOrderPolicyVersion: Number(state.queueOrderPolicyVersion) || 0,
+      regularsSinceDebut: Math.max(0, Math.min(2, Math.trunc(Number(state.regularsSinceDebut) || 0))),
+      currentTurnAutomatic: state.currentTurnAutomatic === true ? 1 : 0,
       nextTurnId: state.nextTurnId == null ? null : String(state.nextTurnId),
       currentTurnId: state.currentTurnId == null ? null : String(state.currentTurnId),
       lastReset: state.lastReset == null ? null : String(state.lastReset),
-      trialStartedAt: state.trialStartedAt == null ? null : Number(state.trialStartedAt),
-      licenseActivated: state.licenseActivated === true ? 1 : 0
+      // The pre-v1 30-day/password fields remain only for schema compatibility.
+      trialStartedAt: null,
+      licenseActivated: 0
     }
   }
 }
@@ -264,17 +326,24 @@ function writeSnapshot(database: DatabaseSync, state: StoredAppState): void {
 
   database.prepare(`
     INSERT INTO app_state (
-      singleton, current_session_id, priority_ids_json, next_turn_id,
-      current_turn_id, last_reset, trial_started_at, license_activated
-    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+      singleton, current_session_id, priority_ids_json, fixed_turn_positions_json, frozen_turn_ids_json, next_turn_id,
+      current_turn_id, last_reset, trial_started_at, license_activated, queue_order_policy_version,
+      regulars_since_debut, current_turn_automatic
+    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     state.currentSessionId == null ? null : String(state.currentSessionId),
     JSON.stringify(Array.isArray(state.priorityIds) ? state.priorityIds : []),
+    JSON.stringify(state.fixedTurnPositions && typeof state.fixedTurnPositions === 'object'
+      ? state.fixedTurnPositions : {}),
+    JSON.stringify(Array.isArray(state.frozenTurnIds) ? state.frozenTurnIds : []),
     state.nextTurnId == null ? null : String(state.nextTurnId),
     state.currentTurnId == null ? null : String(state.currentTurnId),
     state.lastReset == null ? null : String(state.lastReset),
-    state.trialStartedAt == null ? null : Number(state.trialStartedAt),
-    state.licenseActivated === true ? 1 : 0
+    null,
+    0,
+    Number(state.queueOrderPolicyVersion) || 0,
+    Math.max(0, Math.min(2, Math.trunc(Number(state.regularsSinceDebut) || 0))),
+    state.currentTurnAutomatic === true ? 1 : 0
   )
 }
 
@@ -335,16 +404,42 @@ export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
   }
 
   const readState = (): StoredAppState => {
+    if (database.isTransaction) throw new Error('SQLite transaction is unresolved; recovery requires reopening the database.')
     const appState = database.prepare('SELECT * FROM app_state WHERE singleton = 1').get() as unknown as DatabaseAppStateRow | undefined
     if (!appState) return {}
 
+    const currentSession = appState.current_session_id
+      ? database.prepare('SELECT ended_at FROM sessions WHERE id = ?').get(appState.current_session_id) as { ended_at: number | null } | undefined
+      : undefined
+    const hasSessions = Boolean(database.prepare('SELECT 1 FROM sessions LIMIT 1').get())
+    const nullSessionIds = new Set<string>()
+    if (!hasSessions) {
+      for (const entry of database.prepare("SELECT id FROM entries WHERE status = 'pending' AND session_id IS NULL").all() as { id: string }[]) {
+        nullSessionIds.add(entry.id)
+      }
+    } else if (currentSession && currentSession.ended_at == null && appState.current_session_id) {
+      for (const id of [appState.current_turn_id, appState.next_turn_id,
+        ...JSON.parse(appState.priority_ids_json || '[]'),
+        ...Object.keys(JSON.parse(appState.fixed_turn_positions_json || '{}')),
+        ...JSON.parse(appState.frozen_turn_ids_json || '[]')]) {
+        if (typeof id === 'string' && id) nullSessionIds.add(id)
+      }
+    }
+    const pending = database.prepare(
+      "SELECT * FROM entries WHERE status = 'pending' AND (session_id = ? OR session_id IS NULL) ORDER BY queue_order"
+    ).all(appState.current_session_id).map(row => mapEntry(row as unknown as DatabaseEntryRow))
+    const activePending = pending.filter(entry =>
+      (appState.current_session_id != null && entry.sessionId === appState.current_session_id) || nullSessionIds.has(entry.id))
+    const ambiguousNullPending = pending.filter(entry => entry.sessionId == null && !nullSessionIds.has(entry.id))
+
     return {
-      queue: database.prepare(
-        "SELECT * FROM entries WHERE status = 'pending' ORDER BY queue_order"
-      ).all().map(row => mapEntry(row as unknown as DatabaseEntryRow)),
-      history: database.prepare(
-        "SELECT * FROM entries WHERE status IN ('done', 'cancelled') ORDER BY history_order"
-      ).all().map(row => mapEntry(row as unknown as DatabaseEntryRow)),
+      queue: activePending,
+      history: [...database.prepare(
+        `SELECT * FROM entries
+         WHERE status IN ('done', 'cancelled')
+            OR (status = 'pending' AND session_id IS NOT NULL AND session_id IS NOT ?)
+         ORDER BY session_id, CASE WHEN status = 'pending' THEN queue_order ELSE history_order END`
+      ).all(appState.current_session_id).map(row => mapEntry(row as unknown as DatabaseEntryRow)), ...ambiguousNullPending],
       sessions: database.prepare(
         'SELECT id, started_at, ended_at FROM sessions ORDER BY session_order'
       ).all().map(rawSession => {
@@ -357,91 +452,108 @@ export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
       }),
       currentSessionId: appState.current_session_id,
       priorityIds: JSON.parse(appState.priority_ids_json),
+      fixedTurnPositions: JSON.parse(appState.fixed_turn_positions_json || '{}'),
+      frozenTurnIds: JSON.parse(appState.frozen_turn_ids_json || '[]'),
+      queueOrderPolicyVersion: appState.queue_order_policy_version || 0,
+      regularsSinceDebut: appState.regulars_since_debut || 0,
+      currentTurnAutomatic: appState.current_turn_automatic === 1,
       nextTurnId: appState.next_turn_id,
       currentTurnId: appState.current_turn_id,
       lastReset: appState.last_reset,
-      trialStartedAt: appState.trial_started_at ?? Date.now(),
-      licenseActivated: appState.license_activated === 1
+      // Deprecated 30-day/password fields are intentionally not exposed to the renderer.
     }
   }
 
-  let previousSnapshot = normalizeSnapshot(readState())
+  let previousSnapshot: DatabaseSnapshot | null = normalizeSnapshot(readState())
 
   const saveState = (state: AppState): void => {
     const nextSnapshot = normalizeSnapshot(state)
-    const previous = previousSnapshot
+    const previous = previousSnapshot ?? normalizeSnapshot(readState())
 
-    transaction(database, () => {
-      const saveSession = database.prepare(`
-        INSERT INTO sessions (id, started_at, ended_at, session_order) VALUES (?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          started_at = excluded.started_at,
-          ended_at = excluded.ended_at,
-          session_order = excluded.session_order
-      `)
-      const deleteSession = database.prepare('DELETE FROM sessions WHERE id = ?')
+    try {
+      transaction(database, () => {
+        const saveSession = database.prepare(`
+          INSERT INTO sessions (id, started_at, ended_at, session_order) VALUES (?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            started_at = excluded.started_at,
+            ended_at = excluded.ended_at,
+            session_order = excluded.session_order
+        `)
+        const deleteSession = database.prepare('DELETE FROM sessions WHERE id = ?')
 
-      for (const session of nextSnapshot.sessions) {
-        const oldSession = previous.sessions.find(item => item.id === session.id)
-        if (!oldSession || !snapshotsEqual(oldSession, session)) {
-          saveSession.run(session.id, session.startedAt, session.endedAt, session.order)
+        for (const session of nextSnapshot.sessions) {
+          const oldSession = previous.sessions.find(item => item.id === session.id)
+          if (!oldSession || !snapshotsEqual(oldSession, session)) {
+            saveSession.run(session.id, session.startedAt, session.endedAt, session.order)
+          }
         }
-      }
-      for (const session of previous.sessions) {
-        if (!nextSnapshot.sessions.some(item => item.id === session.id)) deleteSession.run(session.id)
-      }
-
-      const saveEntry = database.prepare(`
-        INSERT INTO entries (
-          id, session_id, name, song_number, song_number2, table_number,
-          inserted_at, status, done_at, cancelled_at, queue_order, history_order
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          session_id = excluded.session_id,
-          name = excluded.name,
-          song_number = excluded.song_number,
-          song_number2 = excluded.song_number2,
-          table_number = excluded.table_number,
-          inserted_at = excluded.inserted_at,
-          status = excluded.status,
-          done_at = excluded.done_at,
-          cancelled_at = excluded.cancelled_at,
-          queue_order = excluded.queue_order,
-          history_order = excluded.history_order
-      `)
-      const deleteEntry = database.prepare('DELETE FROM entries WHERE id = ?')
-
-      for (const [id, entry] of nextSnapshot.entries) {
-        const oldEntry = previous.entries.get(id)
-        if (!oldEntry || !snapshotsEqual(oldEntry, entry)) {
-          saveEntry.run(entry.id, entry.sessionId, entry.name, entry.songNumber,
-            entry.songNumber2, entry.table, entry.insertedAt, entry.status,
-            entry.doneAt, entry.cancelledAt, entry.queueOrder, entry.historyOrder)
+        for (const session of previous.sessions) {
+          if (!nextSnapshot.sessions.some(item => item.id === session.id)) deleteSession.run(session.id)
         }
-      }
-      for (const id of previous.entries.keys()) {
-        if (!nextSnapshot.entries.has(id)) deleteEntry.run(id)
-      }
 
-      const appState = nextSnapshot.appState
-      database.prepare(`
-        INSERT INTO app_state (
-          singleton, current_session_id, priority_ids_json, next_turn_id,
-          current_turn_id, last_reset, trial_started_at, license_activated
-        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(singleton) DO UPDATE SET
-          current_session_id = excluded.current_session_id,
-          priority_ids_json = excluded.priority_ids_json,
-          next_turn_id = excluded.next_turn_id,
-          current_turn_id = excluded.current_turn_id,
-          last_reset = excluded.last_reset,
-          trial_started_at = excluded.trial_started_at,
-          license_activated = excluded.license_activated
-      `).run(appState.currentSessionId, appState.priorityIdsJson, appState.nextTurnId,
-        appState.currentTurnId, appState.lastReset, appState.trialStartedAt,
-        appState.licenseActivated)
-    })
+        const saveEntry = database.prepare(`
+          INSERT INTO entries (
+            id, session_id, name, song_number, song_number2, table_number,
+            inserted_at, status, done_at, cancelled_at, queue_order, history_order
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            session_id = excluded.session_id,
+            name = excluded.name,
+            song_number = excluded.song_number,
+            song_number2 = excluded.song_number2,
+            table_number = excluded.table_number,
+            inserted_at = excluded.inserted_at,
+            status = excluded.status,
+            done_at = excluded.done_at,
+            cancelled_at = excluded.cancelled_at,
+            queue_order = excluded.queue_order,
+            history_order = excluded.history_order
+        `)
+        const deleteEntry = database.prepare('DELETE FROM entries WHERE id = ?')
 
+        for (const [id, entry] of nextSnapshot.entries) {
+          const oldEntry = previous.entries.get(id)
+          if (!oldEntry || !snapshotsEqual(oldEntry, entry)) {
+            saveEntry.run(entry.id, entry.sessionId, entry.name, entry.songNumber,
+              entry.songNumber2, entry.table, entry.insertedAt, entry.status,
+              entry.doneAt, entry.cancelledAt, entry.queueOrder, entry.historyOrder)
+          }
+        }
+        for (const id of previous.entries.keys()) {
+          if (!nextSnapshot.entries.has(id)) deleteEntry.run(id)
+        }
+
+        const appState = nextSnapshot.appState
+        database.prepare(`
+          INSERT INTO app_state (
+            singleton, current_session_id, priority_ids_json, fixed_turn_positions_json, frozen_turn_ids_json, next_turn_id,
+            current_turn_id, last_reset, trial_started_at, license_activated, queue_order_policy_version,
+            regulars_since_debut, current_turn_automatic
+          ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(singleton) DO UPDATE SET
+            current_session_id = excluded.current_session_id,
+            priority_ids_json = excluded.priority_ids_json,
+            fixed_turn_positions_json = excluded.fixed_turn_positions_json,
+            frozen_turn_ids_json = excluded.frozen_turn_ids_json,
+            next_turn_id = excluded.next_turn_id,
+            current_turn_id = excluded.current_turn_id,
+            last_reset = excluded.last_reset,
+            trial_started_at = excluded.trial_started_at,
+            license_activated = excluded.license_activated,
+            queue_order_policy_version = excluded.queue_order_policy_version,
+            regulars_since_debut = excluded.regulars_since_debut,
+            current_turn_automatic = excluded.current_turn_automatic
+        `).run(appState.currentSessionId, appState.priorityIdsJson, appState.fixedTurnPositionsJson, appState.frozenTurnIdsJson, appState.nextTurnId,
+          appState.currentTurnId, appState.lastReset, appState.trialStartedAt,
+          appState.licenseActivated, appState.queueOrderPolicyVersion, appState.regularsSinceDebut,
+          appState.currentTurnAutomatic)
+      })
+
+    } catch (error) {
+      // Never reuse a differential-write cache after an unsuccessful transaction.
+      previousSnapshot = null
+      throw error
+    }
     previousSnapshot = nextSnapshot
   }
 

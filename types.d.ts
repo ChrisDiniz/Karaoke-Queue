@@ -30,11 +30,17 @@ interface AppState {
   sessions: KaraokeSession[]
   currentSessionId: string | null
   priorityIds: string[]
+  fixedTurnPositions: Record<string, number>
+  frozenTurnIds: string[]
+  queueOrderPolicyVersion: number
+  regularsSinceDebut: number
+  currentTurnAutomatic: boolean
   nextTurnId: string | null
   currentTurnId: string | null
   lastReset: string | null
-  trialStartedAt: number
-  licenseActivated: boolean
+  /** Deprecated SQLite compatibility fields; never trusted for licensing. */
+  trialStartedAt?: number
+  licenseActivated?: boolean
 }
 
 type StoredAppState = Partial<AppState>
@@ -51,12 +57,46 @@ interface KaraokeDatabaseBridge {
   save: (state: AppState) => Promise<boolean>
 }
 
+type UiScalePreference = import('./src/ui/ui-scale').UiScalePreference
+type UiScaleState = import('./src/ui/ui-scale').UiScaleState
+
+interface KaraokeUiScaleBridge {
+  getState: () => Promise<UiScaleState>
+  setPreference: (preference: UiScalePreference) => Promise<UiScaleState>
+  onChanged: (callback: (state: UiScaleState) => void) => () => void
+}
+
+interface KaraokePreferencesBridge {
+  getSidebarDisplayName: () => Promise<string>
+  setSidebarDisplayName: (name: string) => Promise<string>
+}
+
+interface KaraokeDiagnosticsBridge {
+  openLogsFolder: () => Promise<{ ok: boolean; error?: string }>
+  logSessionEvent: (event: string, sessionId: string | null, result?: string) => void
+  reportRendererError: (event: string, message: string, stack?: string) => void
+}
+
+type LicenseStatus = import('./src/licensing').LicenseStatus
+
+interface KaraokeLicenseBridge {
+  getStatus: () => Promise<LicenseStatus>
+  activate: (token: string) => Promise<LicenseStatus>
+}
+
 interface Window {
   karaokeDatabase?: KaraokeDatabaseBridge
+  karaokeUiScale?: KaraokeUiScaleBridge
+  karaokePreferences?: KaraokePreferencesBridge
+  karaokeDiagnostics?: KaraokeDiagnosticsBridge
+  karaokeLicense?: KaraokeLicenseBridge
   __kqueue?: {
+    prepareToClose: () => Promise<void>
+    cancelClose: () => void
     queueLength: () => number
     sessionEnded: () => boolean
+    closeSummary: () => { sessionActive: boolean; uncompletedCount: number; sessionId: string | null }
     flushState: () => Promise<boolean>
-    endSessionSilent: () => Promise<void>
+    endSessionAndArchive: () => Promise<boolean>
   }
 }

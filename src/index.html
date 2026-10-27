@@ -8,34 +8,115 @@
 </head>
 <body>
 
-  <header class="app-header">
-    <button id="btn-theme-toggle" class="btn-icon" title="Alternar tema">☀️</button>
-    <div class="header-left">
-      <span class="header-icon">🎤</span>
-      <div class="app-title-wrap">
-        <h1><span id="app-name">Karaoke Queue</span></h1>
-        <button id="btn-edit-name" class="btn-edit-name" title="Editar nome">✏️</button>
-        <div id="name-popover" class="name-popover hidden">
-          <input id="name-popover-input" type="text" class="name-popover-input" maxlength="30" />
-          <button id="btn-name-save" class="btn-name-action btn-name-save" title="Salvar">✓</button>
-          <button id="btn-name-cancel" class="btn-name-action btn-name-cancel" title="Cancelar">✕</button>
-        </div>
+  <nav id="app-sidebar" class="app-sidebar" aria-label="Navegação principal">
+    <div class="sidebar-brand">
+      <img class="sidebar-brand-logo" src="assets/karaoke-logo.png" alt="" aria-hidden="true" />
+      <span class="sidebar-brand-name">Karaoke Queue</span>
+      <button id="btn-sidebar-toggle" class="sidebar-toggle" type="button" aria-label="Expandir menu" aria-expanded="false" title="Expandir menu">
+        <img class="sidebar-toggle-icon sidebar-toggle-icon--expand" src="assets/sidebar-expand.png" alt="" aria-hidden="true" />
+        <img class="sidebar-toggle-icon sidebar-toggle-icon--collapse" src="assets/sidebar-collapse.png" alt="" aria-hidden="true" />
+      </button>
+    </div>
+    <div class="sidebar-navigation">
+      <button id="nav-dashboard-coming-soon" class="sidebar-item is-disabled" type="button"
+        title="Dashboard — Em breve" aria-label="Dashboard — Em breve" disabled aria-disabled="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span class="sidebar-label">Dashboard <small>Em breve</small></span>
+      </button>
+      <button id="nav-dashboard" class="sidebar-item sidebar-item--parent is-active" type="button" title="Fila" aria-label="Fila" aria-current="page" aria-haspopup="true" aria-controls="sidebar-queue-submenu" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h10M11 12h10M11 19h10"/><path d="M4 4h1v5M4 9h2M4 15h1v5M4 15h2"/></svg><span class="sidebar-label">Fila</span>
+        <svg class="sidebar-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+      </button>
+      <div id="sidebar-queue-submenu" class="sidebar-submenu sidebar-flyout" role="group" aria-label="Fila" hidden>
+        <div class="sidebar-flyout-heading">Fila</div>
+        <button id="nav-queue-current" class="sidebar-item sidebar-subitem is-active" type="button" title="Fila atual" aria-current="page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><path d="m8 4-2 2 2 2m8 2-2 2 2 2m-8 2-2 2 2 2"/></svg><span class="sidebar-label">Fila atual</span>
+        </button>
+        <button id="nav-queue-types" class="sidebar-item sidebar-subitem is-disabled" type="button" title="Tipos de fila — Em breve" disabled aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/><path d="m17 14 3 3-3 3"/></svg><span class="sidebar-label">Tipos de fila <small>Em breve</small></span>
+        </button>
+        <button id="nav-queue-requests" class="sidebar-item sidebar-subitem is-disabled" type="button" title="Solicitações — Em breve" disabled aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg><span class="sidebar-label">Solicitações <small>Em breve</small></span>
+        </button>
+      </div>
+      <button id="nav-playback" class="sidebar-item sidebar-item--parent sidebar-item--coming-soon" type="button"
+        title="Reprodução — Em breve" aria-label="Reprodução — Em breve" aria-haspopup="true"
+        aria-controls="sidebar-playback-submenu" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/><path d="m10 8 5 2.5-5 2.5z"/></svg>
+        <span class="sidebar-label">Reprodução <small>Em breve</small></span>
+        <svg class="sidebar-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+      </button>
+      <div id="sidebar-playback-submenu" class="sidebar-submenu sidebar-flyout sidebar-playback-flyout" role="group" aria-label="Reprodução" hidden>
+        <div class="sidebar-flyout-heading">Reprodução</div>
+        <button id="nav-playback-now" class="sidebar-item sidebar-subitem is-disabled" type="button" title="Agora reproduzindo — Em breve" disabled aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m10 8 6 4-6 4z"/></svg><span class="sidebar-label">Agora reproduzindo <small>Em breve</small></span>
+        </button>
+        <button id="nav-playback-library" class="sidebar-item sidebar-subitem is-disabled" type="button" title="Biblioteca local — Em breve" disabled aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="m3 10 2-3h15"/></svg><span class="sidebar-label">Biblioteca local <small>Em breve</small></span>
+        </button>
+        <button id="nav-playback-youtube" class="sidebar-item sidebar-subitem is-disabled" type="button" title="YouTube — Em breve" disabled aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12s0-3.5-.45-5.15a2.8 2.8 0 0 0-1.97-1.97C17.93 4.43 12 4.43 12 4.43s-5.93 0-7.58.45a2.8 2.8 0 0 0-1.97 1.97C2 8.5 2 12 2 12s0 3.5.45 5.15a2.8 2.8 0 0 0 1.97 1.97c1.65.45 7.58.45 7.58.45s5.93 0 7.58-.45a2.8 2.8 0 0 0 1.97-1.97C22 15.5 22 12 22 12Z"/><path d="m10 9 5 3-5 3z"/></svg><span class="sidebar-label">YouTube <small>Em breve</small></span>
+        </button>
+        <button id="nav-playback-settings" class="sidebar-item sidebar-subitem is-disabled" type="button" title="Configurações de reprodução — Em breve" disabled aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><circle cx="4" cy="12" r="2"/><circle cx="12" cy="10" r="2"/><circle cx="20" cy="14" r="2"/></svg><span class="sidebar-label">Configurações de reprodução <small>Em breve</small></span>
+        </button>
+      </div>
+      <button id="nav-history" class="sidebar-item sidebar-item--parent" type="button" title="Histórico" aria-label="Histórico" aria-haspopup="true" aria-controls="sidebar-history-submenu" aria-expanded="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2M4 5v4h4"/></svg><span class="sidebar-label">Histórico</span>
+        <svg class="sidebar-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+      </button>
+      <div id="sidebar-history-submenu" class="sidebar-submenu sidebar-flyout" role="group" aria-label="Histórico" hidden>
+        <div class="sidebar-flyout-heading">Histórico</div>
+        <button id="nav-current-session" class="sidebar-item sidebar-subitem" type="button" title="Sessão atual">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 10 6-10 6z"/><circle class="activity-dot" cx="5" cy="12" r="2"/></svg><span class="sidebar-label">Sessão atual</span>
+        </button>
+        <button id="nav-previous-sessions" class="sidebar-item sidebar-subitem" type="button" title="Sessões anteriores" aria-label="Sessões anteriores">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18M8 14h3M8 17h6"/></svg><span class="sidebar-label">Sessões anteriores</span>
+        </button>
       </div>
     </div>
+    <div class="sidebar-footer">
+      <button id="nav-settings" class="sidebar-item sidebar-settings" type="button" title="Configurações" aria-label="Configurações">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z"/><path d="m19.4 15 .1.1a1.7 1.7 0 0 1-2.4 2.4l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a1.7 1.7 0 0 1-3.4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a1.7 1.7 0 0 1-2.4-2.4l.1-.1a1.7 1.7 0 0 0-1.2-2.9H4a1.7 1.7 0 0 1 0-3.4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a1.7 1.7 0 0 1 2.4-2.4l.1.1a1.7 1.7 0 0 0 2.9-1.2V2a1.7 1.7 0 0 1 3.4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a1.7 1.7 0 0 1 2.4 2.4l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a1.7 1.7 0 0 1 0 3.4h-.2a1.7 1.7 0 0 0-1.2 2.9Z"/></svg><span class="sidebar-label">Configurações</span>
+      </button>
+      <button id="btn-theme-toggle" class="sidebar-item sidebar-theme" type="button" title="Alternar tema">
+        <span id="theme-toggle-icon" class="theme-toggle-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg></span><span class="sidebar-label">Tema</span>
+      </button>
+    </div>
+  </nav>
+
+  <header class="app-header">
+    <div id="license-trial-controls" class="license-trial-controls hidden">
+      <span id="license-trial-badge" class="license-trial-badge">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+        <span id="license-trial-label"></span>
+      </span>
+      <button id="btn-license-open" class="license-activate-button" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></svg>
+        <span>Ativar</span>
+      </button>
+    </div>
     <div class="header-right">
-      <span id="clock" class="clock"></span>
-      <button id="btn-history" class="btn btn-outline">Expediente Atual</button>
+      <button id="btn-notifications" class="header-icon-button" type="button" aria-label="Notificações" title="Notificações">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+      </button>
     </div>
   </header>
 
   <main class="app-main">
-
+    <div id="dashboard-page" class="dashboard-page">
     <section class="form-section">
       <form id="form-entry" autocomplete="off">
         <div class="form-row">
+          <div class="form-group form-group--xs">
+            <label for="input-table">Mesa</label>
+            <input id="input-table" type="number" placeholder="Ex: 5" min="1" required autofocus />
+          </div>
           <div class="form-group">
             <label for="input-name">Nome</label>
-            <input id="input-name" type="text" placeholder="Nome do cantor" required />
+            <div id="singer-autocomplete" class="singer-autocomplete">
+              <input id="input-name" type="text" placeholder="Nome do cantor" required aria-autocomplete="list" aria-controls="singer-suggestions" aria-expanded="false" />
+              <div id="singer-suggestions" class="singer-suggestions" role="listbox" aria-label="Cantores desta mesa" hidden></div>
+            </div>
           </div>
           <div class="form-group form-group--sm">
             <label for="input-song">1ª Música</label>
@@ -45,22 +126,55 @@
             <label for="input-song2">2ª Música <span class="label-optional">(opcional)</span></label>
             <input id="input-song2" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Ex: 5678" />
           </div>
-          <div class="form-group form-group--xs">
-            <label for="input-table">Mesa</label>
-            <input id="input-table" type="number" placeholder="Ex: 5" min="1" required />
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary form-add-button">
+              <span class="form-button-icon" aria-hidden="true">+</span>Adicionar
+            </button>
+            <button type="button" id="btn-open-batch" class="btn btn-outline form-batch-button"
+              title="Adicionar várias apresentações" aria-label="Adicionar várias apresentações">
+              <svg class="form-button-icon form-button-icon--list" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M9 6h11M9 12h7M9 18h5M4 6h.01M4 12h.01M4 18h.01M19 16v6M16 19h6" />
+              </svg>
+              <span>Vários</span>
+            </button>
           </div>
-          <button type="submit" class="btn btn-primary">+ Adicionar</button>
-          <button type="button" id="btn-open-batch" class="btn btn-outline">📋 Adicionar Vários</button>
+        </div>
+        <div id="source-selector" class="source-selector" data-selected-source="local">
+          <button id="source-trigger" class="source-trigger" type="button" aria-haspopup="menu"
+            aria-expanded="false" aria-controls="source-menu">
+            <svg class="source-trigger-library" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 10h18"/></svg>
+            <span>Acervo</span>
+            <svg class="source-trigger-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div id="source-menu" class="source-menu" role="menu" aria-label="Origem da música" hidden>
+            <button class="source-menu-option" type="button" role="menuitemradio" data-source="local" aria-checked="true">
+              <svg class="source-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 10h18"/></svg>
+              <span>Local</span>
+              <svg class="source-menu-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+            </button>
+            <span class="source-menu-tooltip" title="Em breve">
+              <button class="source-menu-option source-menu-option--disabled" type="button" role="menuitemradio"
+                data-source="youtube" aria-checked="false" aria-disabled="true" aria-describedby="source-youtube-coming-soon" disabled>
+                <svg class="source-menu-icon source-menu-icon--youtube" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12s0-3.5-.45-5.15a2.8 2.8 0 0 0-1.97-1.97C17.93 4.43 12 4.43 12 4.43s-5.93 0-7.58.45a2.8 2.8 0 0 0-1.97 1.97C2 8.5 2 12 2 12s0 3.5.45 5.15a2.8 2.8 0 0 0 1.97 1.97c1.65.45 7.58.45 7.58.45s5.93 0 7.58-.45a2.8 2.8 0 0 0 1.97-1.97C22 15.5 22 12 22 12Z"/><path d="m10 9 5 3-5 3z"/></svg>
+                <span>YouTube</span>
+                <svg class="source-menu-check" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>
+              </button>
+              <span id="source-youtube-coming-soon" class="source-menu-tooltip-text" role="tooltip">Em breve</span>
+            </span>
+          </div>
         </div>
       </form>
     </section>
 
     <section class="queue-section">
       <div id="now-block" class="now-block hidden"></div>
-      <div id="next-block" class="next-block hidden"></div>
 
       <div class="section-header">
-        <h2>Fila de espera <span id="queue-count" class="badge">0</span></h2>
+        <h2>Fila <span class="queue-count-separator" aria-hidden="true">·</span> <span id="queue-count" class="badge">0</span></h2>
+        <div class="queue-freeze-state">
+          <span id="queue-freeze-status" class="queue-freeze-status">Fila automática</span>
+          <button id="btn-release-freeze" class="btn btn-outline btn-sm btn-release-freeze hidden" type="button"><svg class="freeze-lock-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="7" width="9" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 4.6-1.3"/></svg> Liberar congelamento</button>
+        </div>
       </div>
 
       <div id="queue-list" class="queue-list">
@@ -71,28 +185,122 @@
         </div>
       </div>
     </section>
-
-  </main>
-
-  <div id="history-panel" class="history-panel hidden">
-    <div class="history-header">
-      <h2>Histórico</h2>
-      <button id="btn-close-history" class="btn btn-icon">✕</button>
     </div>
+
+    <section id="history-panel" class="session-page hidden" aria-labelledby="session-page-title">
+      <header class="session-page-header">
+        <div>
+          <h1 id="session-page-title">Sessão atual</h1>
+          <div class="session-page-meta"><span id="session-start-info">Início indisponível</span><span id="session-status" class="session-status">Sessão em andamento</span></div>
+        </div>
+        <button id="btn-back-previous-sessions" class="btn btn-outline btn-sm hidden" type="button">← Voltar às sessões</button>
+      </header>
+      <div class="session-stats">
+        <article class="session-stat-card"><span class="session-stat-icon">🎵</span><span id="history-stat-songs" class="session-stat-value">0</span><span class="session-stat-label">Músicas cantadas</span></article>
+        <article class="session-stat-card"><span class="session-stat-icon">🎤</span><span id="history-stat-singers" class="session-stat-value">0</span><span class="session-stat-label">Cantores</span></article>
+        <article class="session-stat-card"><span class="session-stat-icon">▦</span><span id="history-stat-tables" class="session-stat-value">0</span><span class="session-stat-label">Mesas atendidas</span></article>
+        <article class="session-stat-card"><span class="session-stat-icon">◷</span><span id="history-stat-duration" class="session-stat-value">0min</span><span class="session-stat-label">Duração da sessão</span></article>
+      </div>
+      <div class="session-history-heading">
+        <div><h2>Apresentações</h2><p>Registros concluídos e cancelados nesta sessão.</p></div>
+        <input id="history-search" type="text" placeholder="Buscar por cantor..." class="history-search-input" />
+      </div>
     <div class="history-filters">
-      <input id="history-search" type="text" placeholder="Buscar por cantor..." class="history-search-input" />
-      <div id="history-table-filters" class="history-table-filters"></div>
-      <div class="history-filter-row">
-        <button id="btn-sort-history" class="btn btn-outline btn-sm" title="Alternar ordenação">↓ Recente</button>
+      <div class="history-table-toolbar">
+        <div id="table-filter-picker" class="table-filter-picker">
+          <button id="btn-table-filter-select" class="btn btn-outline btn-sm" type="button" role="combobox"
+            aria-haspopup="listbox" aria-expanded="false" aria-controls="table-filter-popover"><span id="table-filter-label">Todas as mesas</span></button>
+          <div id="table-filter-popover" class="table-filter-popover hidden">
+            <input id="table-filter-search" class="table-filter-search" type="search" placeholder="Buscar mesa..." autocomplete="off" aria-label="Buscar mesa" />
+            <div id="table-filter-options" class="table-filter-options" role="listbox" aria-label="Filtrar por mesa"></div>
+          </div>
+        </div>
+        <div id="tables-picker" class="tables-picker">
+          <button id="btn-view-tables" class="btn btn-outline btn-sm" type="button" aria-expanded="false" aria-controls="tables-popover">Ver mesas</button>
+          <div id="tables-popover" class="tables-popover hidden" role="dialog" aria-label="Mesas da sessão atual">
+            <h3>Mesas desta sessão</h3>
+            <div id="tables-popover-list" class="tables-popover-grid"></div>
+          </div>
+        </div>
       </div>
-    </div>
-    <div id="history-list" class="history-list">
-      <div class="empty-state">
-        <span class="empty-icon">📋</span>
-        <p>Nenhum registro no histórico.</p>
+        <div class="history-filter-row">
+          <button id="btn-sort-history" class="btn btn-outline btn-sm" title="Alternar ordenação">↓ Recente</button>
+        </div>
       </div>
-    </div>
-  </div>
+      <div id="history-list" class="history-list">
+        <div class="empty-state"><span class="empty-icon">📋</span><p>Nenhum registro no histórico.</p></div>
+      </div>
+    </section>
+    <section id="previous-sessions-page" class="previous-sessions-page hidden" aria-labelledby="previous-sessions-title">
+      <header class="previous-sessions-header">
+        <div><h1 id="previous-sessions-title">Sessões anteriores</h1><p>Consulte apresentações e estatísticas por sessão.</p></div>
+      </header>
+      <div class="previous-sessions-toolbar">
+        <label for="previous-sessions-date">Sessões em funcionamento na data</label>
+        <div class="previous-sessions-date-control">
+          <input id="previous-sessions-date" type="date" />
+          <button id="btn-clear-previous-date" class="btn btn-outline btn-sm" type="button">Limpar data</button>
+        </div>
+      </div>
+      <div id="previous-sessions-list" class="previous-sessions-list" aria-live="polite"></div>
+    </section>
+    <section id="settings-page" class="settings-page hidden" aria-labelledby="settings-page-title">
+      <header class="settings-page-header">
+        <h1 id="settings-page-title">Configurações</h1>
+        <p>Personalize a experiência do Karaoke Queue.</p>
+      </header>
+      <section class="settings-section" aria-labelledby="settings-appearance-title">
+        <div class="settings-section-heading">
+          <h2 id="settings-appearance-title">Aparência</h2>
+          <p>Ajuste a escala para melhorar a leitura e o uso dos controles.</p>
+        </div>
+        <div class="settings-control">
+          <div class="settings-control-copy">
+            <label for="settings-scale-select">Escala da interface</label>
+            <p>Afeta textos, ícones, botões e os demais elementos da interface.</p>
+          </div>
+          <select id="settings-scale-select" class="settings-scale-select">
+            <option value="auto">Automática (recomendada)</option>
+            <option value="100">100% — Normal</option>
+            <option value="110">110% — Confortável</option>
+            <option value="125">125% — Grande</option>
+            <option value="150">150% — Extra grande</option>
+          </select>
+        </div>
+        <p class="settings-effective-scale">Escala aplicada: <strong id="settings-scale-effective">100%</strong></p>
+        <div class="settings-display-name-control">
+          <label for="settings-sidebar-name">Nome exibido no menu</label>
+          <input id="settings-sidebar-name" class="settings-sidebar-name-input" type="text"
+            autocomplete="off" spellcheck="false" aria-describedby="settings-sidebar-name-count settings-sidebar-name-description"
+            value="Karaoke Queue" />
+          <p id="settings-sidebar-name-count" class="settings-sidebar-name-count" aria-live="polite">13/17</p>
+          <p id="settings-sidebar-name-description" class="settings-sidebar-name-description">
+            Nome mostrado na barra lateral expandida.
+          </p>
+          <div class="settings-sidebar-name-actions">
+            <button id="settings-sidebar-name-save" class="btn btn-primary btn-sm" type="button">Salvar nome</button>
+            <button id="settings-sidebar-name-reset" class="btn btn-outline btn-sm" type="button">Restaurar padrão</button>
+          </div>
+          <p id="settings-sidebar-name-status" class="settings-sidebar-name-status" role="status" aria-live="polite"></p>
+        </div>
+        <p id="settings-scale-error" class="settings-scale-error" role="status" hidden></p>
+      </section>
+      <section class="settings-section" aria-labelledby="settings-diagnostics-title">
+        <div class="settings-section-heading">
+          <h2 id="settings-diagnostics-title">Diagnóstico</h2>
+          <p>Os registros de execução e falhas ficam armazenados localmente neste computador.</p>
+        </div>
+        <div class="settings-control settings-diagnostics-control">
+          <div class="settings-control-copy">
+            <label for="settings-open-logs">Arquivos de diagnóstico</label>
+            <p>Abra a pasta com logs rotacionados e relatórios locais de falhas. Nenhum dado é enviado.</p>
+          </div>
+          <button id="settings-open-logs" class="btn btn-outline" type="button">Abrir pasta de logs</button>
+        </div>
+        <p id="settings-diagnostics-status" class="settings-diagnostics-status" role="status" aria-live="polite"></p>
+      </section>
+    </section>
+  </main>
 
   <div id="batch-modal" class="modal hidden">
     <div class="modal-box">
@@ -161,10 +369,10 @@
   </div>
 
   <div id="table-modal" class="modal hidden">
-    <div class="modal-box modal-box--sm">
+    <div class="modal-box modal-box--table">
       <div class="modal-header">
         <h2 id="table-modal-title"></h2>
-        <button id="btn-close-table-modal" class="btn-icon">✕</button>
+        <button id="btn-close-table-modal" class="btn btn-outline btn-sm" aria-label="Fechar detalhes da mesa">Fechar ✕</button>
       </div>
       <div class="modal-body table-modal-body" id="table-modal-body"></div>
       <div class="modal-footer">
@@ -172,6 +380,36 @@
         <div></div>
       </div>
     </div>
+  </div>
+
+  <div id="manual-move-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="manual-move-title">
+    <div class="modal-box modal-box--sm manual-move-box">
+      <div class="modal-header"><h2 id="manual-move-title">Fixar apresentação na fila?</h2></div>
+      <div class="modal-body manual-move-body">
+        <p>Esta apresentação será fixada na posição escolhida. As demais continuarão seguindo o rodízio automático. A posição avançará conforme as apresentações anteriores forem concluídas.</p>
+        <label class="manual-move-dismiss"><input id="manual-move-dismiss" type="checkbox" /> Entendido, não mostrar novamente nesta sessão</label>
+      </div>
+      <div class="modal-footer">
+        <div></div>
+        <div class="modal-actions">
+          <button id="btn-cancel-manual-move" class="btn btn-outline">Cancelar</button>
+          <button id="btn-confirm-manual-move" class="btn btn-primary">Confirmar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="queue-reason-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="queue-reason-title">
+    <section class="modal-box modal-box--sm queue-reason-box">
+      <header class="modal-header">
+        <h2 id="queue-reason-title">Por que esta posição?</h2>
+        <button id="btn-close-queue-reason" class="btn btn-icon" type="button" aria-label="Fechar explicação">✕</button>
+      </header>
+      <div class="modal-body queue-reason-body">
+        <span id="queue-reason-position" class="queue-reason-position"></span>
+        <p id="queue-reason-description"></p>
+      </div>
+    </section>
   </div>
 
   <div id="startup-modal" class="modal hidden">
@@ -189,17 +427,20 @@
     </div>
   </div>
 
-  <div id="license-modal" class="modal hidden">
+  <div id="license-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="license-title">
     <div class="modal-box license-box">
-      <div class="license-icon">🔒</div>
       <div class="license-content">
-        <h2>Trial period ended</h2>
-        <p>Your 30-day trial has ended. Enter the activation code to continue using Karaoke Queue.</p>
+        <h2 id="license-title">Ativar Karaoke Queue</h2>
+        <p id="license-lock-message" class="license-lock-message hidden">Seu período de teste de 15 dias terminou. Insira seu token para continuar utilizando o Karaoke Queue.</p>
+        <p>Insira seu token de ativação para liberar o Karaoke Queue permanentemente nesta instalação.</p>
       </div>
       <form id="license-form" class="license-form" autocomplete="off">
-        <input id="license-code" type="password" class="license-input" placeholder="Activation code" autocomplete="off" required />
-        <p id="license-error" class="license-error"></p>
-        <button type="submit" class="btn btn-primary license-submit">Activate</button>
+        <input id="license-code" type="text" class="license-input" placeholder="Token de ativação" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="64" required />
+        <p id="license-error" class="license-error" role="alert"></p>
+        <div class="license-actions">
+          <button id="btn-license-cancel" type="button" class="btn btn-outline">Cancelar</button>
+          <button type="submit" class="btn btn-primary license-submit">Ativar</button>
+        </div>
       </form>
     </div>
   </div>
