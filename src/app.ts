@@ -1,1339 +1,194 @@
 'use strict'
 
-// ── Storage keys ──────────────────────────────────────
-const KEYS = {
-  APP_NAME:           'kshake_app_name',
-  QUEUE:              'kshake_queue',
-  HISTORY:            'kshake_history',
-  SESSIONS:           'kshake_sessions',
-  CURRENT_SESSION_ID: 'kshake_current_session',
-  PRIORITY_IDS:       'kshake_priority',
-  CURRENT_TURN_ID:    'kshake_current_turn',
-  LAST_RESET:         'kshake_last_reset'
+import { KaraokeApplication } from './application'
+import { createRendererStateRepository } from './state-repository'
+import { AppShell } from './ui/app-shell'
+import { Navigation } from './ui/navigation'
+import { HistoryView } from './ui/history-view'
+import { PreviousSessionsView } from './ui/previous-sessions-view'
+import { SettingsView } from './ui/settings-view'
+import { getElement, getInput, ModalManager, showToast, reportPersistenceFailure } from './ui/dom'
+import { QueueInteractions } from './ui/queue-interactions'
+import { createQueueView, type QueueView } from './ui/queue-view'
+import { TableDialog } from './ui/table-dialog'
+
+function reportRendererError(event: string, message: string, error?: unknown): void {
+  const stack = error instanceof Error ? error.stack : undefined
+  window.karaokeDiagnostics?.reportRendererError(event, message, stack)
 }
 
-const TRIAL_DAYS = 30
-const LICENSE_CODE = 'karaokequeue'
-const DAY_MS = 24 * 60 * 60 * 1000
+window.addEventListener('error', event => {
+  reportRendererError('RENDERER_UNCAUGHT_EXCEPTION', event.message || 'Erro JavaScript não tratado.', event.error)
+})
+window.addEventListener('unhandledrejection', event => {
+  const reason = event.reason
+  reportRendererError('RENDERER_UNHANDLED_REJECTION', reason instanceof Error ? reason.message : String(reason), reason)
+})
 
-// ── Filter state (in-memory only) ─────────────────────
-let historyFilter: HistoryFilter = {
-  search: '',
-  table:  null,
-  order:  'desc'
-}
+const application = new KaraokeApplication(createRendererStateRepository())
+const modals = new ModalManager()
+let tableDialog!: TableDialog
+const historyView = new HistoryView(() => application.state,
+  (table, sessionId, readOnly) => tableDialog.open(table, sessionId ?? application.state.currentSessionId, readOnly))
+const previousSessionsView = new PreviousSessionsView(() => application.state, sessionId => historyView.openPreviousSession(sessionId))
+const settingsView = new SettingsView()
+const navigation = new Navigation(
+  () => historyView.open(), () => historyView.close(),
+  () => settingsView.open(), () => settingsView.close(),
+  () => previousSessionsView.open(), () => previousSessionsView.close()
+)
+historyView.setReturnToSessions(() => {
+  previousSessionsView.open()
+  navigation.activatePreviousSessions()
+})
+let queueView: QueueView
+let queueInteractions: QueueInteractions
 
-// ── State ─────────────────────────────────────────────
-let state: AppState = {
-  queue:            [],
-  history:          [],   // permanent — never cleared
-  sessions:         [],
-  currentSessionId: null,
-  priorityIds:      [],   // manually pinned entries (drag override), front = first
-  nextTurnId:       null, // entry displaced by a manual current-turn promotion
-  currentTurnId:    null, // locked "vez atual" — stays put until Cantou/Cancelar
-  lastReset:        null, // retained for compatibility with existing saved data
-  trialStartedAt:   Date.now(),
-  licenseActivated: false
-}
-
-// All critical Electron state lives in SQLite through the main-process bridge.
-// localStorage is a browser-dev fallback; the app name and theme remain there.
-const STORE_KEY = 'kshake_store'
-let lastSavePromise: Promise<unknown> = Promise.resolve()
-
-function getElement<T extends HTMLElement = HTMLElement>(id: string): T {
-  const element = document.getElementById(id)
-  if (!element) throw new Error(`Required element #${id} was not found.`)
-  return element as T
-}
-
-function getInput(id: string): HTMLInputElement {
-  return getElement<HTMLInputElement>(id)
-}
-
-// Strictly-increasing insertion timestamp. Guarantees a stable, correct order
-// even when several entries are added in the same millisecond (batch add).
-let lastInsertedAt = 0
-function nextInsertedAt() {
-  lastInsertedAt = Math.max(Date.now(), lastInsertedAt + 1)
-  return lastInsertedAt
-}
-
-// ── Persistence ───────────────────────────────────────
-// Electron data is stored in SQLite; direct browser development uses localStorage.
-const store = {
-  async load(): Promise<StoredAppState> {
-    if (window.karaokeDatabase) return (await window.karaokeDatabase.load()) || {}
-    const raw = localStorage.getItem(STORE_KEY)
-    return raw ? JSON.parse(raw) : {}
-  },
-  save(blob: AppState): Promise<boolean> {
-    if (window.karaokeDatabase) return window.karaokeDatabase.save(blob)
-    localStorage.setItem(STORE_KEY, JSON.stringify(blob))
-    return Promise.resolve(true)
+async function startNewShift(): Promise<boolean> {
+  const previousSessionId = application.state.currentSessionId
+  window.karaokeDiagnostics?.logSessionEvent('SESSION_CLOSE_REQUESTED', previousSessionId, 'operator-new-session')
+  const pendingCount = application.state.queue.filter(entry => entry.status === 'pending').length
+  const pendingLabel = pendingCount === 1 ? 'apresentação pendente' : 'apresentações pendentes'
+  if (pendingCount > 0 && !confirm(`Iniciar uma nova sessão removerá ${pendingCount} ${pendingLabel} da fila atual. O histórico será preservado. Deseja continuar?`)) {
+    window.karaokeDiagnostics?.logSessionEvent('SESSION_CLOSE_CANCELLED', previousSessionId, 'operator-cancelled-confirmation')
+    return false
   }
-}
-
-function saveState() {
-  lastSavePromise = store.save({
-    queue:            state.queue,
-    history:          state.history,
-    sessions:         state.sessions,
-    currentSessionId: state.currentSessionId,
-    priorityIds:      state.priorityIds,
-    nextTurnId:       state.nextTurnId,
-    currentTurnId:    state.currentTurnId,
-    lastReset:        state.lastReset,
-    trialStartedAt:   state.trialStartedAt,
-    licenseActivated: state.licenseActivated
-  })
-  return lastSavePromise
-}
-
-// One-time migration: the old layout kept everything in multi-key localStorage.
-function legacyFromLocalStorage() {
-  if (localStorage.getItem(KEYS.QUEUE) === null &&
-      localStorage.getItem(KEYS.HISTORY) === null &&
-      localStorage.getItem(KEYS.SESSIONS) === null) return null
-  return {
-    queue:            JSON.parse(localStorage.getItem(KEYS.QUEUE)            || '[]'),
-    history:          JSON.parse(localStorage.getItem(KEYS.HISTORY)          || '[]'),
-    sessions:         JSON.parse(localStorage.getItem(KEYS.SESSIONS)         || '[]'),
-    currentSessionId: localStorage.getItem(KEYS.CURRENT_SESSION_ID)          || null,
-    priorityIds:      JSON.parse(localStorage.getItem(KEYS.PRIORITY_IDS)     || '[]'),
-    currentTurnId:    localStorage.getItem(KEYS.CURRENT_TURN_ID)             || null,
-    lastReset:        localStorage.getItem(KEYS.LAST_RESET)                  || null
+  try {
+    await application.startNewSession()
+  } catch (error) {
+    window.karaokeDiagnostics?.logSessionEvent('SESSION_CLOSE_CANCELLED', previousSessionId, 'persistence-failed')
+    reportRendererError('RENDERER_IPC_FAILED', 'Falha ao persistir a transição para uma nova sessão.', error)
+    showToast(`Não foi possível iniciar a nova sessão: ${error instanceof Error ? error.message : String(error)}`)
+    return false
   }
-}
-
-async function loadState() {
-  let data = await store.load()
-  let migrated = false
-
-  // First run on the store: migrate any legacy multi-key localStorage data so
-  // existing users keep their history.
-  if (data.queue === undefined && data.history === undefined && data.sessions === undefined) {
-    const legacy = legacyFromLocalStorage()
-    if (legacy) { data = legacy; migrated = true }
-  }
-
-  state.queue            = data.queue            || []
-  state.history          = data.history          || []
-  state.sessions         = data.sessions         || []
-  state.currentSessionId = data.currentSessionId || null
-  state.priorityIds      = data.priorityIds      || []
-  state.nextTurnId       = data.nextTurnId       || null
-  state.currentTurnId    = data.currentTurnId    || null
-  state.lastReset        = data.lastReset        || null
-  state.trialStartedAt   = data.trialStartedAt   || Date.now()
-  state.licenseActivated = data.licenseActivated === true
-
-  // First run or migration: create a session if none exists
-  if (state.sessions.length === 0) {
-    const session = createSession()
-    // Tag any existing history entries with this session
-    state.history.forEach(e => { if (!e.sessionId) e.sessionId = session.id })
-  } else if (!state.currentSessionId) {
-    state.currentSessionId = state.sessions[state.sessions.length - 1].id
-  }
-
-  await saveState() // persist the loaded state before removing migrated browser data
-
-  // Free the old multi-key localStorage copy once safely migrated.
-  if (migrated) {
-    [KEYS.QUEUE, KEYS.HISTORY, KEYS.SESSIONS, KEYS.CURRENT_SESSION_ID,
-     KEYS.PRIORITY_IDS, KEYS.CURRENT_TURN_ID, KEYS.LAST_RESET]
-      .forEach(k => localStorage.removeItem(k))
-  }
-}
-
-// ── Session management ────────────────────────────────
-function createSession(): KaraokeSession {
-  const session: KaraokeSession = { id: `s-${Date.now()}`, startedAt: Date.now(), endedAt: null }
-  state.sessions.push(session)
-  state.currentSessionId = session.id
-  return session
-}
-
-function formatSessionLabel(session: KaraokeSession): string {
-  const start   = new Date(session.startedAt)
-  const dateStr = start.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
-  const timeStr = start.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-  let label = `Expediente ${dateStr} — ${timeStr}`
-  if (session.endedAt) {
-    label += ` até ${new Date(session.endedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
-  } else if (session.id === state.currentSessionId) {
-    label += ' (em andamento)'
-  }
-  return label
-}
-
-function currentSession(): KaraokeSession | undefined {
-  return state.sessions.find(s => s.id === state.currentSessionId)
-}
-
-function updateSessionStartInfo() {
-  const el = document.getElementById('session-start-info')
-  if (!el) return
-  const session = currentSession()
-  if (!session) { el.textContent = ''; return }
-  const time = new Date(session.startedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-  const date = new Date(session.startedAt).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
-  el.textContent = `Iniciado ${date} às ${time}`
-}
-
-function sessionRunningTime(session: KaraokeSession): string {
-  const mins  = Math.floor((Date.now() - session.startedAt) / 60000)
-  const hours = Math.floor(mins / 60)
-  const rest  = mins % 60
-  return hours > 0 ? `${hours}h ${rest}min` : `${mins}min`
-}
-
-
-function getActiveSessionHistory(): QueueEntry[] {
-  const sid = historyFilter.sessionId || state.currentSessionId
-  return state.history.filter(e => e.sessionId === sid)
-}
-
-
-function renderSessionSelector(currentId: string | null, onChangeFn: string): string {
-  const sorted = [...state.sessions].sort((a, b) => b.startedAt - a.startedAt)
-  return `<select class="session-select" onchange="${onChangeFn}(this.value)">
-    ${sorted.map(s => `<option value="${s.id}" ${s.id === currentId ? 'selected' : ''}>${formatSessionLabel(s)}</option>`).join('')}
-  </select>`
-}
-
-// ── Helpers ───────────────────────────────────────────
-function generateLogId(): string {
-  const ts   = Date.now()
-  const rand = Math.random().toString(36).substring(2, 6).toUpperCase()
-  return `LOG-${ts}-${rand}`
-}
-
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
-
-function formatDateTime(ts: number): string {
-  return new Date(ts).toLocaleString('pt-BR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit'
-  })
-}
-
-// ── Queue ordering ─────────────────────────────────────
-// Base order is FIFO by insertedAt. A single anti-repetition rule applies:
-// when picking the next entry, if the front entry belongs to the same table
-// that just sang (or is singing now = the current top), skip to the next entry
-// of a different table. If no other table is waiting, the same table repeats.
-// Pinned entries (manual drag override) are forced to be the next ones to sing.
-
-// Entries from the current session that actually sang (excludes cancelled).
-function sungEntries(sessionId: string | null = state.currentSessionId): SungEntry[] {
-  return state.history.filter((entry): entry is SungEntry =>
-    entry.sessionId === sessionId && entry.status === 'done' && entry.doneAt != null
-  )
-}
-
-// Table of the most recently sung entry in the current session (null if none).
-function lastSungTable(): string | null {
-  const sung = sungEntries()
-  if (sung.length === 0) return null
-  return sung.reduce((a, b) => (b.doneAt > a.doneAt ? b : a)).table
-}
-
-// When to *offer* the operator a boost prompt on a waiting card. Adaptive to
-// how busy the queue is: a full rotation cycle ≈ (distinct tables) × MIN_PER_TURN,
-// so the prompt only appears once someone waited clearly longer than a normal
-// rotation — small queue → short, big queue → longer. It never auto-reorders;
-// the operator decides with Sim/Não on the card.
-const MIN_PER_TURN   = 6    // estimated minutes a table occupies (up to 2 songs)
-const WAIT_MARGIN    = 1.5  // offer the boost only after ~1.5 full rotations
-const MIN_WAIT_FLOOR = 30   // never below this, for tiny queues
-const RECENT_WINDOW_MIN = 90
-
-function maxWaitMinutes(): number {
-  const distinct = new Set(state.queue.map(e => e.table)).size
-  return Math.max(MIN_WAIT_FLOOR, Math.round(WAIT_MARGIN * distinct * MIN_PER_TURN))
-}
-
-// Arrival-order queue (FIFO) with two anti-monopoly safeguards, seeded by the
-// last sung table. Recent sings count as virtual turns so removing an entry
-// does not reset the rotation for the remaining entries of that table.
-//   1. queueRound = how many entries of the SAME table are waiting ahead. The
-//      extra entries of a table that registered several at once drop behind
-//      other tables, so it never takes many turns in a row.
-//   2. anti-repetition (greedy below): the same table doesn't sing twice in a
-//      row while another table is waiting.
-// Ties broken by insertedAt (arrival order).
-function fairOrder(entries: QueueEntry[], seedLastTable: string | null): QueueEntry[] {
-  const windowStart = Date.now() - RECENT_WINDOW_MIN * 60000
-  const sungByTable: Record<string, number> = {}
-  sungEntries().forEach(entry => {
-    if (entry.doneAt >= windowStart) {
-      sungByTable[entry.table] = (sungByTable[entry.table] || 0) + 1
-    }
-  })
-  const queueRound = (entry: QueueEntry): number => entries.filter(other => other.table === entry.table && other.insertedAt < entry.insertedAt).length
-  const tableTurns = (entry: QueueEntry): number => (sungByTable[entry.table] || 0) + queueRound(entry)
-  const remaining  = [...entries].sort((a, b) => {
-    const turnsA = tableTurns(a), turnsB = tableTurns(b)
-    if (turnsA !== turnsB) return turnsA - turnsB
-    return a.insertedAt - b.insertedAt
-  })
-  const result    = []
-  let lastTable   = seedLastTable
-  while (remaining.length > 0) {
-    let idx = remaining.findIndex(e => e.table !== lastTable)
-    if (idx === -1) idx = 0 // all remaining are the same table → allow repeat
-    const [picked] = remaining.splice(idx, 1)
-    result.push(picked)
-    lastTable = picked.table
-  }
-  return result
-}
-
-function calcWait(insertedAt: number): string {
-  const mins = Math.floor((Date.now() - insertedAt) / 60000)
-  if (mins < 1) return 'agora'
-  if (mins < 60) return `há ${mins}min`
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  return m > 0 ? `há ${h}h ${m}min` : `há ${h}h`
-}
-
-function updateWaitTimes() {
-  document.querySelectorAll<HTMLElement>('.card-wait[data-inserted]').forEach(el => {
-    const insertedAt = parseInt(el.dataset.inserted ?? '0')
-    const mins       = Math.floor((Date.now() - insertedAt) / 60000)
-    el.textContent   = calcWait(insertedAt)
-    el.className     = 'card-wait' +
-      (mins >= 30 ? ' card-wait--danger' : mins >= 15 ? ' card-wait--warning' : '')
-  })
-}
-
-// How many "Próximos" slots are shown. Manual pins are bounded to these slots.
-const PROXIMOS_COUNT = 3
-
-// Full play order: manual pins first (in the operator's chosen order), then the
-// rest by fair rotation. Pins only ever occupy the Próximos slots; the general
-// waiting list below is never pinned.
-function playOrder() {
-  const pinnedSet = new Set(state.priorityIds)
-  const forcedNext = state.queue.find(e => e.id === state.nextTurnId) || null
-  const pinned: QueueEntry[] = state.priorityIds
-    .filter(id => id !== forcedNext?.id)
-    .map(id => state.queue.find(e => e.id === id))
-    .filter((entry): entry is QueueEntry => entry !== undefined)
-  const excludedIds = new Set<string>([...pinnedSet, ...(forcedNext ? [forcedNext.id] : [])])
-  const fair = fairOrder(state.queue.filter(e => !excludedIds.has(e.id)), lastSungTable())
-  return [forcedNext, ...pinned, ...fair].filter((entry): entry is QueueEntry => entry !== null && entry !== undefined)
-}
-
-// ── Actions ───────────────────────────────────────────
-function addEntry(name: string, songNumber: string, songNumber2: string, table: string): void {
-  const entry = {
-    id:          generateLogId(),
-    name:        name.trim(),
-    songNumber:  songNumber.trim(),
-    songNumber2: songNumber2.trim(),
-    table:       String(table).trim(),
-    insertedAt:  nextInsertedAt(),
-    status:      'pending' as const,
-    sessionId:   state.currentSessionId
-  }
-  state.queue.push(entry)
-  saveState()
-  renderQueue()
-  showToast(`${entry.name} adicionado(a) à fila!`)
-}
-
-function openEdit(id: string): void {
-  const entry = state.queue.find(e => e.id === id)
-  if (!entry) return
-  getInput('edit-id').value    = entry.id
-  getInput('edit-name').value  = entry.name
-  getInput('edit-song').value  = entry.songNumber
-  getInput('edit-song2').value = entry.songNumber2 || ''
-  getInput('edit-table').value = entry.table
-  getElement('edit-modal').classList.remove('hidden')
-  getInput('edit-name').focus()
-}
-
-function closeEdit(): void {
-  getElement('edit-modal').classList.add('hidden')
-}
-
-function saveEdit(): void {
-  const id    = getInput('edit-id').value
-  const name  = getInput('edit-name').value.trim()
-  const song  = getInput('edit-song').value.trim()
-  const song2 = getInput('edit-song2').value.trim()
-  const table = getInput('edit-table').value.trim()
-
-  if (!name || !song || !table) {
-    showToast('Preencha nome, 1ª música e mesa.')
-    return
-  }
-
-  const entry = state.queue.find(e => e.id === id)
-  if (!entry) return
-
-  entry.name        = name
-  entry.songNumber  = song
-  entry.songNumber2 = song2
-  entry.table       = table
-
-  saveState()
-  renderQueue()
-  closeEdit()
-  showToast('Registro atualizado!')
-}
-
-function cancelEntry(id: string): void {
-  const entry = state.queue.find(e => e.id === id)
-  if (!entry) return
-  if (!confirm(`Cancelar ${entry.name} (Mesa ${entry.table})? A entrada sai da fila e fica registrada como cancelada.`)) return
-  state.queue = state.queue.filter(e => e.id !== id)
-  state.priorityIds = state.priorityIds.filter(p => p !== id)
-  clearBoostState(id)
-  if (state.currentTurnId === id) state.currentTurnId = null
-  if (state.nextTurnId === id) state.nextTurnId = null
-  entry.status      = 'cancelled'
-  entry.cancelledAt = Date.now()
-  state.history.unshift(entry)
-  saveState()
-  renderQueue()
-  renderHistory()
-  showToast(`${entry.name} (Mesa ${entry.table}) cancelado(a).`)
-}
-
-function markDone(id: string): void {
-  const idx = state.queue.findIndex(e => e.id === id)
-  if (idx === -1) return
-  const [entry] = state.queue.splice(idx, 1)
-  entry.status = 'done'
-  entry.doneAt = Date.now()
-  state.priorityIds = state.priorityIds.filter(p => p !== entry.id)
-  clearBoostState(entry.id)
-  if (state.currentTurnId === entry.id) state.currentTurnId = null
-  if (state.nextTurnId === entry.id) state.nextTurnId = null
-  state.history.unshift(entry)
-  saveState()
-  renderQueue()
-  renderHistory()
-  showToast(`${entry.name} (Mesa ${entry.table}) marcado como cantado!`)
-}
-
-// ── Manual priority (drag override) ───────────────────────
-// Pins are bounded to the Próximos slots; a pin beyond PROXIMOS_COUNT overflows
-// back to the general queue (loses its pin).
-function pinNext(id: string): void {
-  state.priorityIds = state.priorityIds.filter(p => p !== id)
-  state.priorityIds.unshift(id)
-  if (state.priorityIds.length > PROXIMOS_COUNT) state.priorityIds = state.priorityIds.slice(0, PROXIMOS_COUNT)
-  clearBoostState(id)
-  saveState()
-  renderQueue()
-}
-
-function unpin(id: string): void {
-  state.priorityIds = state.priorityIds.filter(p => p !== id)
-  saveState()
-  renderQueue()
-}
-
-// ── Overdue boost prompt (operator decides) ───────────────
-// Non-blocking: the entry keeps flowing in the queue normally. When it has
-// waited past the threshold the full prompt shows. Two outcomes:
-//   • "Não" (explicit decision) → the alert is fully dismissed for this entry.
-//   • untouched for BOOST_COLLAPSE_MS → it collapses to a small ⏰ marker the
-//     operator can click to reopen — so an ignored alert isn't lost.
-let boostTimers: Record<string, ReturnType<typeof setTimeout>> = {} // id -> auto-collapse timeout handle
-let boostCollapsed       = new Set<string>()  // ids collapsed to the ⏰ marker (untouched)
-let boostDismissed       = new Set<string>()  // ids the operator said "Não" to (fully hidden)
-const BOOST_COLLAPSE_MS  = 120000  // collapse the full prompt after 2 min untouched
-
-function boostOverdue(entry: QueueEntry): boolean {
-  return (Date.now() - entry.insertedAt) / 60000 >= maxWaitMinutes()
-}
-
-function clearBoostState(id: string): void {
-  if (boostTimers[id]) { clearTimeout(boostTimers[id]); delete boostTimers[id] }
-  boostCollapsed.delete(id)
-  boostDismissed.delete(id)
-}
-
-// Schedule the auto-collapse (once per expanded streak).
-function scheduleBoostCollapse(id: string): void {
-  if (boostTimers[id]) return
-  boostTimers[id] = setTimeout(() => {
-    delete boostTimers[id]
-    boostCollapsed.add(id)
-    renderQueue()
-  }, BOOST_COLLAPSE_MS)
-}
-
-function acceptBoost(id: string): void { clearBoostState(id); pinNext(id) }   // Sim → bump to "próximo"
-function dismissBoost(id: string): void {                                       // Não → fully hide the alert
-  if (boostTimers[id]) { clearTimeout(boostTimers[id]); delete boostTimers[id] }
-  boostCollapsed.delete(id)
-  boostDismissed.add(id)
-  renderQueue()
-}
-function expandBoost(id: string): void { boostCollapsed.delete(id); renderQueue() } // click marker → reopen
-
-// ── Session reset ──────────────────────────────────────
-function resetSession(): void {
-  const cur = currentSession()
-  if (cur && !cur.endedAt) cur.endedAt = Date.now()
-
-  createSession()
-
-  state.queue           = []
-  state.priorityIds     = []
-  state.nextTurnId      = null
-  state.currentTurnId   = null
-  historyFilter         = { search: '', table: null, order: 'desc', sessionId: null }
-  state.lastReset = new Date().toDateString()
-  saveState()
-  renderQueue()
-  renderHistory()
-  showToast('Novo expediente iniciado!')
-}
-
-// ── Startup dialog ────────────────────────────────────────
-function showStartupDialog() {
-  if (state.sessions.length === 0) {
-    createSession()
-    saveState()
-    return
-  }
-
-  const lastSession = state.sessions[state.sessions.length - 1]
-
-  if (lastSession.endedAt) {
-    resetSession()
-    return
-  }
-
-  // Any active session needs an explicit choice, even if it started days ago.
-  const startStr = new Date(lastSession.startedAt).toLocaleString('pt-BR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit'
-  })
-  const running = sessionRunningTime(lastSession)
-
-  getElement('startup-message').textContent = 'Expediente em andamento'
-  getElement('startup-detail').textContent  = `Iniciado em ${startStr}`
-  getElement('startup-running').textContent = `há ${running}`
-
-  const btnPri = getElement('btn-startup-primary')
-  const btnSec = getElement('btn-startup-secondary')
-  btnPri.textContent = 'Continuar'
-  btnSec.textContent = 'Iniciar novo'
-  btnPri.onclick = () => closeStartupModal()
-  btnSec.onclick = () => { resetSession(); closeStartupModal() }
-
-  getElement('startup-modal').classList.remove('hidden')
-}
-
-function closeStartupModal() {
-  getElement('startup-modal').classList.add('hidden')
-}
-
-function trialExpired(): boolean {
-  return !state.licenseActivated && Date.now() >= state.trialStartedAt + TRIAL_DAYS * DAY_MS
-}
-
-function showLicenseModal(): void {
-  getElement('license-modal').classList.remove('hidden')
-  getElement('license-code').focus()
-}
-
-function enforceLicense(): void {
-  if (trialExpired()) showLicenseModal()
-}
-
-function activateLicense(code: string): void {
-  const error = getElement('license-error')
-  if (code.trim().toLowerCase() !== LICENSE_CODE) {
-    error.textContent = 'Invalid activation code.'
-    return
-  }
-
-  state.licenseActivated = true
-  saveState()
-  getElement('license-modal').classList.add('hidden')
-  error.textContent = ''
-  showToast('App activated successfully.')
-}
-
-// ── Table detail modal ────────────────────────────────────
-function openTableModal(table: string): void {
-  const entries = sungEntries().filter((entry): entry is SungEntry => entry.table === table)
-  if (entries.length === 0) {
-    showToast(`Mesa ${table} ainda não tem histórico nesta sessão.`)
-    return
-  }
-
-  // Summary
-  const totalSongs    = entries.reduce((a, e) => a + 1 + (e.songNumber2 ? 1 : 0), 0)
-  const uniqueSingers = [...new Set(entries.map(e => e.name))]
-  const waits         = entries.map(e => (e.doneAt ?? 0) - e.insertedAt).filter(Boolean)
-  const avgWaitMin    = waits.length ? Math.round(waits.reduce((a, b) => a + b, 0) / waits.length / 60000) : 0
-  const timestamps    = entries.flatMap(e => [e.insertedAt, e.doneAt ?? 0]).filter(Boolean)
-  const firstTime     = Math.min(...timestamps)
-  const lastTime      = Math.max(...timestamps)
-  const durMins       = Math.round((lastTime - firstTime) / 60000)
-  const duration      = durMins < 60 ? `${durMins}min` : `${Math.floor(durMins / 60)}h ${durMins % 60}min`
-  const currentRound  = entries.length + 1
-
-  // Singers grouped
-  const singerMap: Record<string, QueueEntry[]> = {}
-  entries.forEach(e => {
-    if (!singerMap[e.name]) singerMap[e.name] = []
-    singerMap[e.name].push(e)
-  })
-  const singers = Object.entries(singerMap).sort((a, b) => b[1].length - a[1].length)
-
-  // Songs
-  const songCounts: Record<string, number> = {}
-  entries.forEach(e => {
-    [e.songNumber, e.songNumber2].filter(Boolean).forEach(s => {
-      songCounts[s] = (songCounts[s] || 0) + 1
-    })
-  })
-  const topSongs = Object.entries(songCounts).sort((a, b) => b[1] - a[1])
-
-  getElement('table-modal-title').textContent = `Mesa ${table}`
-  getElement('table-modal-body').innerHTML = `
-    <div class="tmodal-section">
-      <h3 class="tmodal-section-title">Resumo</h3>
-      <div class="tmodal-summary">
-        <div class="tmodal-stat">
-          <span class="tmodal-stat-value">${totalSongs}</span>
-          <span class="tmodal-stat-label">Músicas</span>
-        </div>
-        <div class="tmodal-stat">
-          <span class="tmodal-stat-value">${uniqueSingers.length}</span>
-          <span class="tmodal-stat-label">Cantores</span>
-        </div>
-        <div class="tmodal-stat">
-          <span class="tmodal-stat-value">${duration}</span>
-          <span class="tmodal-stat-label">Duração</span>
-        </div>
-        <div class="tmodal-stat">
-          <span class="tmodal-stat-value">${avgWaitMin}min</span>
-          <span class="tmodal-stat-label">Espera média</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="tmodal-section">
-      <h3 class="tmodal-section-title">Atividade</h3>
-      <div class="tmodal-activity">
-        <div class="tmodal-activity-row">
-          <span class="tmodal-activity-label">Rodada atual</span>
-          <span class="tmodal-activity-value">${currentRound}ª rodada</span>
-        </div>
-        <div class="tmodal-activity-row">
-          <span class="tmodal-activity-label">Primeira inserção</span>
-          <span class="tmodal-activity-value">${formatTime(firstTime)}</span>
-        </div>
-        <div class="tmodal-activity-row">
-          <span class="tmodal-activity-label">Último canto</span>
-          <span class="tmodal-activity-value">${formatTime(lastTime)}</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="tmodal-section">
-      <h3 class="tmodal-section-title">Cantores</h3>
-      <div class="tmodal-singers">
-        ${singers.map(([name, entries]) => `
-          <div class="tmodal-singer">
-            <div class="tmodal-singer-header">
-              <span class="tmodal-singer-name">${escapeHtml(name)}</span>
-              <span class="tmodal-singer-count">${entries.reduce((a, e) => a + 1 + (e.songNumber2 ? 1 : 0), 0)} músicas</span>
-            </div>
-            ${entries.map(e => `
-              <div class="tmodal-singer-entry">
-                <div class="tmodal-entry-songs">
-                  <span class="tmodal-entry-song">🎵 ${escapeHtml(e.songNumber)}</span>
-                  ${e.songNumber2 ? `<span class="tmodal-entry-song">🎵 ${escapeHtml(e.songNumber2)}</span>` : ''}
-                </div>
-                <div class="tmodal-entry-times">
-                  <span class="tmodal-entry-time"><span class="tmodal-entry-time-label">Inserido</span> ${formatTime(e.insertedAt)}</span>
-                  <span class="tmodal-entry-arrow">→</span>
-                  <span class="tmodal-entry-time"><span class="tmodal-entry-time-label">Cantou</span> ${formatTime(e.doneAt ?? e.insertedAt)}</span>
-                </div>
-              </div>`).join('')}
-          </div>`).join('')}
-      </div>
-    </div>
-
-    <div class="tmodal-section">
-      <h3 class="tmodal-section-title">Músicas pedidas</h3>
-      <div class="tmodal-songs">
-        ${topSongs.map(([song, count]) => `
-          <span class="tmodal-song-badge">#${escapeHtml(song)}${count > 1 ? ` ×${count}` : ''}</span>
-        `).join('')}
-      </div>
-    </div>`
-
-  getElement('btn-reset-table').onclick = () => resetTable(table)
-  getElement('table-modal').classList.remove('hidden')
-  getElement('overlay').classList.remove('hidden')
-}
-
-function closeTableModal(): void {
-  getElement('table-modal').classList.add('hidden')
-  getElement('overlay').classList.add('hidden')
-}
-
-function resetTable(table: string): void {
-  if (!confirm(`Resetar Mesa ${table}? O histórico desta mesa na sessão atual será apagado.`)) return
-  state.history = state.history.filter(e =>
-    !(e.sessionId === state.currentSessionId && e.table === table)
-  )
-  historyFilter.table = null
-  saveState()
-  renderQueue()
-  renderHistory()
-  closeTableModal()
-  showToast(`Mesa ${table} resetada.`)
-}
-
-// ── History filters ────────────────────────────────────
-function getFilteredHistory(): QueueEntry[] {
-  let result = state.history.filter(e => e.sessionId === state.currentSessionId)
-  if (historyFilter.search) {
-    const s = historyFilter.search.toLowerCase()
-    result = result.filter(e => e.name.toLowerCase().includes(s))
-  }
-  if (historyFilter.table) {
-    result = result.filter(e => e.table === historyFilter.table)
-  }
-  if (historyFilter.order === 'asc') result.reverse()
-  return result
-}
-
-// ── Render: Queue ─────────────────────────────────────
-function songsHtml(entry: QueueEntry): string {
-  return `🎵 ${escapeHtml(entry.songNumber)}${entry.songNumber2 ? ` &nbsp;🎵 ${escapeHtml(entry.songNumber2)}` : ''}`
-}
-
-function tableBadgeHtml(table: string): string {
-  return `<button class="card-table card-table-clickable" onclick="openTableModal('${table}')" title="Ver detalhes da mesa">Mesa ${table}</button>`
-}
-
-function renderQueue(): void {
-  const nowBlock  = getElement('now-block')
-  const nextBlock = getElement('next-block')
-  const list      = getElement('queue-list')
-  const counter   = getElement('queue-count')
-
-  const order = playOrder()
-
-  // Lock the current turn: once shown as "vez atual" it stays until the
-  // operator marks Cantou/Cancelar — never displaced by new arrivals.
-  let current = state.currentTurnId
-    ? state.queue.find(e => e.id === state.currentTurnId) || null
-    : null
-  if (!current) {
-    current = order[0] || null
-    if (current && current.id === state.nextTurnId) state.nextTurnId = null
-    state.currentTurnId = current ? current.id : null
-    saveState()
-  }
-
-  // Próximos: the next few in play order (pins first, then fair). The waiting
-  // list below is whatever is left, by arrival — and never carries a pin.
-  const afterCurrent = order.filter(e => e.id !== current?.id)
-  const proximos     = afterCurrent.slice(0, PROXIMOS_COUNT)
-  const shownIds     = new Set<string>([...(current ? [current.id] : []), ...proximos.map(e => e.id)])
-  const waiting      = state.queue
-    .filter(e => !shownIds.has(e.id))
-    .sort((a, b) => a.insertedAt - b.insertedAt)
-
-  // Prune boost state for entries no longer in the waiting list (promoted,
-  // sung, cancelled, or wiped by a new expediente), clearing any pending
-  // auto-collapse timer so it can't fire after the entry left.
-  const waitingIds = new Set(waiting.map(e => e.id))
-  Object.keys(boostTimers).forEach(id => {
-    if (!waitingIds.has(id)) { clearTimeout(boostTimers[id]); delete boostTimers[id] }
-  })
-  boostCollapsed.forEach(id => { if (!waitingIds.has(id)) boostCollapsed.delete(id) })
-  boostDismissed.forEach(id => { if (!waitingIds.has(id)) boostDismissed.delete(id) })
-
-  counter.textContent = String(waiting.length)
-
-  // ── Vez atual
-  if (current) {
-    nowBlock.classList.remove('hidden')
-    nowBlock.innerHTML = `
-      <div class="now-card"
-        ondragover="dragOverTarget(event)" ondrop="dropOnCurrent(event)"
-        ondragleave="event.currentTarget.classList.remove('drag-over')">
-        <div class="now-label">🎤 Vez atual</div>
-        <div class="now-main">
-          ${tableBadgeHtml(current.table)}
-          <span class="now-name">${escapeHtml(current.name)}</span>
-          <span class="now-song">${songsHtml(current)}</span>
-        </div>
-        <div class="now-actions">
-          <button class="btn btn-outline btn-sm" onclick="openEdit('${current.id}')" title="Editar">✏️</button>
-          <button class="btn btn-danger-outline btn-sm" onclick="cancelEntry('${current.id}')">Cancelar</button>
-          <button class="btn-done-lg" onclick="markDone('${current.id}')">✓ Cantou</button>
-        </div>
-      </div>`
-  } else {
-    nowBlock.classList.add('hidden')
-    nowBlock.innerHTML = ''
-  }
-
-  // ── Próximos (até PROXIMOS_COUNT)
-  if (proximos.length > 0) {
-    nextBlock.classList.remove('hidden')
-    nextBlock.innerHTML = `
-      <div class="next-label">Próximos recomendados</div>
-      <div class="next-list">
-        ${proximos.map((e, i) => {
-          const pinned = state.priorityIds.includes(e.id)
-          return `
-          <div class="next-card${pinned ? ' is-pinned' : ''}" data-id="${e.id}" draggable="true"
-            ondragstart="dragStart(event,'${e.id}')" ondragend="dragEnd(event)"
-            ondragover="dragOverTarget(event)" ondrop="dropOnProximo(event,'${e.id}')"
-            ondragleave="event.currentTarget.classList.remove('drag-over')">
-            <span class="next-pos">${i + 1}º</span>
-            ${tableBadgeHtml(e.table)}
-            <div class="next-main">
-              <span class="next-name">${escapeHtml(e.name)}</span>
-              <span class="next-song">${songsHtml(e)}</span>
-            </div>
-            <div class="next-actions">
-              ${pinned ? `<button class="btn btn-outline btn-sm" onclick="unpin('${e.id}')" title="Soltar prioridade">Soltar 📌</button>` : ''}
-              <button class="btn btn-outline btn-sm" onclick="openEdit('${e.id}')" title="Editar">✏️</button>
-              <button class="btn btn-danger-outline btn-sm" onclick="cancelEntry('${e.id}')">Cancelar</button>
-            </div>
-          </div>`
-        }).join('')}
-      </div>`
-  } else {
-    nextBlock.classList.add('hidden')
-    nextBlock.innerHTML = ''
-  }
-
-  // ── Fila de espera (ordem de chegada)
-  if (state.queue.length === 0) {
-    list.innerHTML = `
-      <div class="empty-state">
-        <span class="empty-icon">🎵</span>
-        <p>Nenhuma entrada na fila.</p>
-        <p>Adicione a primeira música acima!</p>
-      </div>`
-  } else if (waiting.length === 0) {
-    list.innerHTML = `<div class="queue-empty-sm">Sem mais ninguém na espera.</div>`
-  } else {
-    list.innerHTML = waiting.map((entry, i) => {
-      const waitedMin = Math.floor((Date.now() - entry.insertedAt) / 60000)
-      const overdue   = boostOverdue(entry) && !boostDismissed.has(entry.id)
-      const collapsed = boostCollapsed.has(entry.id)
-      const showFull  = overdue && !collapsed
-      const showBadge = overdue && collapsed
-      if (showFull) scheduleBoostCollapse(entry.id)
-      return `
-      <div class="queue-card${overdue ? ' has-boost' : ''}" data-id="${entry.id}" draggable="true"
-        ondragstart="dragStart(event,'${entry.id}')" ondragend="dragEnd(event)"
-      >
-        <span class="queue-pos">${i + 1}</span>
-        ${tableBadgeHtml(entry.table)}
-        <div class="queue-main">
-          <span class="card-name">${escapeHtml(entry.name)}</span>
-          <span class="card-song">${songsHtml(entry)}</span>
-        </div>
-        <div class="queue-meta">
-          <span class="card-inserted">&#9201; ${formatTime(entry.insertedAt)}</span>
-          <span class="card-wait" data-inserted="${entry.insertedAt}">${calcWait(entry.insertedAt)}</span>
-          ${showBadge ? `<button class="boost-badge" onclick="expandBoost('${entry.id}')" title="Esperando há muito — ver opções">⏰ furar?</button>` : ''}
-        </div>
-        <div class="queue-actions">
-          <button class="btn btn-outline btn-sm" onclick="openEdit('${entry.id}')" title="Editar">✏️</button>
-          <button class="btn btn-danger-outline btn-sm" onclick="cancelEntry('${entry.id}')">Cancelar</button>
-        </div>
-        ${showFull ? `
-        <div class="card-boost">
-          <span class="card-boost-msg">⏰ Mesa ${entry.table} espera há ${waitedMin} min. Furar pra frente?</span>
-          <span class="card-boost-actions">
-            <button class="btn-boost-yes" onclick="acceptBoost('${entry.id}')">Sim</button>
-            <button class="btn-boost-no" onclick="dismissBoost('${entry.id}')">Não</button>
-          </span>
-        </div>` : ''}
-      </div>`
-    }).join('')
-  }
-
-  updateWaitTimes()
-}
-
-// ── Render: History ───────────────────────────────────
-function renderHistory(): void {
-  const list    = getElement('history-list')
-  const filtered = getFilteredHistory()
-
-  // Render table filter buttons
-  const tables = [...new Set(state.history.filter(e => e.sessionId === state.currentSessionId).map(e => e.table))].sort((a, b) => Number(a) - Number(b))
-  const tableFilters = getElement('history-table-filters')
-  if (tableFilters) {
-    tableFilters.innerHTML = tables.map(t => `
-      <button class="btn-table-filter ${historyFilter.table === t ? 'active' : ''}"
-        onclick="setTableFilter('${t}')">Mesa ${t}</button>
-    `).join('')
-    if (tables.length > 0) {
-      tableFilters.innerHTML = `
-        <button class="btn-table-filter ${historyFilter.table === null ? 'active' : ''}"
-          onclick="setTableFilter(null)">Todas</button>
-      ` + tableFilters.innerHTML
-    }
-  }
-
-  // Update sort button label
-  const sortBtn = getElement('btn-sort-history')
-  if (sortBtn) sortBtn.textContent = historyFilter.order === 'desc' ? '↓ Recente' : '↑ Antiga'
-
-  if (filtered.length === 0) {
-    list.innerHTML = `
-      <div class="empty-state">
-        <span class="empty-icon">📋</span>
-        <p>${state.history.length === 0 ? 'Nenhum registro no histórico.' : 'Nenhum resultado para os filtros.'}</p>
-      </div>`
-    return
-  }
-
-  // Compute song counts and last sang time per singer, and counts per table
-  // (cancelled entries never count as sung)
-  const singerCounts: Record<string, number> = {}
-  const singerLastSang: Record<string, number> = {}
-  const tableCounts: Record<string, number> = {}
-  sungEntries().forEach(e => {
-    const n   = 1 + (e.songNumber2 ? 1 : 0)
-    const key = e.name.toLowerCase()
-    singerCounts[key]    = (singerCounts[key]    || 0) + n
-    tableCounts[e.table] = (tableCounts[e.table] || 0) + n
-    if (!singerLastSang[key] || e.doneAt > singerLastSang[key]) {
-      singerLastSang[key] = e.doneAt
-    }
-  })
-
-  list.innerHTML = filtered.map(entry => {
-    const cancelled = entry.status === 'cancelled'
-    if (cancelled) {
-      return `
-    <div class="history-card history-card--cancelled">
-      <div class="history-card-top">
-        <span class="history-name">${escapeHtml(entry.name)}</span>
-        <span class="history-badge-table history-badge-cancelled">Mesa ${entry.table}</span>
-        <span class="history-song">${songsHtml(entry)}</span>
-        <span class="history-cancelled-tag">Cancelada</span>
-      </div>
-      <div class="history-card-bottom">
-        <div class="history-times">
-          <span class="history-time"><span class="history-time-label">Inserido</span> ${formatTime(entry.insertedAt)}</span>
-          <span class="history-time-arrow">→</span>
-          <span class="history-time"><span class="history-time-label">Cancelada</span> ${formatTime(entry.cancelledAt ?? entry.insertedAt)}</span>
-        </div>
-      </div>
-    </div>`
-    }
-    if (entry.status !== 'done' || entry.doneAt == null) return ''
-    const key         = entry.name.toLowerCase()
-    const singerTotal = singerCounts[key] || 0
-    const lastSang    = singerLastSang[key] || 0
-    return `
-    <div class="history-card">
-      <div class="history-card-top">
-        <span class="history-name">${escapeHtml(entry.name)}</span>
-        <button class="history-badge-table history-badge-clickable" onclick="openTableModal('${entry.table}')" title="Ver detalhes da mesa">Mesa ${entry.table}</button>
-        <span class="history-song">${songsHtml(entry)}</span>
-      </div>
-      <div class="history-card-bottom">
-        <div class="history-times">
-          <span class="history-time"><span class="history-time-label">Inserido</span> ${formatTime(entry.insertedAt)}</span>
-          <span class="history-time-arrow">→</span>
-          <span class="history-time"><span class="history-time-label">Cantou</span> ${formatTime(entry.doneAt)}</span>
-        </div>
-        <div class="history-counts">
-          <span class="history-count">🎤 ${singerTotal} música${singerTotal !== 1 ? 's' : ''} · último às ${formatTime(lastSang)}</span>
-        </div>
-      </div>
-    </div>`
-  }).join('')
-}
-
-function setTableFilter(table: string | null): void {
-  historyFilter.table = table
-  renderHistory()
-}
-
-// ── Drag & drop ───────────────────────────────────────
-// Waiting cards are the drag SOURCES. The only valid drop targets are the
-// "Vez atual" and "Próximo recomendado" blocks — dropping anywhere in the
-// waiting list does nothing.
-let draggedId: string | null = null
-const DRAG_SCROLL_EDGE = 80
-const DRAG_SCROLL_MAX_SPEED = 18
-
-// Confirmation shown when dropping onto "Vez atual" (interrupts who's singing).
-const PROMOTE_TO_CURRENT_MSG = 'Colocar esta mesa para cantar AGORA? A mesa que está na vez passa a ser a próxima.'
-
-function dragStart(event: DragEvent, id: string): void {
-  draggedId = id
-  setTimeout(() => { const c = (event.target as Element | null)?.closest('.queue-card, .next-card'); if (c) c.classList.add('dragging') }, 0)
-}
-
-function dragEnd(event: DragEvent): void {
-  const c = (event.target as Element | null)?.closest('.queue-card, .next-card')
-  if (c) c.classList.remove('dragging')
-  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'))
-  draggedId = null
-}
-
-function autoScrollDuringDrag(event: DragEvent): void {
-  if (!draggedId) return
-  const container = document.querySelector('.app-main')
-  if (!container) return
-
-  const bounds = container.getBoundingClientRect()
-  let scrollDelta = 0
-  if (event.clientY < bounds.top + DRAG_SCROLL_EDGE) {
-    scrollDelta = -Math.ceil((bounds.top + DRAG_SCROLL_EDGE - event.clientY) / DRAG_SCROLL_EDGE * DRAG_SCROLL_MAX_SPEED)
-  } else if (event.clientY > bounds.bottom - DRAG_SCROLL_EDGE) {
-    scrollDelta = Math.ceil((event.clientY - (bounds.bottom - DRAG_SCROLL_EDGE)) / DRAG_SCROLL_EDGE * DRAG_SCROLL_MAX_SPEED)
-  }
-  if (scrollDelta) container.scrollTop += scrollDelta
-}
-
-// dragover handler for the now/next blocks — required so drop can fire.
-function dragOverTarget(event: DragEvent): void {
-  event.preventDefault()
-  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'))
-  ;(event.currentTarget as Element).classList.add('drag-over')
-}
-
-// Drop onto a Próximos slot: the dragged table takes that slot. If the slot
-// holds a pinned entry, the dragged is inserted right before it (the pinned one
-// slides down a position, still pinned). If the slot holds a non-pinned entry,
-// the dragged becomes the last pin (lands just after the existing pins). A pin
-// pushed past PROXIMOS_COUNT overflows back to the general queue.
-function dropOnProximo(event: DragEvent, targetId: string): void {
-  event.preventDefault()
-  ;(event.currentTarget as Element).classList.remove('drag-over')
-  const dragged = draggedId
-  draggedId = null
-  if (!dragged || dragged === state.currentTurnId || dragged === targetId) return
-  if (!state.queue.some(e => e.id === dragged)) return
-  state.priorityIds = state.priorityIds.filter(p => p !== dragged)
-  const ti = state.priorityIds.indexOf(targetId)
-  if (ti >= 0) state.priorityIds.splice(ti, 0, dragged) // before the pinned target
-  else state.priorityIds.push(dragged)                  // target not pinned → last pin
-  if (state.priorityIds.length > PROXIMOS_COUNT) state.priorityIds = state.priorityIds.slice(0, PROXIMOS_COUNT)
-  clearBoostState(dragged)
-  saveState()
-  renderQueue()
-}
-
-function dropOnCurrent(event: DragEvent): void {
-  event.preventDefault()
-  ;(event.currentTarget as Element).classList.remove('drag-over')
-  const dragged = draggedId
-  draggedId = null
-  if (!dragged || dragged === state.currentTurnId) return
-  if (!state.queue.some(e => e.id === dragged)) return
-  if (!confirm(PROMOTE_TO_CURRENT_MSG)) return
-  const oldCurrentId = state.currentTurnId
-  clearBoostState(dragged)
-  state.priorityIds = state.priorityIds.filter(p => p !== dragged)
-  state.currentTurnId = dragged
-  if (oldCurrentId && oldCurrentId !== dragged && state.queue.some(e => e.id === oldCurrentId)) {
-    state.priorityIds = state.priorityIds.filter(p => p !== oldCurrentId)
-    state.nextTurnId = oldCurrentId
-  } else {
-    state.nextTurnId = null
-  }
-  saveState()
-  renderQueue()
-}
-
-// ── Batch add ─────────────────────────────────────────
-let batchRowCount = 0
-
-function openBatch(): void {
-  batchRowCount = 0
-  getElement('batch-rows').innerHTML = ''
-  getElement('batch-modal').classList.remove('hidden')
-  addBatchRow()
-  addBatchRow()
-  addBatchRow()
-  document.querySelector<HTMLInputElement>('.batch-row .b-name')?.focus()
-}
-
-function closeBatch(): void {
-  getElement('batch-modal').classList.add('hidden')
-}
-
-function addBatchRow(): void {
-  const idx = batchRowCount++
-  const row = document.createElement('div')
-  row.className = 'batch-row'
-  row.dataset.idx = String(idx)
-  row.innerHTML = `
-    <input type="text" placeholder="Nome do cantor" class="b-name" />
-    <input type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Ex: 1234" class="b-song" />
-    <input type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Ex: 5678" class="b-song2" />
-    <input type="number" placeholder="Mesa" min="1" class="b-table" />
-    <button type="button" class="btn-batch-remove" onclick="removeBatchRow(this)" title="Remover linha">✕</button>
-  `
-  row.querySelectorAll<HTMLInputElement>('.b-song, .b-song2').forEach(input => {
-    input.addEventListener('keypress', e => { if (!/[0-9]/.test(e.key)) e.preventDefault() })
-    input.addEventListener('input', () => { input.value = input.value.replace(/[^0-9]/g, '') })
-  })
-  row.querySelectorAll<HTMLInputElement>('input').forEach(input => {
-    input.addEventListener('input', updateBatchCount)
-  })
-  getElement('batch-rows').appendChild(row)
-  updateBatchCount()
-}
-
-function removeBatchRow(btn: HTMLButtonElement): void {
-  const row = btn.closest('.batch-row')
-  if (!row) return
-  const allRows = document.querySelectorAll('.batch-row')
-  if (allRows.length === 1) return
-  row.remove()
-  updateBatchCount()
-}
-
-function updateBatchCount(): void {
-  const count = getCompleteBatchRows().length
-  const label = getElement('batch-count-label')
-  label.textContent = `${count} entrada${count !== 1 ? 's' : ''} pronta${count !== 1 ? 's' : ''}`
-  label.style.color = count > 0 ? 'var(--success)' : 'var(--text-dim)'
-}
-
-function getCompleteBatchRows(): HTMLElement[] {
-  return [...document.querySelectorAll<HTMLElement>('.batch-row')].filter(row => {
-    const name  = row.querySelector<HTMLInputElement>('.b-name')?.value.trim() ?? ''
-    const song  = row.querySelector<HTMLInputElement>('.b-song')?.value.trim() ?? ''
-    const table = row.querySelector<HTMLInputElement>('.b-table')?.value.trim() ?? ''
-    return name && song && table
-  })
-}
-
-function confirmBatch(): void {
-  const complete = getCompleteBatchRows()
-  if (complete.length === 0) {
-    showToast('Nenhuma entrada completa para adicionar.')
-    return
-  }
-  complete.forEach(row => {
-    const name  = row.querySelector<HTMLInputElement>('.b-name')?.value.trim() ?? ''
-    const song  = row.querySelector<HTMLInputElement>('.b-song')?.value.trim() ?? ''
-    const song2 = row.querySelector<HTMLInputElement>('.b-song2')?.value.trim() ?? ''
-    const table = row.querySelector<HTMLInputElement>('.b-table')?.value.trim() ?? ''
-    addEntry(name, song, song2, table)
-  })
-  closeBatch()
-  showToast(`${complete.length} entrada${complete.length !== 1 ? 's' : ''} adicionada${complete.length !== 1 ? 's' : ''} à fila!`)
-}
-
-// ── History panel ─────────────────────────────────────
-function openHistory(): void {
-  getElement('history-panel').classList.remove('hidden')
-  getElement('overlay').classList.remove('hidden')
-  renderHistory()
-}
-
-function closeHistory(): void {
-  getElement('history-panel').classList.add('hidden')
-  getElement('overlay').classList.add('hidden')
-}
-
-// ── Toast ─────────────────────────────────────────────
-let toastTimer: ReturnType<typeof setTimeout> | null = null
-function showToast(msg: string): void {
-  const el = getElement('toast')
-  el.textContent = msg
-  el.classList.remove('hidden')
-  el.classList.add('show')
-  if (toastTimer !== null) clearTimeout(toastTimer)
-  toastTimer = setTimeout(() => {
-    el.classList.remove('show')
-    setTimeout(() => el.classList.add('hidden'), 300)
-  }, 2500)
-}
-
-// ── Clock ─────────────────────────────────────────────
-function updateClock(): void {
-  getElement('clock').textContent =
-    new Date().toLocaleTimeString('pt-BR')
-}
-
-// ── Security: escape HTML ─────────────────────────────
-function escapeHtml(str: string): string {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
+  window.karaokeDiagnostics?.logSessionEvent('SESSION_ENDED', previousSessionId, 'new-session-started')
+  window.karaokeDiagnostics?.logSessionEvent('SESSION_PERSISTED', previousSessionId, 'confirmed')
+  window.karaokeDiagnostics?.logSessionEvent('SESSION_STARTED', application.state.currentSessionId, 'operator-started')
+  historyView.resetFilters()
+  queueView.render()
+  historyView.render()
+  previousSessionsView.render()
+  showToast('Nova sessão iniciada!')
+  return true
+}
+
+tableDialog = new TableDialog(
+  () => application.state,
+  () => application.getPlayOrder(),
+  modals,
+  async table => (await application.resetTableHistory(table)),
+  () => historyView.clearTableFilter(),
+  () => queueView.render(),
+  () => historyView.render()
+)
+
+queueView = createQueueView(application, () => application.state, id => queueInteractions.pinNext(id), () => tableDialog.refresh())
+queueInteractions = new QueueInteractions(
+  application,
+  () => application.state,
+  queueView,
+  historyView,
+  modals,
+  (table, sessionId, readOnly) => tableDialog.open(table, sessionId ?? application.state.currentSessionId, readOnly)
+)
+const appShell = new AppShell(application, () => application.state, modals, startNewShift, () => {
+  window.karaokeDiagnostics?.logSessionEvent('SESSION_RESUMED', application.state.currentSessionId, 'operator-continued')
+})
 
-// ── Init ──────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  // Load app name before anything else to prevent it from being overwritten
-  const _savedName = localStorage.getItem(KEYS.APP_NAME)
-  if (_savedName) {
-    getElement('app-name').textContent = _savedName
+  // Existing HTML templates call these handlers by name; keep that contract.
+  Object.assign(window as unknown as Record<string, unknown>, queueInteractions.globalHandlers)
+
+  const recovery = document.createElement('div')
+  recovery.className = 'persistence-feedback'
+  recovery.setAttribute('role', 'alert')
+  recovery.hidden = true
+  const message = document.createElement('span')
+  message.textContent = 'A alteração não foi confirmada. '
+  const retry = document.createElement('button')
+  retry.textContent = 'Verificar armazenamento'
+  retry.type = 'button'
+  retry.className = 'btn btn-secondary'
+  recovery.append(message, retry)
+  document.body.prepend(recovery)
+  window.addEventListener('persistence-failed', () => { recovery.hidden = false })
+  retry.onclick = async () => {
+    retry.disabled = true
+    try {
+      const result = await application.recoverPersistence()
+      window.dispatchEvent(new CustomEvent('persistence-recovered', { detail: result }))
+      recovery.hidden = true
+      queueView.render()
+      historyView.render()
+      showToast(result === 'committed' ? 'A gravação foi confirmada. A alteração já está salva; não é necessário repeti-la.'
+        : 'Estado verificado. A alteração não foi salva; você pode tentar novamente.')
+    } catch (error) { reportPersistenceFailure(error) }
+    finally { retry.disabled = false }
   }
-
-  await loadState() // disk-backed store is async; finish before first render
-  const accessGranted = !trialExpired()
-  renderQueue()
-  updateClock()
-  updateSessionStartInfo()
-  setInterval(updateClock, 1000)
-
-  getElement('form-entry').addEventListener('submit', event => {
-    event.preventDefault()
-    const name   = getInput('input-name').value
-    const song   = getInput('input-song').value
-    const song2  = getInput('input-song2').value
-    const table  = getInput('input-table').value
-    addEntry(name, song, song2, table)
-    ;(event.currentTarget as HTMLFormElement).reset()
-    getInput('input-name').focus()
-  })
-
-  document.querySelectorAll<HTMLInputElement>('#input-song, #input-song2').forEach(input => {
-    input.addEventListener('keypress', e => {
-      if (!/[0-9]/.test(e.key)) e.preventDefault()
-    })
-    input.addEventListener('input', () => {
-      input.value = input.value.replace(/[^0-9]/g, '')
-    })
-  })
-
-  getElement('btn-close-edit').addEventListener('click', closeEdit)
-  getElement('btn-cancel-edit').addEventListener('click', closeEdit)
-  getElement('btn-save-edit').addEventListener('click', saveEdit)
-  document.querySelectorAll<HTMLInputElement>('#edit-song, #edit-song2').forEach(input => {
-    input.addEventListener('keypress', e => { if (!/[0-9]/.test(e.key)) e.preventDefault() })
-    input.addEventListener('input', () => { input.value = input.value.replace(/[^0-9]/g, '') })
-  })
-
-  getElement('btn-open-batch').addEventListener('click', openBatch)
-  getElement('btn-close-batch').addEventListener('click', closeBatch)
-  getElement('btn-cancel-batch').addEventListener('click', closeBatch)
-  getElement('btn-confirm-batch').addEventListener('click', confirmBatch)
-  getElement('btn-add-batch-row').addEventListener('click', () => {
-    addBatchRow()
-    const rows = document.querySelectorAll('.batch-row')
-    rows[rows.length - 1].querySelector<HTMLInputElement>('.b-name')?.focus()
-  })
-
-  getElement('btn-history').addEventListener('click', openHistory)
-  getElement('btn-close-history').addEventListener('click', closeHistory)
-  document.addEventListener('dragover', autoScrollDuringDrag)
-  getElement('overlay').addEventListener('click', () => { closeHistory(); closeTableModal() })
-  getElement('btn-close-table-modal').addEventListener('click', closeTableModal)
-  getElement('license-form').addEventListener('submit', e => {
-    e.preventDefault()
-    activateLicense(getInput('license-code').value)
-  })
-  getElement('history-search').addEventListener('input', event => {
-    historyFilter.search = (event.currentTarget as HTMLInputElement).value
-    renderHistory()
-  })
-
-  getElement('btn-sort-history').addEventListener('click', () => {
-    historyFilter.order = historyFilter.order === 'desc' ? 'asc' : 'desc'
-    renderHistory()
-  })
-
-  setInterval(enforceLicense, 60000)
-  setInterval(updateWaitTimes, 30000)
-  // Re-render periodically so the "furar pra frente?" prompt appears once a
-  // card crosses the wait threshold, even without a queue event.
-  setInterval(renderQueue, 60000)
-
-  if (accessGranted) showStartupDialog()
-  else showLicenseModal()
-
-  // ── Editable app name ──────────────────────────────
-  const appNameEl  = getElement('app-name')
-  const popover    = getElement('name-popover')
-  const popInput   = getInput('name-popover-input')
-  const btnEdit    = getElement('btn-edit-name')
-  const btnSave    = getElement('btn-name-save')
-  const btnCancel  = getElement('btn-name-cancel')
-
-  const savedName = localStorage.getItem(KEYS.APP_NAME)
-  if (savedName) appNameEl.textContent = savedName
-
-  function openNamePopover() {
-    popInput.value = appNameEl.textContent
-    popover.classList.remove('hidden')
-    popInput.focus()
-    popInput.select()
+  let licenseStatus: LicenseStatus
+  try { licenseStatus = await appShell.initializeLicense() } catch (error) {
+    reportRendererError('RENDERER_IPC_FAILED', 'Não foi possível consultar a licença local.', error)
+    return
   }
-
-  function saveAppName() {
-    const val = popInput.value.trim() || 'Karaoke Queue'
-    appNameEl.textContent = val
-    localStorage.setItem(KEYS.APP_NAME, val)
-    popover.classList.add('hidden')
+  try { await application.load(licenseStatus.expired) } catch (error) {
+    reportPersistenceFailure(error)
+    retry.onclick = () => location.reload()
+    retry.textContent = 'Tentar carregar novamente'
+    return
   }
-
-  function cancelNameEdit() {
-    popover.classList.add('hidden')
+  if (application.didStartFreshSessionOnLoad) {
+    window.karaokeDiagnostics?.logSessionEvent('SESSION_STARTED', application.state.currentSessionId,
+      application.didRecoverEndedSession ? 'after-previous-session-ended' : 'initial-session')
   }
-
-  btnEdit.addEventListener('click', openNamePopover)
-  btnSave.addEventListener('click', saveAppName)
-  btnCancel.addEventListener('click', cancelNameEdit)
-  popInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter')  { e.preventDefault(); saveAppName() }
-    if (e.key === 'Escape') cancelNameEdit()
-  })
-
-  // ── Theme toggle ───────────────────────────────────
-  const btnThemeToggle = getElement('btn-theme-toggle')
-  let currentTheme = localStorage.getItem('kshake_theme') || 'dark'
-
-  function applyTheme(theme: string): void {
-    document.documentElement.setAttribute('data-theme', theme)
-    btnThemeToggle.textContent = theme === 'dark' ? '☀️' : '🌙'
-    currentTheme = theme
-    localStorage.setItem('kshake_theme', theme)
+  settingsView.bind()
+  if (!appShell.isLicenseExpired) {
+    try { await application.ensureCurrentTurn() } catch (error) { reportPersistenceFailure(error) }
   }
+  queueView.render()
+  appShell.updateSessionStartInfo()
 
-  applyTheme(currentTheme)
+  queueInteractions.bind()
+  historyView.bind()
+  previousSessionsView.bind()
+  navigation.bind()
+  modals.bindOverlay(() => tableDialog.close())
+  tableDialog.bind()
+  getElement('btn-close-table-modal').addEventListener('click', () => tableDialog.close())
+  appShell.bind()
 
-  btnThemeToggle.addEventListener('click', () => {
-    applyTheme(currentTheme === 'dark' ? 'light' : 'dark')
-  })
+  setInterval(() => queueView.updateWaitTimes(), 30000)
+  setInterval(() => queueView.render(), 60000)
+  setInterval(() => historyView.updateStats(), 60000)
+  appShell.showStartupOrLicense(application.didRecoverEndedSession)
+  if (getElement('startup-modal').classList.contains('hidden')) getInput('input-table').focus()
 
-  // Expose state to main process for close event handling
   window.__kqueue = {
-    queueLength:      () => state.queue.length,
-    sessionEnded:     () => { const s = currentSession(); return !s || !!s.endedAt },
-    flushState:       async () => { await lastSavePromise; return true },
-    // Awaited by main.ts so the final SQLite write completes before the
-    // window is destroyed (the database bridge uses an async IPC roundtrip).
-    endSessionSilent: async () => {
-      const s = currentSession()
-      if (s && !s.endedAt) { s.endedAt = Date.now(); await saveState() }
+    queueLength: () => application.state.queue.filter(entry => entry.status === 'pending').length,
+    prepareToClose: () => application.prepareToClose(),
+    cancelClose: () => application.cancelClose(),
+    closeSummary: () => {
+      const session = application.state.sessions.find(item => item.id === application.state.currentSessionId)
+      const pending = application.state.queue.filter(entry => entry.status === 'pending')
+      const ids = new Set(pending.map(entry => entry.id))
+      if (application.state.currentTurnId && application.state.queue.some(entry => entry.id === application.state.currentTurnId)) {
+        ids.add(application.state.currentTurnId)
+      }
+      return { sessionActive: !!session && session.endedAt == null, uncompletedCount: ids.size,
+        sessionId: session?.id ?? null }
+    },
+    sessionEnded: () => {
+      const current = application.state.sessions.find(session => session.id === application.state.currentSessionId)
+      return !current || !!current.endedAt
+    },
+    flushState: async () => {
+      await application.flush()
+      return true
+    },
+    endSessionAndArchive: async () => {
+      try { return await application.endCurrentSession() } catch (error) {
+        reportPersistenceFailure(error)
+        throw error
+      }
     }
   }
 })

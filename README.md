@@ -1,114 +1,174 @@
 # Karaoke Queue
 
-Karaoke Queue is a desktop queue manager for karaoke venues. It helps operators register singers, keep the line fair, and manage the current karaoke session from a simple Electron app.
+**Version 0.5.0 · Pre-1.0 development**
+
+Karaoke Queue is a desktop application for managing karaoke presentation queues. It helps operators organize singers, distribute opportunities across tables, and control the running order while keeping session and presentation data locally persisted.
+
+The project focuses on queue operations and session history. It is not a karaoke player.
 
 ## Features
 
-- Add singers with a table number and up to two songs per turn.
-- Add multiple singers at once with batch entry.
-- Keep the current singer locked until the turn is marked as sung or cancelled.
-- Show the next three recommended singers.
-- Reorder upcoming singers with drag and drop.
-- Move an upcoming singer into the current turn when needed.
-- Prevent the same table from repeating immediately when another table is waiting.
-- Balance tables using recent singing history and waiting entries.
-- Show long-waiting entries and let the operator manually move them forward.
-- Keep a searchable session history, including cancelled entries.
-- View table-level singing details from the history.
-- Persist queue, history, and session data in a local SQLite database.
-- Customize the app name and toggle the visual theme.
+### Smart queue
 
-The app intentionally focuses on queue operation and history rather than statistics or analytics dashboards.
+- A single queue of pending presentations, with a clearly identified current turn.
+- Incremental Round Robin distribution across eligible tables to reduce avoidable repetition by one table.
+- A moderate debut priority and a 2:1 cadence that balances regular turns and debut opportunities when eligible.
+- Round indicators counted per table (not per singer), plus waiting-time information.
+- Persisted operational order, so normal updates and restarts do not needlessly reshuffle the queue.
 
-## Requirements
+### Presentation management
 
-- Node.js 22.12 or newer
-- npm
+- Register a table, singer, and one or two songs for a presentation. Two songs still represent one queue turn.
+- Add several presentations in one batch.
+- Complete a presentation or cancel it with confirmation.
+- Edit a presentation, inspect why it has its queue position, and open table details.
+- Search singer suggestions scoped to the table.
 
-## Download
+### Operator controls
 
-Windows users can download the latest installer from the [latest GitHub Release](https://github.com/ChrisDiniz/Karaoke-Queue/releases/latest).
+- Reorder presentations with drag and drop.
+- Pin individual presentations and manually move a presentation into the current turn.
+- Freeze a prefix of the queue and release it when ready.
+- Keep protected manual positions while the automatic queue continues to organize eligible turns.
 
-The installer includes everything needed to run the application. Node.js and npm are not required for installed users.
+Automation assists the operator; it does not remove the ability to intervene.
 
-## Installation
+### Sessions and history
 
-```bash
-npm install
-```
+- Continue an open session, start a new session explicitly, and review previous sessions.
+- Recover an open session after an unexpected close.
+- Search session history by singer, filter by table, and view table-level details.
+- Keep completed and cancelled presentations in history.
+- Persist data across application restarts. Sessions can cross midnight; the application does not end them automatically based on the calendar date.
+
+### Interface
+
+- Desktop layout with a collapsible sidebar and queue cards with context menus.
+- Appearance controls for theme, interface scale, and the name shown in the sidebar.
+- Session navigation for the current session and previous sessions.
+
+## How the smart queue works
+
+**Round Robin** spreads opportunities among eligible tables. A table with several pending presentations should not monopolize turns while other tables are eligible.
+
+**Debut priority** identifies a table that has not completed a presentation in the current session and gives its first eligible request a debut opportunity.
+
+**The 2:1 cadence** balances regular and debut opportunities under the current eligibility rules. It is an operational target, not a guaranteed mathematical ratio in every queue state.
+
+**Manual controls** take precedence where the operator has pinned a turn, moved it manually, or frozen part of the queue. The queue then continues organizing the unprotected turns around those choices.
+
+## Technology and architecture
+
+- Electron 45 and Node.js, with TypeScript 5.9.
+- HTML and CSS for the Renderer.
+- SQLite through Node's built-in `node:sqlite` API in Electron.
+- Playwright 1.64 for tests that launch real Electron windows.
+- electron-builder 26 for Windows packaging.
+- GitHub Actions for pull request validation and manual release builds.
+
+The persistence path is **Renderer → Preload → IPC → Main → SQLite**. The Preload exposes a restricted bridge; database access stays in the Main process. Operational changes are prepared and persisted before the confirmed state is published back to the interface. SQLite transactions protect schema migration and related writes.
+
+The application stores operational state in `karaoke.sqlite` under Electron's per-user `userData` directory. On first launch with a legacy `karaoke-data.json` in that directory, the app imports it transactionally and leaves the source file in place. Do not commit runtime databases or operator profiles.
 
 ## Development
 
-Start the application with (this compiles TypeScript before launching Electron):
+Requirements: Node.js 22.12 or newer and npm.
 
-```bash
+```sh
+npm ci
 npm start
 ```
 
-Run the Electron UI smoke test with a virtual display in WSL/Linux:
+`npm start` compiles TypeScript and launches Electron. To compile without launching the app:
 
-```bash
+```sh
+npm run compile
+```
+
+When opening `build/src/index.html` directly in a browser for UI development, the Renderer has a `localStorage` fallback. This is a development fallback; it does not exercise the normal Electron IPC and SQLite persistence path.
+
+## Tests
+
+Run the unit suite and the release/packaging configuration checks with:
+
+```sh
+npm run test:unit
+npm run test:release-workflow
+```
+
+The focused Electron E2E commands include:
+
+```sh
 npm run test:e2e:headless
+npm run test:e2e:drag:headless
+npm run test:e2e:round-robin:headless
+npm run test:e2e:cadence:headless
+npm run test:e2e:persistence:headless
+npm run test:e2e:sessions:headless
+npm run test:e2e:session-close:headless
+npm run test:e2e:licensing:headless
+npm run test:e2e:queue-menu:headless
 ```
 
-## Build
+`test:e2e:headless` runs the main Electron smoke suite. The full Linux E2E matrix is available as:
 
-Create a distributable application with:
-
-```bash
-npm run build
+```sh
+npm run test:e2e:linux
 ```
 
-The current build configuration targets Windows with an NSIS installer.
+The E2E launchers use real Electron, Playwright, SQLite through IPC, and temporary profiles. Linux headless runs use Xvfb and clear `WAYLAND_DISPLAY` for each suite. They cover queue behavior, drag and drop, persistence, sessions, licensing, menus, and other UI workflows. The application is not replaced by a browser mock in these tests.
 
-## Queue Rules
+## Windows build
 
-Each queue entry represents one singer turn and can contain one or two songs. The queue logic:
+The project uses electron-builder to create an unsigned Windows x64 NSIS installer (`.exe`) with ASAR packaging. On Windows, build and verify it with:
 
-1. Keeps the current turn stable until the operator finishes or cancels it.
-2. Uses arrival order as the base ordering.
-3. Spreads multiple entries from the same table across other waiting tables.
-4. Uses recent table turns as an internal fairness factor.
-5. Avoids consecutive turns from the same table whenever another table is available.
-6. Allows repeated turns when only one table remains.
-7. Lets the operator override the recommendation manually with drag and drop.
-
-Manual overrides are intentional and take precedence over the automatic recommendation.
-
-## Data Storage
-
-The Electron application stores queue, history, and session data in `karaoke.sqlite` under Electron's per-user data directory. On first launch after upgrading, it imports the existing `karaoke-data.json` from `electron-store` in a transaction and leaves that file in place as a backup. The SQLite file is runtime data and should not be committed.
-
-To open the renderer directly in a browser during development, compile first and open `build/src/index.html`. In that mode the app falls back to `localStorage` for queue and session state. The app name and theme remain in `localStorage`.
-
-## Trial Activation
-
-New installations include a 30-day local trial. After the trial expires, the application requires the activation code before it can be used:
-
-```text
-karaokequeue
+```sh
+npm ci
+npm run build:windows
+npm run verify:windows-build
 ```
 
-Successful activation is stored locally and only needs to be entered once on that installation.
+The build uses `--publish never`; building locally does not publish a GitHub Release. The pull request and release workflows build on Windows runners. The package verifier checks the installer name, app archive contents, Main/Preload/Renderer files, assets, SQLite runtime, and exclusion of test and documentation files.
 
-## Project Structure
+The development environment used to prepare version 0.5.0 was WSL2. Its `win-unpacked` application package was generated and inspected, but the local NSIS `.exe` build did not complete because Wine was unavailable. No Windows installation or public Release is claimed from that local build. The Windows-runner build, package validation, and packaged-app smoke test are defined in CI; consult the workflow run for their actual result.
 
-```text
-.
-├── main.ts             Electron main process
-├── database.ts         SQLite schema, persistence, and migration
-├── preload.ts          Secure renderer/main-process bridge
-├── types.d.ts          Shared domain and bridge types
-├── tsconfig.json       TypeScript compiler configuration
-├── src/
-│   ├── app.ts          Queue logic and application behavior
-│   ├── index.html      Application markup
-│   └── style.css       Application styles
-├── tests/
-│   └── electron-smoke.ts Electron smoke test
-└── package.json        Scripts and Electron configuration
-```
+The installer is currently unsigned. Windows may show a SmartScreen warning.
 
-## License
+## Pull request validation and releases
 
-No license has been specified for this project yet.
+### Pull requests
+
+[`.github/workflows/pr-validation.yml`](.github/workflows/pr-validation.yml) runs for pull requests opened, updated, or reopened against `main`. It compiles, runs unit and workflow tests, runs the real-Electron Linux E2E matrix, and then builds and verifies the Windows x64 package on a Windows runner. After the packaged-app smoke test passes, the installer is uploaded as a downloadable Actions Artifact named `Karaoke-Queue-PR-<number>-Windows-x64`.
+
+An Actions Artifact is for testing a pull request. It is not a GitHub Release.
+
+### Manual release
+
+[`.github/workflows/release-windows.yml`](.github/workflows/release-windows.yml), shown as **Release Karaoke Queue** in GitHub Actions, is the only release publisher. It runs only when started manually; merges, pushes, pull requests, and tags do not publish automatically.
+
+To request a release, open **GitHub → Actions → Release Karaoke Queue → Run workflow**, select `main`, and enter the version without the `v` prefix. For example, input `0.5.0` must exactly match `package.json`. The workflow rejects other branches, mismatched versions, and an existing tag or Release. After validation and Windows packaging succeed, it creates `v0.5.0` at the validated commit and publishes a GitHub prerelease with the installer and SHA-256 checksum.
+
+See [the Windows release process](docs/windows-release-process.md) for the full procedure and failure handling. No Release has been published as part of preparing this README.
+
+## Licensing
+
+New installations receive a 15-day trial. The remaining time appears in the header, where the operator can open the activation dialog and enter an activation token. Activation is persisted locally for that installation. After the trial expires, operational changes are blocked while sessions, queue data, and history remain preserved; activation is still available.
+
+This is a lightweight local licensing check, not protection against reverse engineering. The activation token and its validation material are intentionally not included in this README.
+
+## Development status
+
+Karaoke Queue is in active **pre-1.0 development**. Version 0.5.0 is a development release; 1.0.0 is reserved for when the main product scope is complete.
+
+The current scope is queue and session management. Playback integration, automatic song-end detection, a functional local music library, YouTube playback, and remote licensing are not implemented. The interface includes preparatory or disabled navigation for some playback options; those controls do not indicate a working integration.
+
+## Additional documentation
+
+- [Incremental Round Robin](docs/round-robin-incremental.md)
+- [2:1 cadence behavior](docs/cadence-reset.md)
+- [SQLite persistence safety](docs/sqlite-persistence-safety.md)
+- [Legacy session compatibility](docs/legacy-session-compatibility.md)
+- [Drag-and-drop E2E reliability](docs/drag-e2e-reliability.md)
+- [Windows build and release process](docs/windows-release-process.md)
+
+The repository does not currently declare a project license.

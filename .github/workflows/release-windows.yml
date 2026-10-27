@@ -1,0 +1,281 @@
+name: Release Karaoke Queue
+run-name: Release Karaoke Queue ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão a publicar, sem prefixo v. Ex.: 0.5.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: karaoke-queue-windows-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate branch, version and duplicate release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      sha: ${{ steps.plan.outputs.sha }}
+      branch: ${{ steps.plan.outputs.branch }}
+    steps:
+      - name: Reject non-main dispatch before checkout
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          if [ "$DISPATCH_REF" != "refs/heads/main" ]; then
+            echo "Release bloqueado: publicação permitida somente em main (ref recebida: $DISPATCH_REF)." >&2
+            exit 1
+          fi
+
+      - name: Checkout the dispatch commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+
+      - name: Verify the checked out commit is the dispatch SHA
+        env:
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          if [ "$ACTUAL_SHA" != "$EVENT_SHA" ]; then
+            echo "Release bloqueado: checkout $ACTUAL_SHA difere do commit do evento $EVENT_SHA." >&2
+            exit 1
+          fi
+
+      - name: Validate exact SemVer and reject existing tag or Release
+        id: plan
+        env:
+          KQUEUE_DISPATCH_REF: ${{ github.ref }}
+          KQUEUE_COMMIT_SHA: ${{ github.sha }}
+          KQUEUE_REPOSITORY: ${{ github.repository }}
+          KQUEUE_API_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: node scripts/release-workflow.cjs
+
+      - name: Report validated release plan
+        env:
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          COMMIT_SHA: ${{ steps.plan.outputs.sha }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          {
+            echo '### Release preflight aprovado'
+            echo "- Branch: $BRANCH"
+            echo "- Commit: $COMMIT_SHA"
+            echo "- Versão: $VERSION"
+            echo "- Tag: $TAG"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  linux-validation:
+    name: Compile, unit and Electron E2E
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout the validated commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile, run unit tests and validate release rules
+        run: |
+          npm run compile
+          npm run test:unit
+          npm run test:release-workflow
+
+      - name: Install Xvfb
+        run: sudo apt-get update && sudo apt-get install --yes xvfb xauth
+
+      - name: Run Electron E2E suites with isolated profiles
+        run: npm run test:e2e:linux
+
+  windows-build:
+    name: Build and smoke test Windows x64
+    needs: [validate, linux-validation]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout the validated commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build unsigned Windows x64 NSIS installer
+        run: npm run build:windows
+
+      - name: Verify package contents and metadata
+        run: npm run verify:windows-build
+
+      - name: Check executable metadata and signature status
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          $installer = Get-ChildItem dist -Filter "Karaoke-Queue-Setup-$env:EXPECTED_VERSION-x64.exe" | Select-Object -First 1
+          if (-not $installer) { throw 'Windows x64 installer is missing.' }
+          $version = $installer.VersionInfo
+          if ($version.ProductName -ne 'Karaoke Queue') { throw "Unexpected installer product name: $($version.ProductName)" }
+          if ($version.ProductVersion -notmatch "^$([regex]::Escape($env:EXPECTED_VERSION))($|\.)") { throw "Unexpected installer version: $($version.ProductVersion)" }
+          $signature = Get-AuthenticodeSignature $installer.FullName
+          "Installer: $($installer.Name)"
+          "Product: $($version.ProductName) $($version.ProductVersion)"
+          "Signature status: $($signature.Status)"
+
+      - name: Launch packaged app and verify trial, IPC, SQLite and restart
+        run: node tests/packaged-windows-smoke.cjs "dist/win-unpacked/Karaoke Queue.exe"
+
+      - name: Generate installer SHA-256 checksum
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem dist -Filter 'Karaoke-Queue-Setup-*-x64.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'Cannot checksum a missing installer.' }
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Out-File dist/SHA256SUMS.txt -Encoding ascii
+          Write-Output (Get-Content dist/SHA256SUMS.txt)
+
+      - name: Upload validated Windows release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: Karaoke-Queue-Release-${{ needs.validate.outputs.version }}-Windows-x64
+          path: |
+            dist/Karaoke-Queue-Setup-${{ needs.validate.outputs.version }}-x64.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Create immutable prerelease and tag
+    needs: [validate, linux-validation, windows-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the validated commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Recheck exact SHA and release duplication immediately before publishing
+        id: plan
+        env:
+          KQUEUE_DISPATCH_REF: ${{ github.ref }}
+          KQUEUE_COMMIT_SHA: ${{ needs.validate.outputs.sha }}
+          KQUEUE_REPOSITORY: ${{ github.repository }}
+          KQUEUE_API_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$KQUEUE_COMMIT_SHA"
+          node scripts/release-workflow.cjs
+
+      - name: Download the validated Windows installer and checksum
+        uses: actions/download-artifact@v4
+        with:
+          name: Karaoke-Queue-Release-${{ needs.validate.outputs.version }}-Windows-x64
+          path: ${{ runner.temp }}/karaoke-queue-release
+
+      - name: Verify checksum and create tag at the validated commit
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+          COMMIT_SHA: ${{ needs.validate.outputs.sha }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          cd "$RUNNER_TEMP/karaoke-queue-release"
+          sha256sum --check SHA256SUMS.txt
+          cd "$GITHUB_WORKSPACE"
+          git tag -a "$TAG" "$COMMIT_SHA" -m "Karaoke Queue $TAG"
+          test "$(git rev-parse "$TAG^{commit}")" = "$COMMIT_SHA"
+          git push origin "refs/tags/$TAG"
+          echo "Tag $TAG now points to $COMMIT_SHA"
+
+      - name: Generate release notes from the validated commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          COMMIT_SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          gh api "repos/$GH_REPO/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            -f target_commitish="$COMMIT_SHA" \
+            --jq .body > "$RUNNER_TEMP/release-notes.md"
+          if [ ! -s "$RUNNER_TEMP/release-notes.md" ]; then
+            echo "Release Karaoke Queue $TAG" > "$RUNNER_TEMP/release-notes.md"
+          fi
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          COMMIT_SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          cd "$RUNNER_TEMP/karaoke-queue-release"
+          gh release create "$TAG" \
+            "Karaoke-Queue-Setup-$VERSION-x64.exe" \
+            SHA256SUMS.txt \
+            --repo "$GH_REPO" \
+            --target "$COMMIT_SHA" \
+            --title "Karaoke Queue $TAG" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --prerelease
+
+      - name: Report the published release and checksum
+        env:
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          COMMIT_SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          {
+            echo '### Release publicado'
+            echo "- URL: https://github.com/$GH_REPO/releases/tag/$TAG"
+            echo "- Instalador: Karaoke-Queue-Setup-$VERSION-x64.exe"
+            echo "- Commit: $COMMIT_SHA"
+            echo '- SHA-256:'
+            cat "$RUNNER_TEMP/karaoke-queue-release/SHA256SUMS.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report a possible partial publication
+        if: failure()
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+          COMMIT_SHA: ${{ needs.validate.outputs.sha }}
+        run: |
+          {
+            echo '### Publicação interrompida'
+            echo "A tag pode ter sido criada antes da falha. Não mova nem apague a tag automaticamente. Verifique se $TAG aponta para $COMMIT_SHA e se o GitHub Release existe. Se apenas o Release estiver ausente, use o artifact validado desta execução para completar o Release associado à mesma tag, sem criar outra tag."
+          } >> "$GITHUB_STEP_SUMMARY"

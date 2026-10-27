@@ -1,6 +1,6 @@
 {
   "name": "karaoke-queue",
-  "version": "1.0.1",
+  "version": "0.5.0",
   "description": "Fair queue manager for karaoke venues",
   "main": "build/main.js",
   "engines": {
@@ -9,9 +9,25 @@
   "scripts": {
     "compile": "tsc -p tsconfig.json && node build/scripts/copy-assets.js",
     "start": "npm run compile && electron .",
-    "build": "npm run compile && electron-builder",
+    "build": "npm run compile && electron-builder --win nsis --x64 --publish never",
+    "test:unit": "npm run compile && node build/tests/queue-rules.test.js && node build/tests/debut-cadence-rules.test.js && node build/tests/round-robin-rules.test.js && node build/tests/fixed-turn-rules.test.js && node build/tests/frozen-queue-rules.test.js && node build/tests/application.test.js && node build/tests/persistence.test.js && node build/tests/round-robin-application.test.js && node build/tests/licensing.test.js && node build/tests/database-migration.test.js && node --test build/tests/ui-scale.test.js build/tests/logging.test.js build/tests/singer-suggestions.test.js build/tests/sidebar-display-name.test.js",
+    "test:e2e:drag:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/drag-electron.js",
+    "test:e2e:persistence:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/persistence-electron.js",
+    "test:e2e:round-robin:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/round-robin-electron.js",
     "test:e2e": "npm run compile && node build/tests/electron-smoke.js",
-    "test:e2e:headless": "env -u WAYLAND_DISPLAY xvfb-run -a npm run test:e2e"
+    "test:e2e:headless": "env -u WAYLAND_DISPLAY xvfb-run -a npm run test:e2e",
+    "test:e2e:cadence:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/debut-cadence-electron.js",
+    "test:e2e:sessions:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/previous-sessions-electron.js",
+    "test:e2e:session-close:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/session-close-electron.js",
+    "test:e2e:licensing:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/licensing-electron.js",
+    "test:e2e:queue-menu:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/queue-menu-electron.js",
+    "test:e2e:diagnostics:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/diagnostics-electron.js",
+    "test:e2e:singer-autocomplete:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/singer-autocomplete-electron.js",
+    "test:e2e:sidebar-name:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/sidebar-display-name-electron.js",
+    "build:windows": "npm run build",
+    "test:release-workflow": "node --test scripts/release-workflow.test.cjs scripts/packaging-config.test.cjs",
+    "verify:windows-build": "node scripts/verify-windows-build.cjs",
+    "test:e2e:linux": "npm run compile && node scripts/run-e2e-linux.cjs"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -23,9 +39,38 @@
   "build": {
     "appId": "com.karaoke.queue",
     "productName": "Karaoke Queue",
-    "win": {
-      "target": "nsis"
+    "artifactName": "Karaoke-Queue-Setup-${version}-${arch}.${ext}",
+    "asar": true,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build-resources"
     },
-    "files": ["build/**/*"]
+    "files": [
+      "build/**/*",
+      "!build/tests/**",
+      "!build/scripts/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build-resources/karaoke-queue.ico",
+      "forceCodeSigning": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Karaoke Queue",
+      "runAfterFinish": false
+    }
   }
 }
