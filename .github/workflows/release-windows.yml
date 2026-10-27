@@ -215,6 +215,8 @@ jobs:
           cd "$RUNNER_TEMP/karaoke-queue-release"
           sha256sum --check SHA256SUMS.txt
           cd "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG" "$COMMIT_SHA" -m "Karaoke Queue $TAG"
           test "$(git rev-parse "$TAG^{commit}")" = "$COMMIT_SHA"
           git push origin "refs/tags/$TAG"
