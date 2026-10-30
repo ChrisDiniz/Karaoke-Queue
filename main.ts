@@ -2,6 +2,7 @@ import { app, BrowserWindow, crashReporter, dialog, ipcMain, shell } from 'elect
 import fs from 'node:fs'
 import path from 'node:path'
 import { createKaraokeDatabase } from './database'
+import { validateAppStatePayload } from './src/app-state-validation'
 import { LocalLicenseService } from './src/license-service'
 import { createFileLogger } from './src/logging'
 import {
@@ -16,6 +17,26 @@ import {
   validateSidebarDisplayName
 } from './src/ui/sidebar-display-name'
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) app.quit()
+
+let mainWindow: BrowserWindow | null = null
+let pendingWindowActivation = false
+
+function activateMainWindow(): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) {
+    pendingWindowActivation = true
+    return
+  }
+  pendingWindowActivation = false
+  if (win.isMinimized()) win.restore()
+  if (!win.isVisible()) win.show()
+  win.focus()
+}
+
+if (hasSingleInstanceLock) app.on('second-instance', activateMainWindow)
+
 let database: ReturnType<typeof createKaraokeDatabase> | undefined
 let licenseService: LocalLicenseService | undefined
 let uiScalePreference: UiScalePreference = 'auto'
@@ -26,26 +47,32 @@ const logger = createFileLogger({
   logsDirectory: path.join(userDataDirectory, 'logs'),
   userDataDirectory
 })
-const previousExecution = logger.startRun()
+const previousExecution = hasSingleInstanceLock
+  ? logger.startRun()
+  : { previousRunId: null, previousStatus: null }
 let fatalMainFailure = false
 
-try {
-  app.setPath('crashDumps', logger.crashesDirectory)
-  crashReporter.start({ uploadToServer: false, productName: app.getName() })
-  logger.pruneCrashDumps()
-} catch (error) {
-  logger.warn('main', 'CRASH_REPORTER_INIT_FAILED', 'Não foi possível iniciar a captura local de minidumps.', error)
+if (hasSingleInstanceLock) {
+  try {
+    app.setPath('crashDumps', logger.crashesDirectory)
+    crashReporter.start({ uploadToServer: false, productName: app.getName() })
+    logger.pruneCrashDumps()
+  } catch (error) {
+    logger.warn('main', 'CRASH_REPORTER_INIT_FAILED', 'Não foi possível iniciar a captura local de minidumps.', error)
+  }
 }
 
-process.on('uncaughtExceptionMonitor', (error, origin) => {
-  fatalMainFailure = true
-  logger.fatal('main', 'MAIN_UNCAUGHT_EXCEPTION', `Exceção não capturada (${origin}).`, error)
-})
-process.on('unhandledRejection', (reason) => {
-  logger.error('main', 'MAIN_UNHANDLED_REJECTION', 'Promise rejeitada sem tratamento no processo principal.', reason)
-})
+if (hasSingleInstanceLock) {
+  process.on('uncaughtExceptionMonitor', (error, origin) => {
+    fatalMainFailure = true
+    logger.fatal('main', 'MAIN_UNCAUGHT_EXCEPTION', `Exceção não capturada (${origin}).`, error)
+  })
+  process.on('unhandledRejection', (reason) => {
+    logger.error('main', 'MAIN_UNHANDLED_REJECTION', 'Promise rejeitada sem tratamento no processo principal.', reason)
+  })
+}
 
-if (previousExecution.previousStatus === 'normal') {
+if (hasSingleInstanceLock && previousExecution.previousStatus === 'normal') {
   logger.info('main', 'APP_PREVIOUS_RUN_NORMAL', 'A execução anterior confirmou saída normal.', {
     previousRunId: previousExecution.previousRunId
   })
@@ -144,6 +171,10 @@ function createWindow() {
     title: 'Karaoke Queue',
     autoHideMenuBar: true
   })
+  mainWindow = win
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
+  })
 
   win.webContents.on('render-process-gone', (_event, details) => {
     logger.error('renderer', 'RENDERER_PROCESS_GONE', 'O processo de interface terminou inesperadamente.', undefined, {
@@ -218,6 +249,7 @@ function createWindow() {
     }
   })
 
+  if (pendingWindowActivation) activateMainWindow()
   win.loadFile(path.join(__dirname, 'src', 'index.html'))
 
   let closeFlowRunning = false
@@ -327,7 +359,7 @@ function createWindow() {
   })
 }
 
-app.whenReady().then(() => {
+if (hasSingleInstanceLock) app.whenReady().then(() => {
   try {
     licenseService = new LocalLicenseService(path.join(app.getPath('userData'), 'license-state.json'))
     uiScaleFilePath = path.join(app.getPath('userData'), 'ui-preferences.json')
@@ -352,11 +384,14 @@ app.whenReady().then(() => {
     })
     ipcMain.handle('app-data:save', (_e, data) => {
       try {
-        requireLicenseForOperationalWrite(openedDatabase.loadState(), data as StoredAppState)
-        openedDatabase.saveState(data)
+        const state = validateAppStatePayload(data)
+        requireLicenseForOperationalWrite(openedDatabase.loadState(), state)
+        openedDatabase.saveState(state)
         return true
       } catch (error) {
-        logger.error('sqlite', 'SQLITE_SAVE_FAILED', 'Falha ao persistir o estado do aplicativo.', error)
+        const invalidPayload = error instanceof Error && error.message.startsWith('INVALID_APP_STATE_PAYLOAD:')
+        logger.error('sqlite', invalidPayload ? 'APP_STATE_SAVE_REJECTED' : 'SQLITE_SAVE_FAILED',
+          invalidPayload ? 'O payload de estado do aplicativo foi rejeitado.' : 'Falha ao persistir o estado do aplicativo.', error)
         throw error
       }
     })
@@ -415,8 +450,8 @@ app.whenReady().then(() => {
   }
 })
 
-app.on('before-quit', () => logger.info('main', 'APP_QUIT_SEQUENCE_STARTED', 'O Electron iniciou a sequência normal de saída.'))
-app.on('will-quit', () => {
+if (hasSingleInstanceLock) app.on('before-quit', () => logger.info('main', 'APP_QUIT_SEQUENCE_STARTED', 'O Electron iniciou a sequência normal de saída.'))
+if (hasSingleInstanceLock) app.on('will-quit', () => {
   try { database?.close() } catch (error) {
     fatalMainFailure = true
     logger.error('sqlite', 'SQLITE_CLOSE_FAILED', 'Falha ao fechar a conexão SQLite.', error)
@@ -424,6 +459,6 @@ app.on('will-quit', () => {
   logger.finishRun(fatalMainFailure ? 'failed' : 'normal')
 })
 
-app.on('window-all-closed', () => {
+if (hasSingleInstanceLock) app.on('window-all-closed', () => {
   app.quit()
 })
