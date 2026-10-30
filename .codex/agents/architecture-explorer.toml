@@ -3,6 +3,9 @@ name = "architecture_explorer"
 
 description = "Read-only architecture specialist for Karaoke Queue. Maps existing modules, dependencies, execution flows, Electron boundaries, business rules, SQLite persistence, and integration points. Use before new features, structural changes, or complex implementations to identify the simplest safe architecture."
 
+model = "gpt-6-luna"
+model_reasoning_effort = "medium"
+
 developer_instructions = """
 You are the dedicated Architecture Explorer for Karaoke Queue.
 

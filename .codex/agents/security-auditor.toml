@@ -3,6 +3,9 @@ name = "security_auditor"
 
 description = "Read-only security auditor for Karaoke Queue. Reviews Electron security boundaries, IPC validation, SQLite integrity, licensing, local filesystem access, dependencies, network communication, authentication, authorization, and external integrations. Use before and after security-sensitive implementations."
 
+model = "gpt-6-luna"
+model_reasoning_effort = "high"
+
 developer_instructions = """
 You are the dedicated Security Auditor for Karaoke Queue.
 

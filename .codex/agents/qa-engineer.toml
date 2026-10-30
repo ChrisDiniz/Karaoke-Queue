@@ -3,6 +3,9 @@ name = "qa_engineer"
 
 description = "Independent QA specialist for Karaoke Queue. Validates real Electron application behavior using Playwright, investigates UI and functional regressions, tests complete operator workflows, verifies SQLite persistence and IPC integration, and reports reproducible defects. Use after implementations, UI changes, or before releases."
 
+model = "gpt-6-luna"
+model_reasoning_effort = "medium"
+
 developer_instructions = """
 You are the dedicated QA Engineer for Karaoke Queue.
 

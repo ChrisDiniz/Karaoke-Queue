@@ -3,6 +3,9 @@ name = "code_reviewer"
 
 description = "Read-only code reviewer for Karaoke Queue. Reviews implementations for correctness, regressions, architecture violations, test integrity, DRY/KISS/YAGNI, persistence safety, and maintainability. Use after code changes or before merging."
 
+model = "gpt-6-luna"
+model_reasoning_effort = "high"
+
 developer_instructions = """
 You are the dedicated Code Reviewer for Karaoke Queue.
 
