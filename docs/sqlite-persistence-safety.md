@@ -75,9 +75,48 @@ O encerramento autorizado é admitido através dessa barreira, grava/arquiva na 
 
 ## IPC e logs
 
-Nenhum schema/migração ou contrato `app-data:load` / `app-data:save` foi alterado. `preload.ts` não precisou mudar. Foram acrescentados os hooks internos `window.__kqueue.prepareToClose/cancelClose` para coordenar main/renderer.
+Nenhum schema ou migração foi alterado. O Preload continua expondo somente `load` e `save`; o contrato de gravação agora é validado no Main antes da checagem de licença e de qualquer acesso ao estado SQLite. Foram acrescentados os hooks internos `window.__kqueue.prepareToClose/cancelClose` para coordenar main/renderer.
 
 O canal existente de diagnóstico reconhece eventos `PERSISTENCE_*`: falha de escrita/operação, retry, incerteza, recuperação de resposta e reconciliação. Os registros carregam tipo técnico de operação/sessionId quando aplicável; o logger existente acrescenta runId/timestamp. Não são enviados nomes, músicas nem snapshots. Falhas do próprio envio de diagnóstico não interrompem a recuperação.
+
+### Validação do payload `app-data:save`
+
+O handler em `main.ts` recebe o argumento IPC como `unknown` e chama `validateAppStatePayload()` de `src/app-state-validation.ts`. A validação ocorre antes de `requireLicenseForOperationalWrite()` e de `database.loadState()`/`database.saveState()`. Um payload rejeitado lança um erro `INVALID_APP_STATE_PAYLOAD`, é registrado como `APP_STATE_SAVE_REJECTED` sem incluir os valores recebidos e não inicia leitura nem gravação no SQLite.
+
+O IPC de gravação exige o formato completo de `AppState` definido em `types.d.ts`. São obrigatórios:
+
+- `queue`, `history` e `sessions` como arrays;
+- `currentSessionId`, `nextTurnId` e `currentTurnId` como string ou `null`;
+- `priorityIds` e `frozenTurnIds` como arrays de identificadores string;
+- `fixedTurnPositions` como objeto de posições inteiras não negativas;
+- `queueOrderPolicyVersion` como inteiro não negativo, `regularsSinceDebut` entre 0 e 2 e `currentTurnAutomatic` como boolean;
+- `lastReset` como string ou `null`.
+
+Cada sessão precisa ter identificador string não vazio, `startedAt` numérico finito e `endedAt` numérico finito ou `null`. Cada apresentação da fila precisa ter os campos `id`, `name`, `songNumber`, `songNumber2`, `table`, `insertedAt`, `status` e `sessionId` nos tipos declarados; seu status deve ser `pending`. O histórico aceita `pending` (pendência arquivada), `done` ou `cancelled`. `doneAt` e `cancelledAt` são opcionais e, quando informados, precisam ser números finitos. IDs de sessões e apresentações precisam ser únicos no snapshot. Campos extras fora do contrato são rejeitados.
+
+Campos opcionais legados `trialStartedAt` e `licenseActivated` continuam aceitos se forem, respectivamente, número finito e boolean. Eles não se tornam obrigatórios nem passam a ser fonte da política de licença.
+
+Arrays e objetos vazios são válidos quando enviados no snapshot completo; por exemplo, fila e histórico podem estar vazios, `fixedTurnPositions` pode ser `{}` e IDs de sessão/turno podem ser `null`. Isso permite estados operacionais legitimamente vazios. Um objeto parcial como `{}` ou uma coleção ausente/incompatível é rejeitado, em vez de ser convertido em `[]` ou `{}`. Os defaults mantidos em `database.ts` continuam disponíveis aos caminhos legados de migração; não substituem a validação do contrato de escrita IPC.
+
+A validação não altera o `StateRepository`, o cache diferencial do banco nem a transação SQLite. Quando uma operação normal da aplicação recebe uma rejeição IPC, permanecem em vigor a reconciliação do estado anterior/candidato e a política existente de retry apenas após comprovar ausência de commit e identificar contenção SQLite. Uma rejeição estrutural não corresponde a erro de lock e não causa retry de escrita.
+
+## Proteção contra múltiplas instâncias
+
+Antes desta proteção, dois processos independentes podiam abrir o mesmo perfil, carregar snapshots operacionais separados e gravar alterações a partir de estados desatualizados. A transação SQLite protege cada gravação, mas não coordena a lógica de snapshot entre esses processos.
+
+`main.ts` solicita `app.requestSingleInstanceLock()` sincronamente no início do módulo, antes de gravar o marcador de execução, iniciar o crash reporter, abrir o banco, registrar IPC ou criar a janela. Se não obtém o lock, o processo chama `app.quit()` e não registra o fluxo de inicialização operacional. A conexão continua sendo aberta em `app.whenReady()`, depois da aquisição bem-sucedida.
+
+O lock nativo do Electron acompanha o perfil efetivo `userData`. Duas aberturas que usam o mesmo perfil disputam o mesmo lock: a segunda encerra sem criar outro banco ou gerenciador, e a primeira continua sendo a única instância operacional. Perfis `userData` diferentes podem executar ao mesmo tempo e mantêm bancos separados, como nos perfis temporários dos testes. Se uma configuração futura chamar `app.setPath('userData', ...)`, ela precisa ocorrer antes de `requestSingleInstanceLock()` para que o lock e o banco usem o mesmo perfil.
+
+Na instância proprietária, o evento `second-instance` restaura a janela principal se estiver minimizada, mostra-a se estiver oculta e chama `focus()`. Caso o evento chegue antes da criação da janela, a ativação fica pendente e é aplicada assim que a janela é criada. O sistema operacional pode limitar a mudança de foco. O lock impede processos separados com o mesmo perfil; não impede várias `BrowserWindow`s dentro do processo Electron.
+
+O banco é fechado no evento `will-quit`. O código não libera o lock manualmente antes do encerramento da conexão, evitando permitir outra instância durante o fechamento. Essa proteção coordena instâncias cooperantes do Karaoke Queue com o mesmo perfil; não é uma garantia geral contra processos externos que abram o SQLite diretamente, nem contra caminhos de perfil diferentes que apontem ao mesmo arquivo físico.
+
+### Validação de múltiplas instâncias
+
+`npm run test:e2e:multi-instance:headless` usa Electron real, Playwright e perfis/bancos temporários. Verifica segunda abertura com o mesmo perfil e preservação das linhas SQLite, continuidade de gravações pela primeira instância, inicializações simultâneas, encerramento e recuperação da sessão, e execução simultânea com perfis distintos. No Windows, `npm run test:e2e:multi-instance:windows` compila com Node nativo e executa o mesmo arquivo de teste sem `xvfb-run`.
+
+A suíte passou em Linux/Xvfb; sem gerenciador de janelas, esse ambiente só verificou o caminho de janela oculta/visível. O runner Windows passou em Windows 11 Pro build 26200, em sessão Console interativa: observou `minimize`, confirmou `isMinimized() === true`, observou `restore` e confirmou a janela visível e não minimizada. O cenário separado `hide`/`show` também passou. Nos dois cenários, o evento `focus` foi observado e `BrowserWindow.isFocused()` retornou `true`. Esses resultados comprovam o comportamento neste host e não eliminam políticas de foreground que possam variar em outras sessões ou máquinas.
 
 ## Testes
 
@@ -95,6 +134,8 @@ No teste SQLite de conclusão de estreia, um trigger aborta a atualização de `
 ### Electron real / Playwright / Xvfb / SQLite via IPC
 
 Todos os perfis/bancos são temporários e isolados; nenhuma validação substituiu Electron/SQLite por browser/localStorage.
+
+Para o contrato novo, `npm run test:e2e:ipc-validation:headless` envia payloads inválidos pela ponte real do Preload/IPC, compara as linhas SQLite antes/depois, grava uma operação válida após as rejeições e reinicia o Electron para verificar a recuperação. A suíte unitária `tests/app-state-validation.test.ts` cobre o formato completo e os casos inválidos; `tests/persistence.test.ts` também verifica preservação de um snapshot SQLite rico, rejeição antes de `saveState`, escrita válida subsequente e reabertura do banco.
 
 | Suíte | Resultado |
 |---|---|

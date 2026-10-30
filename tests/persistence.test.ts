@@ -6,6 +6,7 @@ import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { KaraokeApplication } from '../src/application'
 import { createStateRepository, PersistenceError } from '../src/state-repository'
+import { validateAppStatePayload } from '../src/app-state-validation'
 import { createKaraokeDatabase } from '../database'
 
 const input = (table = '1') => ({ name: `Test ${table}`, table, songNumber: '1', songNumber2: '2' })
@@ -297,4 +298,85 @@ test('atomic batch retains per-row current selection; later debut cannot replace
   assert.equal(app.state.currentTurnId, first.id)
   assert.deepEqual(app.getPlayOrder().map(entry => entry.id), [first.id, debut.id])
   assert.equal(writes, before + 1)
+})
+
+test('SQLite snapshot validation rejects malformed payload before save and preserves the confirmed state', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-validated-state-'))
+  let database = createKaraokeDatabase(root)
+  const state: AppState = {
+    queue: [
+      { id: 'pending-a', name: 'Singer A', songNumber: '101', songNumber2: '', table: '1',
+        insertedAt: 10, status: 'pending', sessionId: 'active-session' },
+      { id: 'pending-b', name: 'Singer B', songNumber: '202', songNumber2: '203', table: '2',
+        insertedAt: 11, status: 'pending', sessionId: 'active-session' }
+    ],
+    history: [
+      { id: 'done-a', name: 'Singer C', songNumber: '303', songNumber2: '', table: '3',
+        insertedAt: 1, status: 'done', sessionId: 'old-session', doneAt: 5 },
+      { id: 'cancelled-a', name: 'Singer D', songNumber: '404', songNumber2: '', table: '4',
+        insertedAt: 2, status: 'cancelled', sessionId: 'old-session', cancelledAt: 6 }
+    ],
+    sessions: [
+      { id: 'old-session', startedAt: 1, endedAt: 7 },
+      { id: 'active-session', startedAt: 8, endedAt: null }
+    ],
+    currentSessionId: 'active-session', priorityIds: [], fixedTurnPositions: { 'pending-b': 1 },
+    frozenTurnIds: ['pending-a'], queueOrderPolicyVersion: 2, regularsSinceDebut: 2,
+    currentTurnAutomatic: true, nextTurnId: null, currentTurnId: 'pending-a', lastReset: '2024-01-01'
+  }
+  let saveCalls = 0
+  const saveValidated = (payload: unknown): void => {
+    const validated = validateAppStatePayload(payload)
+    saveCalls++
+    database.saveState(validated)
+  }
+  const inspect = () => {
+    const connection = new DatabaseSync(database.databasePath, { readOnly: true })
+    try {
+      return {
+        loaded: database.loadState(),
+        appState: connection.prepare('SELECT * FROM app_state ORDER BY singleton').all(),
+        entries: connection.prepare('SELECT * FROM entries ORDER BY id').all(),
+        sessions: connection.prepare('SELECT * FROM sessions ORDER BY session_order').all()
+      }
+    } finally { connection.close() }
+  }
+
+  try {
+    saveValidated(state)
+    assert.equal(saveCalls, 1)
+    const confirmed = inspect()
+    assert.equal(confirmed.entries.length, 4)
+    assert.equal(confirmed.sessions.length, 2)
+
+    for (const invalid of [
+      {},
+      { ...state, queue: {} },
+      { ...state, history: [{ id: 7 }] }
+    ]) {
+      assert.throws(() => saveValidated(invalid))
+      assert.equal(saveCalls, 1, 'validation must reject before calling SQLite saveState')
+      assert.deepEqual(inspect(), confirmed, 'rejected payload must preserve every confirmed SQLite row')
+    }
+
+    const next: AppState = {
+      ...state,
+      queue: [...state.queue, { id: 'pending-c', name: 'Singer E', songNumber: '505', songNumber2: '',
+        table: '5', insertedAt: 12, status: 'pending', sessionId: 'active-session' }]
+    }
+    saveValidated(next)
+    assert.equal(saveCalls, 2, 'a valid snapshot must persist after invalid snapshots are rejected')
+    assert.equal(inspect().entries.length, 5)
+    assert.equal(inspect().appState[0].regulars_since_debut, 2)
+
+    database.close()
+    database = createKaraokeDatabase(root)
+    assert.equal(inspect().loaded.queue?.length, 3)
+    assert.equal(inspect().loaded.history?.length, 2)
+    assert.equal(inspect().loaded.sessions?.length, 2)
+    assert.deepEqual(inspect().loaded.frozenTurnIds, ['pending-a'])
+  } finally {
+    database.close()
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })

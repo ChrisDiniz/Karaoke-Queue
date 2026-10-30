@@ -757,6 +757,7 @@ Relevant references include:
 - `docs/legacy-session-compatibility.md`
 - `docs/drag-e2e-reliability.md`
 - `docs/windows-release-process.md`
+- `docs/windows-native-testing.md`
 
 Consult relevant documentation before modifying critical
 subsystems.
@@ -808,3 +809,117 @@ Never weaken tests to accommodate an incorrect implementation.
 
 The goal is reliable, maintainable software that preserves
 existing behavior while supporting controlled evolution.
+
+## 15. Windows Native Testing Policy
+
+- WSL2 is the primary development environment and the
+  authoritative source of code. Windows is the native
+  validation environment.
+- Windows tests MUST use a separate checkout on NTFS.
+  Never run Windows application tests from the WSL source
+  tree.
+- Before delegating or executing a Windows test, use the
+  central WSL runner:
+  `npm run test:e2e:multi-instance:windows`
+  It synchronizes and verifies the snapshot before build
+  and test execution.
+- The snapshot includes tracked working-tree/index changes,
+  reviewed non-ignored untracked files, tracked deletions,
+  branch, HEAD, and SHA-256 hashes. Review the untracked
+  file list before approving it. Never transfer secrets,
+  personal licenses, operational databases, caches, or
+  temporary artifacts.
+- The Windows checkout's Git index must match HEAD before
+  synchronization; staged changes in that destination are
+  rejected. The WSL working-tree bytes are the snapshot
+  content, including uncommitted changes.
+- During bootstrap, compare local files to HEAD blobs through
+  Git's path filters so supported line-ending conversion
+  such as `core.autocrlf` is recognized without changing
+  global Git configuration.
+- The runner reads only branch/HEAD from the Windows snapshot
+  marker. It creates no Git bundle for bootstrap or an
+  unchanged HEAD. For a fast-forward, transfer only commits
+  after the marker with an incremental bundle; the Windows
+  worker must still verify the recorded marker and file hashes
+  before synchronizing.
+- If the previous runner's `.git/karaoke-queue-wsl-sync.json`
+  exists, transfer only its baseline JSON to the worker. Adopt
+  it as the current marker only after branch/HEAD, every path
+  and file hash in the full inventory, and absence of extra
+  files are verified. The legacy fingerprint is format-checked
+  but not compared to the current algorithm; recalculate the
+  current fingerprint from the validated inventory. A missing
+  or non-NTFS validation checkout is NOT RUN; do not sync,
+  build, or test in that case.
+- A mismatch, unexpected Windows checkout content, pending
+  sync, or source change during execution MUST block the
+  test or invalidate its result. Do not bypass the runner
+  and report the outcome as validation of the current WSL
+  state. The Windows checkout is not a second source of code.
+- Destination verification MUST reject every unexpected
+  file, including files ignored by the checkout's local Git
+  rules. Only artifact directories and file types explicitly
+  recognized by the runner may be excluded.
+- Before compilation, move an existing build/ intact to a
+  per-run backup under .git/, then compile into a fresh
+  build/. Validate the exact expected output inventory.
+  Restore the prior build after a successful validation;
+  preserve both builds and block further runs if the new
+  output cannot be validated.
+- During synchronization, copy managed prior files into
+  `.git/karaoke-queue-sync-backup-<runId>` before replacement
+  or deletion, validate the old content and avoid overwriting
+  unexpected targets. Remove the backup only after the new
+  destination inventory and every backup hash are verified.
+  If recovery is uncertain, retain the pending marker/backups
+  and block retries for inspection.
+- Revalidate the WSL fingerprint through the runner handshake
+  immediately before build and again before E2E, then verify
+  it after the run. A mismatch invalidates the result.
+- Prefer automated headless tests when they preserve the
+  behavior being asserted. Tests that depend on native
+  window state, including minimize, restore, or focus, may
+  use an interactive Windows desktop; do not simulate those
+  states merely to force headless execution.
+- Windows tests must use Windows Node.js, npm, Electron,
+  Playwright, dependencies, and build artifacts. Use isolated
+  temporary profiles and SQLite databases. Do not use real
+  user data or terminate unrelated processes.
+- Cancellation may target only the worker tree whose process
+  identity is confirmed against the current runId. If that
+  process tree cannot be confirmed stopped, report that
+  investigation is required. A residual-process query that
+  cannot confirm its result is a failure, never evidence of
+  a clean run.
+- A cancellation may remove its own run lock only after
+  confirming PID/runId/token ownership, process-tree exit,
+  build recovery, temporary-profile cleanup, and absence of
+  sync pending markers/backups. It restores a moved pre-run
+  build and preserves interrupted outputs. If any check or
+  recovery is uncertain, retain the lock and pending data for
+  manual inspection; report `CANCELLED_RECOVERY_REQUIRED`.
+- Report `CANCELLED` only when cancellation recovery completed
+  and the owned lock was removed. `CANCELLED_RECOVERY_REQUIRED`
+  is not a successful validation result.
+- No agent may report Windows PASS without executing the
+  test through the verified native Windows runner. When
+  Windows interop, the clone, or a required desktop session
+  is unavailable, report NOT RUN with the reason.
+- If the runner pre-flight cannot find PowerShell/WSL interop
+  or native Windows Node.js/npm, report NOT RUN and do not
+  continue to synchronization, build, or E2E.
+- Add Windows coverage proportional to platform-specific
+  risk. Do not run Windows suites for unrelated changes that
+  do not depend on Windows behavior.
+- Keep the Windows checkout and runner serialized. Do not
+  remove lock or incomplete-sync markers automatically;
+  except that the runner may release its own lock after the
+  cancellation checks below succeed. Otherwise investigate
+  the checkout or rebuild it at a new path.
+- Treat the Windows checkout as exclusively owned by the
+  runner while a run is active. Do not edit files, change its
+  Git state, or run another tool that writes there; the runner
+  lock serializes runners but cannot lock out arbitrary editors.
+- See `docs/windows-native-testing.md` for setup, recovery,
+  status interpretation, and the headless/GUI boundary.
