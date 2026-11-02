@@ -59,6 +59,69 @@ for the current development state.
   existing rules.
 - Never sacrifice correctness for implementation speed.
 
+
+## UI Design and Doop Workflow
+
+Doop is the project's designated UI design tool
+and the source of truth for new visual interfaces.
+
+### Mandatory Workflow
+
+1. Analyze UI requirements and existing components.
+2. Suggest screen structure, content, user flows,
+   interactions, and usability improvements.
+3. Present these suggestions to the user.
+4. Wait for the user to create and approve the
+   visual design in Doop.
+5. Wait until the approved design reference is
+   provided to the implementation agent.
+6. Implement the UI according to that reference.
+7. Validate visual fidelity, functionality,
+   accessibility, and regressions.
+
+### Strict Rules
+
+- NEVER independently design and implement a new
+  screen without an approved Doop reference.
+- NEVER invent visual layouts as substitutes for
+  an approved design.
+- NEVER treat planning suggestions as authorization
+  to implement the interface.
+- NEVER redesign existing screens without approval.
+- Do not create placeholder interfaces unless
+  explicitly authorized by the user.
+- The agent MAY suggest UI elements, organization,
+  interactions, and usability improvements.
+- Business logic, APIs, services, and tests may
+  be implemented independently when appropriate.
+- When a task requires UI work and no approved
+  design exists, report the UI implementation as
+  pending design approval.
+- If the provided design is ambiguous or incomplete,
+  clarify the relevant visual requirements instead
+  of making substantial design decisions independently.
+- Preserve existing UI patterns unless the approved
+  design explicitly changes them.
+
+### Implementation Quality
+
+Once the approved Doop reference is available:
+
+- Reproduce the design as faithfully as possible.
+- Reuse existing components when appropriate.
+- Follow DRY, KISS, and YAGNI.
+- Preserve accessibility and functional behavior.
+- Implement responsive behavior where specified.
+- Validate UI behavior with appropriate automated tests.
+- Do not weaken existing tests to accommodate
+  visual changes.
+- Report any meaningful differences between
+  the approved design and the final implementation.
+
+This policy applies to all agents involved in
+UI planning, implementation, review, and QA.
+
+
 ## 3. Architecture and Responsibility Boundaries
 
 Preserve the existing Electron architecture:

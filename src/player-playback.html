@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; media-src kq-media:; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="player-playback.css">
+  <title>Karaoke Queue · Player</title>
+</head>
+<body>
+  <main id="playback-stage" aria-label="Karaoke Queue · Player">
+    <section id="player-waiting" class="player-message">
+      <div class="player-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+      <h1 id="player-waiting-title">Aguardando reprodução</h1>
+      <p id="player-waiting-copy">Quando uma música começar, o vídeo aparecerá aqui.</p>
+      <p id="player-window-hint" class="player-muted" hidden>Arraste esta janela para a TV ou segunda tela.</p>
+      <span id="player-fullscreen-hint" class="fullscreen-hint" hidden>F11 · Tela cheia</span>
+    </section>
+    <section id="player-loading" class="player-message" hidden aria-live="polite">
+      <span class="loading-indicator" aria-hidden="true"></span>
+      <h1>Preparando vídeo</h1>
+    </section>
+    <section id="player-error" class="player-message" hidden role="status">
+      <h1>Não foi possível reproduzir o vídeo</h1>
+      <p>Use o painel do Reprodutor para tentar novamente.</p>
+    </section>
+  </main>
+  <script src="player-playback.js"></script>
+</body>
+</html>

@@ -17,7 +17,7 @@ O checkout Windows não é uma segunda origem. Alterações feitas nele não sã
 - WSL2 com Node.js, npm, Git e `wslpath`.
 - Interoperabilidade WSL/Windows habilitada para executar `powershell.exe`.
 - Windows com Git for Windows, Node.js compatível com `engines` em `package.json` e npm.
-- Clone de validação em volume NTFS. Por padrão, o runner procura `source\karaoke-queue-win` sob `$env:USERPROFILE`. Para outro diretório, configure `KARAOKE_QUEUE_WIN_CHECKOUT` no ambiente do PowerShell iniciado pelo WSL.
+- Clone de validação em volume NTFS. Por padrão, o runner procura `source\karaoke-queue-win` sob `$env:USERPROFILE`. Para outro diretório, configure `KARAOKE_QUEUE_WIN_CHECKOUT` no ambiente do PowerShell iniciado pelo WSL; ao iniciar o runner no WSL, encaminhe essa variável ao Windows com `WSLENV` (`/w`), conforme o exemplo abaixo.
 - Sessão gráfica Windows interativa para esta suíte de múltiplas instâncias. A compilação sozinha não precisa abrir janelas.
 
 O runner não instala ferramentas globais nem altera configurações do Windows ou do Git. `npm ci` instala dependências em `node_modules` do clone Windows e usa `.npm-cache` local.
@@ -35,6 +35,20 @@ Arquivos novos não rastreados são listados com SHA-256 para revisão. Em um te
     npm run test:e2e:multi-instance:windows -- --approve-untracked
 
 Essa opção aprova somente a lista identificada naquela execução. Arquivos sensíveis, caminhos incompatíveis com Windows, links e arquivos especiais são recusados. Na origem WSL, caminhos ignorados pelo Git e artefatos conhecidos — como `node_modules`, `build`, `.npm-cache`, caches, saídas de build, logs e temporários — não entram no snapshot. Os perfis e bancos do E2E são criados fora do checkout. Um caminho sensível ou artefato que esteja rastreado ou não ignorado bloqueia a sincronização em vez de ser silenciosamente copiado.
+
+### Selecionar outro checkout NTFS pelo WSL
+
+O runner lê `KARAOKE_QUEUE_WIN_CHECKOUT` dentro do processo Windows. Uma variável definida apenas no shell WSL não é encaminhada automaticamente. Para selecionar um clone diferente do padrão, converta o caminho WSL com `wslpath -w` e encaminhe a variável somente aos processos Windows desta sessão:
+
+    checkout_wsl_path='<caminho WSL do clone NTFS isolado já verificado>'
+    export KARAOKE_QUEUE_WIN_CHECKOUT="$(wslpath -w "$checkout_wsl_path")"
+    case ":${WSLENV-}:" in
+      *:KARAOKE_QUEUE_WIN_CHECKOUT/w:*) ;;
+      *) export WSLENV="${WSLENV:+${WSLENV}:}KARAOKE_QUEUE_WIN_CHECKOUT/w" ;;
+    esac
+    npm run test:e2e:multi-instance:windows
+
+Esse procedimento preserva as demais entradas existentes em `WSLENV` e não altera configurações globais. Se `KARAOKE_QUEUE_WIN_CHECKOUT` já estiver em `WSLENV` com outro modo, corrija somente essa entrada no ambiente do processo para usar `/w`; não mantenha entradas duplicadas. O runner continua validando branch, HEAD, NTFS, manifesto e hashes antes de sincronizar.
 
 ## Snapshot e proteção contra divergência
 
@@ -70,6 +84,40 @@ Ele cria uma pasta temporária com hash divergente e confirma que a validação 
 
 O worker confirma que está em Node.js `win32`, que npm é nativo, e que Electron e Playwright resolvem dentro do `node_modules` do clone Windows. Antes de compilar, move a árvore `build/` existente intacta para um backup exclusivo deste `runId` dentro de `.git/`; não apaga conteúdo preexistente por extensão. Em seguida executa `npm.cmd run compile` em uma pasta `build/` nova e compara os arquivos gerados com o inventário de outputs derivados dos fontes TypeScript e assets. Arquivos ausentes, inesperados, links ou reparse points fazem a validação falhar. Depois do E2E, se o inventário gerado continuar válido e havia build anterior, o build temporário é removido e o build anterior é restaurado; se não havia build anterior, o build novo permanece. Se a validação falhar, o runner preserva o backup e mantém o lock para inspeção. O E2E é iniciado com esse Node.js e usa o Electron Windows, Playwright e SQLite reais.
 
+### Harness isolado de Chromium
+
+O runner oferece modos focados de avaliação Chromium e um teste da implementação Player 5C. Todos usam a mesma sincronização, verificação de branch/HEAD/hashes, handshake de fingerprint, build nativo e cleanup. Para caminhos escolhidos no WSL, converta o valor com `wslpath -w` antes de encaminhá-lo ao Windows com `WSLENV` e `/w`; o processo PowerShell precisa receber o formato Windows (`C:\...`), não o literal `/mnt/c/...`. Revise a lista de arquivos não rastreados antes de aprovar `--approve-untracked`.
+
+- `--playback-chromium-final`: roda somente os testes do harness e a automação Electron/Chromium. Usa uma amostra a 1× e espera `HTMLMediaElement.ended` até a duração conhecida mais a tolerância especificada; também automatiza a seleção de amostra e os botões Play selected, Pause, Resume, Restart, Stop e Fullscreen em uma janela temporária. Não executa mpv nem as regressões alheias a playback.
+- `--playback-chromium-interactive`: após os mesmos gates, abre uma janela temporária com seleção de amostras e controles manuais de playback/fullscreen. A execução aguarda o operador fechar essa janela. O relatório automático do runner não valida audibilidade física nem sincronização percebida.
+- `--player-playback`: compila e executa somente `tests/player-playback-electron.js` no Electron Windows real. Exercita o serviço/adapter de produção em host temporário, incluindo load, controles, substituição, mídia inválida/ausente, EOF normal e término do Renderer. Não executa o conjunto padrão de regressões Windows. Requer `KQ_PLAYER_TEST_MEDIA_DIR` apontando para amostras locais read-only no Windows.
+- `--player-recovery`: compila e executa primeiro `tests/player-playback-recovery.test.js`, depois `tests/player-playback-recovery-electron.js` em processos Electron nativos separados e perfil temporário persistente entre reinícios. Exercita recuperação de filesystem, incluindo journal/quarentena, crash após o `idle` durável, encerramento abrupto, recovery pendente sem autoplay, replay explícito com nova tentativa, Stop confirmado, EOF natural e preservação da base operacional Combined após crash do Renderer. Requer `KQ_PLAYER_RECOVERY_TEST_MEDIA_DIR` apontando para uma pasta local read-only com `01001.mp4`. O modo não mede foco de janela; o relatório esperado é `WINDOW_FOCUS NOT APPLICABLE`.
+
+Exemplo com diretórios previamente preparados; use caminhos reais do seu ambiente, sem incluir a coleção no repositório:
+
+    sample_wsl_path='<caminho WSL do diretório de amostras no volume NTFS>'
+    checkout_wsl_path='<caminho WSL do clone NTFS isolado>'
+    export KQ_PLAYER_TEST_MEDIA_DIR="$(wslpath -w "$sample_wsl_path")"
+    export KQ_PLAYER_RECOVERY_TEST_MEDIA_DIR="$(wslpath -w "$sample_wsl_path")"
+    export KARAOKE_QUEUE_WIN_CHECKOUT="$(wslpath -w "$checkout_wsl_path")"
+    case ":${WSLENV-}:" in
+      *:KQ_PLAYER_TEST_MEDIA_DIR/w:*) ;;
+      *) export WSLENV="${WSLENV:+${WSLENV}:}KQ_PLAYER_TEST_MEDIA_DIR/w" ;;
+    esac
+    case ":${WSLENV-}:" in
+      *:KQ_PLAYER_RECOVERY_TEST_MEDIA_DIR/w:*) ;;
+      *) export WSLENV="${WSLENV:+${WSLENV}:}KQ_PLAYER_RECOVERY_TEST_MEDIA_DIR/w" ;;
+    esac
+    case ":${WSLENV-}:" in
+      *:KARAOKE_QUEUE_WIN_CHECKOUT/w:*) ;;
+      *) export WSLENV="${WSLENV:+${WSLENV}:}KARAOKE_QUEUE_WIN_CHECKOUT/w" ;;
+    esac
+    npm run test:e2e:multi-instance:windows -- --approve-untracked --player-recovery
+
+Se uma variável já existir em `WSLENV` com sufixo diferente, corrija somente aquela entrada para `/w` em vez de adicioná-la novamente. O clone usado precisa estar em NTFS, branch compatível e livre de escritores concorrentes.
+
+Os modos Chromium focados e as E2Es `--player-playback`/`--player-recovery` exigem uma sessão gráfica Windows interativa para inicializar Electron com janela nativa. Os modos Player focados não fazem assertion de foco; `WINDOW_FOCUS NOT APPLICABLE` é esperado. O runner preserva o teste de foco para a suíte multi-instância padrão. Execute pelo entry point WSL oficial `npm run test:e2e:multi-instance:windows`; não invoque o harness diretamente no checkout Windows para validar o snapshot WSL. Em todos os modos, PASS continua exigindo build, E2E, processo/limpeza e handshake de snapshot bem-sucedidos.
+
 Esta suíte não deve ser forçada para headless. Ela verifica estados reais de janela: ocultação/show, minimização/restore e ativação/foco. O teste de minimização observa o evento nativo e `isMinimized`; a restauração observa `restore`, visibilidade e estado minimizado. O foco só recebe status PASS quando o evento e `BrowserWindow.isFocused()` são observados no cenário de restauração e no de janela oculta. Se o foco não puder ser confirmado, a execução falha sem presumir que a causa foi uma política do sistema.
 
 Os testes são automatizados e não pedem interação manual. Se não houver Explorer/sessão gráfica interativa, a compilação pode ocorrer, mas o E2E é reportado como NOT RUN e o runner retorna erro. `xvfb-run` é uma infraestrutura Linux e não valida comportamento nativo de janelas do Windows. Outros testes sem dependência de janela gráfica podem ter runners headless próprios quando preservarem as assertions reais.
@@ -78,7 +126,7 @@ Após o E2E, o worker verifica a remoção do perfil temporário e consulta proc
 
 ## Interpretar o resultado
 
-- PASS: sincronização, equivalência de hashes, validação e limpeza dos backups, build Windows, E2E, foco observado, limpeza de perfil, ausência de processo residual e liberação do lock foram confirmados. A saída inclui branch, HEAD e fingerprint.
+- PASS: sincronização, equivalência de hashes, validação e limpeza dos backups, build Windows, E2E, limpeza de perfil, ausência de processo residual e liberação do lock foram confirmados. Nos testes que verificam foco, ele também precisa estar observado; em modos focados de playback, `WINDOW_FOCUS NOT APPLICABLE` é esperado. A saída inclui branch, HEAD e fingerprint.
 - FAIL: divergência, falha de dependência/build/teste, foco não confirmado, processo residual ou consulta inconclusiva, origem alterada ou falha de recuperação. O código de saída é diferente de zero; pendências de sync, backup ou lock exigem inspeção antes de nova tentativa.
 - CANCELLED: cancelamento confirmado após validar PID/runId/token, encerrar a árvore, recuperar o build, limpar o perfil temporário e confirmar ausência de pendências; o runner removeu o lock pertencente à execução.
 - CANCELLED_RECOVERY_REQUIRED: o worker parou, mas uma verificação ou recuperação ficou incerta; o lock permanece e o checkout exige revisão manual.
@@ -117,4 +165,6 @@ Depois, execute o comando central no WSL. Não compartilhe node_modules, build, 
 - Lock existente: confirme se há runner ativo. Um lock abandonado exige revisão explícita; o runner não decide automaticamente que é seguro removê-lo.
 - Sincronização pendente: uma interrupção durante cópia impede builds subsequentes. Inspecione o clone; reconstrua em novo caminho se não puder provar que ele corresponde a um manifesto completo.
 - Sessão gráfica indisponível: o E2E de minimize/restore/focus fica NOT RUN. Reconecte uma sessão desktop Windows interativa e execute novamente.
+- `UtilBindVsockAnyPort:307` ao iniciar executáveis Windows dentro do sandbox Codex: faça primeiro apenas os testes mínimos `powershell.exe -NoProfile -Command "Write-Output WSL_WINDOWS_OK"` e `cmd.exe /c echo WSL_CMD_OK`. Se falharem no sandbox, repita a chamada mínima pelo mecanismo de execução aprovado fora do sandbox. Nesta investigação, essa chamada aprovada funcionou e o runner oficial passou depois que o checkout alternativo foi encaminhado via `WSLENV`; a falha isolada dentro do sandbox não indicava que o WSL ou o host Windows estivessem permanentemente indisponíveis. Não desative o sandbox nem altere configurações globais como workaround.
+- Se `--player-recovery` terminar após a E2E por “foco da janela” em `CLEANUP`, confira a versão do runner: esse modo não mede focus e deve reportar `WINDOW_FOCUS NOT APPLICABLE`; a suíte multi-instância padrão continua exigindo a evidência de foco.
 - Origem alterada durante o teste: o resultado é inválido mesmo que o E2E tenha terminado; repita após estabilizar o snapshot.

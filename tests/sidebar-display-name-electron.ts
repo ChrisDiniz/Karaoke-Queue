@@ -6,6 +6,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { _electron: electron } = require('playwright')
+const { prepareControllerModeProfile } = require('./electron-test-profile')
 
 const projectRoot = path.resolve(__dirname, '../..')
 const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-sidebar-name-'))
@@ -15,7 +16,9 @@ fs.mkdirSync(screenshotDir, { recursive: true })
 
 async function run() {
   let app
-  const launch = () => electron.launch({
+  const launch = () => {
+    prepareControllerModeProfile(userDataDir)
+    return electron.launch({
     executablePath: require('electron'),
     args: [projectRoot, `--user-data-dir=${userDataDir}`],
     env: {
@@ -25,7 +28,8 @@ async function run() {
       XDG_DATA_HOME: path.join(profileRoot, 'data')
     },
     timeout: 30000
-  })
+    })
+  }
   const getPage = async instance => {
     const page = await instance.firstWindow()
     page.on('pageerror', error => console.error('Renderer error:', error))

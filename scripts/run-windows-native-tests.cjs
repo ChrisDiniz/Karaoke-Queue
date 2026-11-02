@@ -236,19 +236,8 @@ function trackedDiff(root) {
   return changes
 }
 
-function stageSnapshot(root, manifest, targetMarker) {
-  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-queue-windows-stage-'))
-  const sourceTree = path.join(stage, 'tree')
-  const metadata = path.join(stage, 'metadata')
-  fs.mkdirSync(sourceTree)
-  fs.mkdirSync(metadata)
-  for (const item of manifest.files) {
-    const source = path.join(root, ...item.path.split('/'))
-    const target = path.join(sourceTree, ...item.path.split('/'))
-    fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL)
-    if (sha256(target) !== item.sha256) fail('A origem mudou durante o staging: ' + item.path)
-  }
+function stageSnapshot(root, manifest, targetMarker, temporaryRoot = os.tmpdir()) {
+  let includeHeadBundle = false
   if (targetMarker && targetMarker.branch !== manifest.branch) {
     fail('Branch do checkout Windows diverge da origem; reconstrua o clone isolado.')
   }
@@ -257,17 +246,42 @@ function stageSnapshot(root, manifest, targetMarker) {
       cwd: root, encoding: 'utf8', shell: false
     })
     if (ancestry.status !== 0) fail('HEAD Windows não é ancestral do HEAD WSL; reconstrua o clone isolado.')
-    const bundle = path.join(metadata, 'source-head.bundle')
-    const bundled = spawnSync('git', ['bundle', 'create', bundle, 'HEAD', '^' + targetMarker.head], {
-      cwd: root, encoding: 'utf8', shell: false, maxBuffer: 4 * 1024 * 1024
-    })
-    if (bundled.status !== 0) fail('Não foi possível preparar o bundle Git incremental: ' + (bundled.stderr || bundled.error))
+    includeHeadBundle = true
   }
-  if (targetMarker && targetMarker.legacyManifest) {
-    fs.writeFileSync(path.join(metadata, 'legacy-baseline.json'), JSON.stringify(targetMarker.legacyManifest), { flag: 'wx' })
+
+  const stage = fs.mkdtempSync(path.join(temporaryRoot, 'karaoke-queue-windows-stage-'))
+  try {
+    const sourceTree = path.join(stage, 'tree')
+    const metadata = path.join(stage, 'metadata')
+    fs.mkdirSync(sourceTree)
+    fs.mkdirSync(metadata)
+    for (const item of manifest.files) {
+      const source = path.join(root, ...item.path.split('/'))
+      const target = path.join(sourceTree, ...item.path.split('/'))
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL)
+      if (sha256(target) !== item.sha256) fail('A origem mudou durante o staging: ' + item.path)
+    }
+    if (includeHeadBundle) {
+      const bundle = path.join(metadata, 'source-head.bundle')
+      const bundled = spawnSync('git', ['bundle', 'create', bundle, 'HEAD', '^' + targetMarker.head], {
+        cwd: root, encoding: 'utf8', shell: false, maxBuffer: 4 * 1024 * 1024
+      })
+      if (bundled.status !== 0) fail('Não foi possível preparar o bundle Git incremental: ' + (bundled.stderr || bundled.error))
+    }
+    if (targetMarker && targetMarker.legacyManifest) {
+      fs.writeFileSync(path.join(metadata, 'legacy-baseline.json'), JSON.stringify(targetMarker.legacyManifest), { flag: 'wx' })
+    }
+    fs.writeFileSync(path.join(metadata, 'snapshot.json'), JSON.stringify(manifest), { flag: 'wx' })
+    return stage
+  } catch (error) {
+    try {
+      fs.rmSync(stage, { recursive: true, force: true })
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Falha ao preparar o snapshot e remover o staging temporário.')
+    }
+    throw error
   }
-  fs.writeFileSync(path.join(metadata, 'snapshot.json'), JSON.stringify(manifest), { flag: 'wx' })
-  return stage
 }
 
 function enumerateFiles(root) {
@@ -670,6 +684,22 @@ function generatedBuildPaths(manifests) {
       if (file.path === 'src/index.html' || file.path === 'src/style.css') {
         expected.add('build/src/' + file.path.slice(4))
       }
+      if (file.path === 'src/player-playback.html' || file.path === 'src/player-playback.css') {
+        expected.add('build/src/' + file.path.slice(4))
+      }
+      if (file.path === 'src/player-control.html' || file.path === 'src/player-control.css' ||
+          file.path === 'src/welcome.html' || file.path === 'src/welcome.css') {
+        expected.add('build/src/' + file.path.slice(4))
+      }
+      if (file.path === 'src/player-playback-renderer.ts') {
+        expected.add('build/src/player-playback.js')
+      }
+      if (file.path === 'src/player-control-renderer.ts') {
+        expected.add('build/src/player-control-renderer.bundle.js')
+      }
+      if (file.path === 'src/welcome-renderer.ts') {
+        expected.add('build/src/welcome-renderer.bundle.js')
+      }
       if (file.path.startsWith('src/assets/')) expected.add('build/' + file.path)
     }
   }
@@ -757,6 +787,40 @@ function focusResult(text) {
   return { status: passed ? 'PASS' : 'NOT VERIFIED', rows }
 }
 
+function requiresWindowFocus(playbackMode) {
+  return ![
+    '--playback-chromium-final',
+    '--playback-chromium-interactive',
+    '--player-playback',
+    '--player-recovery',
+    '--player-control'
+  ].includes(playbackMode)
+}
+
+function selectWindowsTestSuites(playbackMode) {
+  const focusedChromium = playbackMode === '--playback-chromium-final' || playbackMode === '--playback-chromium-interactive'
+  const focusedPlayerPlayback = playbackMode === '--player-playback'
+  const focusedPlayerRecovery = playbackMode === '--player-recovery'
+  const focusedPlayerControl = playbackMode === '--player-control'
+  if (focusedPlayerRecovery) return [
+    { name: 'player-playback-recovery-unit', script: 'build/tests/player-playback-recovery.test.js' },
+    { name: 'player-playback-recovery-electron', script: 'build/tests/player-playback-recovery-electron.js' }
+  ]
+  if (focusedPlayerPlayback) return [{ name: 'player-playback-electron', script: 'build/tests/player-playback-electron.js' }]
+  if (focusedPlayerControl) return [{ name: 'player-control-electron', script: 'build/tests/player-control-electron.js' }]
+  if (focusedChromium) return [{ name: 'playback-harness-unit', script: 'scripts/playback-engine-evaluation.test.cjs' }]
+  return [
+    { name: 'database-migration-unit', script: 'build/tests/database-migration.test.js' },
+    { name: 'operating-mode-unit', script: 'build/tests/operating-mode.test.js' },
+    { name: 'video-library-unit', script: 'build/tests/video-library.test.js' },
+    { name: 'music-catalog-unit', script: 'build/tests/music-catalog.test.js' },
+    { name: 'multi-instance', script: 'build/tests/multi-instance-electron.js' },
+    { name: 'operating-modes', script: 'build/tests/operating-modes-electron.js' },
+    { name: 'video-library', script: 'build/tests/video-library-electron.js' },
+    { name: 'music-catalog', script: 'build/tests/music-catalog-electron.js' }
+  ]
+}
+
 function residualProcessCheck(profileRoot) {
   const escaped = profileRoot.replaceAll("'", "''")
   const script = "$ErrorActionPreference='Stop'; try { $needle='" + escaped + "'; $items=@(Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction Stop | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($needle) }); foreach($item in $items){ Write-Output ('RESIDUAL_ELECTRON pid=' + $item.ProcessId) }; if($items.Count){ exit 3 } } catch { Write-Error $_; exit 4 }"
@@ -768,7 +832,7 @@ function residualProcessCheck(profileRoot) {
   return { status: 'PASS', detail: 'Nenhum processo Electron com o perfil exclusivo deste run permaneceu.' }
 }
 
-async function windowsWorker(root, stage) {
+async function windowsWorker(root, stage, playbackEvaluation = false, playbackMode = null) {
   if (process.platform !== 'win32') fail('O worker precisa de Node.js nativo Windows.')
   root = path.resolve(root)
   stage = path.resolve(stage)
@@ -921,13 +985,46 @@ async function windowsWorker(root, stage) {
     })
     process.stdout.write('KQ_SOURCE_GATE TEST ' + manifest.fingerprint + '\n')
     await approvals.wait(manifest.fingerprint)
-    process.stdout.write('TEST START Electron real + Playwright + SQLite temporário; sessão gráfica Windows\n')
-    const test = spawnSync(process.execPath, ['build/tests/multi-instance-electron.js'], {
-      cwd: root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: false
-    })
-    if (test.stdout) process.stdout.write(test.stdout)
-    if (test.stderr) process.stderr.write(test.stderr)
-    const focus = focusResult(test.stdout || '')
+    const focusedChromium = playbackMode === '--playback-chromium-final' || playbackMode === '--playback-chromium-interactive'
+    const focusedPlayerPlayback = playbackMode === '--player-playback'
+    const focusedPlayerRecovery = playbackMode === '--player-recovery'
+    const focusedPlayerControl = playbackMode === '--player-control'
+    if (focusedPlayerPlayback && !process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
+      fail('O modo player-playback requer KQ_PLAYER_TEST_MEDIA_DIR com os vídeos de teste de leitura.')
+    }
+    if (focusedPlayerRecovery && !process.env.KQ_PLAYER_RECOVERY_TEST_MEDIA_DIR) {
+      fail('O modo player-recovery requer KQ_PLAYER_RECOVERY_TEST_MEDIA_DIR com os vídeos de teste de leitura.')
+    }
+    if (focusedPlayerControl && !process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
+      fail('O modo player-control requer KQ_PLAYER_TEST_MEDIA_DIR com os vídeos de teste de leitura.')
+    }
+    process.stdout.write(focusedChromium
+      ? 'TEST START isolated Chromium playback harness; interactive Windows desktop\n'
+      : focusedPlayerPlayback ? 'TEST START production Chromium service in isolated Electron host\n'
+      : focusedPlayerRecovery ? 'TEST START production Player recovery in isolated Electron processes; Windows desktop\n'
+      : focusedPlayerControl ? 'TEST START isolated Player control UI through production Main/Preload/IPC and Chromium host\n'
+      : 'TEST START Electron real + Playwright + SQLite temporário; sessão gráfica Windows\n')
+    const suiteResults = []
+    let suites = selectWindowsTestSuites(playbackMode)
+    if (playbackEvaluation || focusedChromium) {
+      const playbackArgs = playbackMode === '--playback-chromium-final'
+        ? ['--chromium-final-validation']
+        : playbackMode === '--playback-chromium-interactive' ? ['--interactive-chromium'] : []
+      suites.push({ name: 'playback-engine-evaluation', script: 'scripts/playback-engine-evaluation.cjs', args: playbackArgs })
+    }
+    for (const suite of suites) {
+      const result = spawnSync(process.execPath, [suite.script, ...(suite.args || [])], {
+        cwd: root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: false
+      })
+      suiteResults.push({ ...suite, ...result })
+      if (result.stdout) process.stdout.write(result.stdout)
+      if (result.stderr) process.stderr.write(result.stderr)
+      if (result.status !== 0) break
+    }
+    const multiInstance = suiteResults.find(result => result.name === 'multi-instance')
+    const focus = requiresWindowFocus(playbackMode)
+      ? focusResult(multiInstance?.stdout || '')
+      : { status: 'NOT APPLICABLE', rows: [] }
     process.stdout.write('WINDOW_FOCUS ' + focus.status + ' evidence=' + JSON.stringify(focus.rows) + '\n')
     reportStage = 'CLEANUP'
     const residuals = residualProcessCheck(profileRoot)
@@ -938,10 +1035,16 @@ async function windowsWorker(root, stage) {
     }
     if (fs.existsSync(profileRoot)) fail('O teste deixou o perfil temporário: ' + profileRoot)
     process.stdout.write('CLEANUP PASS perfis temporários removidos; nenhum processo residual\n')
-    if (test.status !== 0) fail('E2E Windows falhou com código ' + test.status + ': ' + (test.stderr || test.error || ''))
-    if (focus.status !== 'PASS') fail('Foco da janela não foi observado como confirmado; causa não presumida.')
+    const failedSuite = suiteResults.find(result => result.status !== 0)
+    if (failedSuite) fail('E2E Windows ' + failedSuite.name + ' falhou com código ' + failedSuite.status + ': ' + (failedSuite.stderr || failedSuite.error || ''))
+    if (requiresWindowFocus(playbackMode) && focus.status !== 'PASS') fail('Foco da janela não foi observado como confirmado; causa não presumida.')
     verifyBuildOutput(root, marker, manifest)
-    process.stdout.write('TEST PASS multi-instance Electron E2E\n')
+    process.stdout.write(focusedChromium
+      ? 'TEST PASS focused Chromium playback evaluation; unrelated regression suites not run by request\n'
+      : focusedPlayerPlayback ? 'TEST PASS production Chromium playback service integration; unrelated regression suites not run by request\n'
+      : focusedPlayerRecovery ? 'TEST PASS production Player recovery Electron integration; unrelated regression suites not run by request\n'
+      : focusedPlayerControl ? 'TEST PASS production Player control UI and playback integration; unrelated regression suites not run by request\n'
+      : 'TEST PASS database migration, operating-mode, video-library and music-catalog unit; multi-instance, operating-modes, video-library and music-catalog Electron suites\n')
     restorePreviousBuild(root, buildState, [marker, manifest])
     buildState = null
     reportStage = 'REPORT'
@@ -989,8 +1092,11 @@ async function windowsWorker(root, stage) {
   }
 }
 
-function powershellLauncher(stagePath, runId) {
-  const data = Buffer.from(JSON.stringify({ stagePath, runId }), 'utf8').toString('base64')
+function powershellLauncher(stagePath, runId, playbackEvaluation = false, playbackMode = null) {
+  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--player-recovery', '--player-control'].includes(playbackMode)) {
+    fail('Modo de playback não permitido para o worker Windows.')
+  }
+  const data = Buffer.from(JSON.stringify({ stagePath, runId, playbackEvaluation, playbackMode }), 'utf8').toString('base64')
   return [
     "$ErrorActionPreference = 'Stop'",
     "$payload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + data + "')) | ConvertFrom-Json",
@@ -1011,7 +1117,14 @@ function powershellLauncher(stagePath, runId) {
     "  if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) { throw 'Worker nativo ausente no snapshot.' }",
     '  Push-Location $checkout',
     '  try {',
-    '    & node.exe $worker --windows-worker $checkout $localStage',
+    '    $workerArgs = @("--windows-worker", $checkout, $localStage)',
+    '    if ($payload.playbackEvaluation) { $workerArgs += "--playback-evaluation" }',
+    '    if ($payload.playbackMode -eq "--playback-chromium-final") { $workerArgs += "--playback-chromium-final" }',
+    '    elseif ($payload.playbackMode -eq "--playback-chromium-interactive") { $workerArgs += "--playback-chromium-interactive" }',
+    '    elseif ($payload.playbackMode -eq "--player-playback") { $workerArgs += "--player-playback" }',
+    '    elseif ($payload.playbackMode -eq "--player-recovery") { $workerArgs += "--player-recovery" }',
+    '    elseif ($payload.playbackMode -eq "--player-control") { $workerArgs += "--player-control" }',
+    '    & node.exe $worker @workerArgs',
     '    $workerExit = $LASTEXITCODE',
     '  } finally { Pop-Location }',
     '} finally {',
@@ -1232,6 +1345,16 @@ async function approveUntracked(files) {
 
 async function runOrchestrator() {
   if (process.platform === 'win32') fail('Este comando precisa ser iniciado no WSL2; ele sincroniza e valida o checkout Windows.', 2)
+  const unexpectedArguments = process.argv.slice(2).filter(argument =>
+    !['--approve-untracked', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--player-recovery', '--player-control'].includes(argument)
+  )
+  if (unexpectedArguments.length) fail('Argumento não permitido: ' + unexpectedArguments.join(' '))
+  const playbackModes = process.argv.slice(2).filter(argument =>
+    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--player-recovery', '--player-control'].includes(argument)
+  )
+  if (playbackModes.length > 1) fail('Escolha apenas um modo de avaliação de playback.')
+  const playbackEvaluation = process.argv.includes('--playback-evaluation')
+  const playbackMode = playbackModes.find(argument => argument !== '--playback-evaluation') || null
   const root = sourceRoot()
   const preflight = spawnSync('powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
@@ -1253,7 +1376,7 @@ async function runOrchestrator() {
   const stage = stageSnapshot(root, manifest, targetMarker)
   const stageWindows = run('wslpath', ['-w', stage]).stdout.trim()
   const runId = crypto.randomUUID()
-  const encoded = Buffer.from(powershellLauncher(stageWindows, runId), 'utf16le').toString('base64')
+  const encoded = Buffer.from(powershellLauncher(stageWindows, runId, playbackEvaluation, playbackMode), 'utf16le').toString('base64')
   const child = require('node:child_process').spawn('powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded
   ], { stdio: ['pipe', 'pipe', 'pipe'], env: process.env })
@@ -1362,7 +1485,16 @@ async function main() {
     const root = process.argv[worker + 1]
     const stage = process.argv[worker + 2]
     if (!root || !stage) fail('Worker requer checkout e staging.')
-    return windowsWorker(root, stage)
+    const workerArguments = process.argv.slice(worker + 3)
+    if (workerArguments.some(argument => !['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--player-recovery', '--player-control'].includes(argument))) {
+      fail('O worker recebeu argumentos não permitidos.')
+    }
+    const playbackModes = workerArguments.filter(argument =>
+      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--player-recovery', '--player-control'].includes(argument)
+    )
+    if (playbackModes.length > 1) fail('O worker recebeu modos de playback conflitantes.')
+    const playbackMode = playbackModes.find(argument => argument !== '--playback-evaluation') || null
+    return windowsWorker(root, stage, workerArguments.includes('--playback-evaluation'), playbackMode)
   }
   if (process.argv.includes('--verify-divergence')) return divergenceSelfTest()
   return runOrchestrator()
@@ -1383,7 +1515,11 @@ module.exports = {
   makeFingerprint,
   normalizePath,
   prepareFreshBuild,
+  powershellLauncher,
+  requiresWindowFocus,
+  selectWindowsTestSuites,
   restorePreviousBuild,
+  stageSnapshot,
   cleanupSyncBackup,
   syncSnapshot,
   validateLegacyManifest,

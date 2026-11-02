@@ -7,6 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
+const { prepareControllerModeProfile } = require('./electron-test-profile')
 
 const projectRoot = path.resolve(__dirname, '../..')
 const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-diagnostics-'))
@@ -24,7 +25,9 @@ async function waitFor(predicate, description, timeoutMs = 5000) {
 
 async function run() {
   let app
-  const launch = () => electron.launch({
+  const launch = () => {
+    prepareControllerModeProfile(userDataDir)
+    return electron.launch({
     executablePath: require('electron'),
     args: [projectRoot, `--user-data-dir=${userDataDir}`],
     env: {
@@ -34,7 +37,8 @@ async function run() {
       XDG_DATA_HOME: path.join(profileRoot, 'data')
     },
     timeout: 30000
-  })
+    })
+  }
   const pageOf = async instance => {
     const page = await instance.firstWindow()
     await page.waitForFunction(() => !!window.__kqueue)
@@ -91,25 +95,37 @@ async function run() {
       Object.defineProperty(rejection, 'reason', { value: new Error('synthetic rejected promise') })
       window.dispatchEvent(rejection)
     })
-    await page.evaluate(async () => {
-      try { await window.karaokeUiScale.setPreference('invalid-scale') } catch {}
-      const state = await window.karaokeDatabase.load()
-      const duplicate = {
-        id: 'diagnostic-duplicate-id', name: 'diagnostic-only', songNumber: '1', songNumber2: '',
-        table: '1', insertedAt: Date.now(), status: 'pending', sessionId: state.currentSessionId
-      }
-      try {
-        await window.karaokeDatabase.save({ ...state, queue: [duplicate], history: [{ ...duplicate, status: 'done', doneAt: Date.now() }] })
-      } catch {}
-      window.karaokeDiagnostics.logSessionEvent('SESSION_RESUMED', state.currentSessionId, 'test')
-    })
+    const userDataPath = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'))
+    const databasePath = path.join(userDataPath, 'karaoke.sqlite')
+    const database = new DatabaseSync(databasePath)
+    database.exec("CREATE TRIGGER diagnostics_fail_save BEFORE UPDATE ON app_state BEGIN SELECT RAISE(ABORT, 'diagnostics SQLite failure'); END")
+    try {
+      await page.evaluate(async () => {
+        try { await window.karaokeUiScale.setPreference('invalid-scale') } catch {}
+        const state = await window.karaokeDatabase.load()
+        const newEntry = {
+          id: 'diagnostic-triggered-save', name: 'diagnostic-only', songNumber: '1', songNumber2: '',
+          table: '1', insertedAt: Date.now(), status: 'pending', sessionId: state.currentSessionId
+        }
+        try { await window.karaokeDatabase.save({ ...state, queue: [...state.queue, newEntry] }) } catch {}
+        window.karaokeDiagnostics.logSessionEvent('SESSION_RESUMED', state.currentSessionId, 'test')
+      })
+    } finally {
+      database.exec('DROP TRIGGER diagnostics_fail_save')
+      database.close()
+    }
     await app.evaluate(() => process.emit('unhandledRejection', new Error('synthetic main rejection')))
-    await waitFor(() => hasEvent('RENDERER_UNCAUGHT_EXCEPTION')
+    try {
+      await waitFor(() => hasEvent('RENDERER_UNCAUGHT_EXCEPTION')
       && hasEvent('RENDERER_UNHANDLED_REJECTION')
       && hasEvent('RENDERER_IPC_FAILED')
       && hasEvent('SQLITE_SAVE_FAILED')
       && hasEvent('MAIN_UNHANDLED_REJECTION')
       && hasEvent('SESSION_RESUMED'), 'renderer, SQLite and lifecycle diagnostics')
+    } catch (error) {
+      console.error('Observed diagnostic events:', logRecords().map(record => record.event))
+      throw error
+    }
     const rendererError = logRecords().find(record => record.event === 'RENDERER_UNCAUGHT_EXCEPTION')
     assert.ok(rendererError.timestamp && rendererError.runId)
     assert.doesNotMatch(fs.readFileSync(path.join(logsDirectory, 'app.log'), 'utf8'), /should-not-appear/)
@@ -133,7 +149,6 @@ async function run() {
     page = await pageOf(app)
     await waitFor(() => logRecords().filter(record => record.event === 'APP_UNEXPECTED_TERMINATION_DETECTED').length >= 2,
       'renderer-crashed execution detection')
-    const userDataPath = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'))
     const db = new DatabaseSync(path.join(userDataPath, 'karaoke.sqlite'), { readOnly: true })
     try {
       const activeId = db.prepare('SELECT current_session_id FROM app_state WHERE singleton = 1').get().current_session_id

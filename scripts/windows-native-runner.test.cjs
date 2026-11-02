@@ -12,7 +12,12 @@ const {
   lastNonEmptyLine,
   makeFingerprint,
   normalizePath,
+  generatedBuildPaths,
   prepareFreshBuild,
+  powershellLauncher,
+  requiresWindowFocus,
+  selectWindowsTestSuites,
+  stageSnapshot,
   verifyBuildOutput,
   restorePreviousBuild,
   syncSnapshot,
@@ -24,6 +29,60 @@ const {
 } = require('./run-windows-native-tests.cjs')
 
 const head = '0123456789abcdef0123456789abcdef01234567'
+
+test('native playback evaluation is forwarded only as an explicit allowlisted worker mode', () => {
+  function launcherPayload(script) {
+    const match = script.match(/FromBase64String\('([^']+)'\)/)
+    assert.ok(match, 'launcher payload is embedded as base64')
+    return JSON.parse(Buffer.from(match[1], 'base64').toString('utf8'))
+  }
+
+  const standard = powershellLauncher('C:\\stage', 'run-standard')
+  const evaluation = powershellLauncher('C:\\stage', 'run-evaluation', true)
+  const chromiumFinal = powershellLauncher('C:\\stage', 'run-chromium-final', false, '--playback-chromium-final')
+  const chromiumInteractive = powershellLauncher('C:\\stage', 'run-chromium-interactive', false, '--playback-chromium-interactive')
+  const playerPlayback = powershellLauncher('C:\\stage', 'run-player-playback', false, '--player-playback')
+  const playerRecovery = powershellLauncher('C:\\stage', 'run-player-recovery', false, '--player-recovery')
+  const playerControl = powershellLauncher('C:\\stage', 'run-player-control', false, '--player-control')
+
+  assert.equal(launcherPayload(standard).playbackEvaluation, false)
+  assert.equal(launcherPayload(evaluation).playbackEvaluation, true)
+  assert.equal(launcherPayload(chromiumFinal).playbackMode, '--playback-chromium-final')
+  assert.equal(launcherPayload(chromiumInteractive).playbackMode, '--playback-chromium-interactive')
+  assert.equal(launcherPayload(playerPlayback).playbackMode, '--player-playback')
+  assert.equal(launcherPayload(playerRecovery).playbackMode, '--player-recovery')
+  assert.equal(launcherPayload(playerControl).playbackMode, '--player-control')
+  assert.match(evaluation, /\$workerArgs \+= "--playback-evaluation"/)
+  assert.match(chromiumFinal, /\$workerArgs \+= "--playback-chromium-final"/)
+  assert.match(chromiumInteractive, /\$workerArgs \+= "--playback-chromium-interactive"/)
+  assert.match(playerPlayback, /\$workerArgs \+= "--player-playback"/)
+  assert.match(playerRecovery, /\$workerArgs \+= "--player-recovery"/)
+  assert.match(playerControl, /\$workerArgs \+= "--player-control"/)
+  assert.match(evaluation, /& node\.exe \$worker @workerArgs/)
+  assert.doesNotMatch(evaluation, /playback-engine-evaluation\.cjs/)
+  assert.throws(() => powershellLauncher('C:\\stage', 'run-invalid', false, '--unknown-mode'), /não permitido/)
+})
+
+test('focused playback recovery harness does not require unrelated window-focus assertions', () => {
+  assert.equal(requiresWindowFocus('--player-recovery'), false)
+  assert.equal(requiresWindowFocus('--player-playback'), false)
+  assert.equal(requiresWindowFocus('--player-control'), false)
+  assert.equal(requiresWindowFocus('--playback-chromium-final'), false)
+  assert.equal(requiresWindowFocus(null), true)
+})
+
+test('focused Windows Player recovery mode runs recovery unit coverage before real Electron recovery', () => {
+  assert.deepEqual(selectWindowsTestSuites('--player-recovery').map(suite => suite.script), [
+    'build/tests/player-playback-recovery.test.js',
+    'build/tests/player-playback-recovery-electron.js'
+  ])
+  assert.deepEqual(selectWindowsTestSuites('--player-playback').map(suite => suite.script), [
+    'build/tests/player-playback-electron.js'
+  ])
+  assert.deepEqual(selectWindowsTestSuites('--player-control').map(suite => suite.script), [
+    'build/tests/player-control-electron.js'
+  ])
+})
 
 function hash(content) {
   return crypto.createHash('sha256').update(content).digest('hex')
@@ -129,6 +188,38 @@ test('classifies generated artifacts separately from source and personal data', 
   assert.equal(isSensitivePath('src/license-service.ts'), false)
 })
 
+test('recognizes production playback renderer and copied assets as generated build outputs', () => {
+  const manifest = manifestFor([
+    { path: 'src/player-playback-renderer.ts', content: 'export {}' },
+    { path: 'src/player-playback.html', content: '<video></video>' },
+    { path: 'src/player-playback.css', content: 'video { display: block; }' }
+  ])
+  assert.deepEqual([...generatedBuildPaths([manifest])].sort(), [
+    'build/src/player-playback-renderer.js',
+    'build/src/player-playback.css',
+    'build/src/player-playback.html',
+    'build/src/player-playback.js'
+  ].sort())
+})
+
+test('recognizes Player control and first-launch Welcome bundles and copied assets as generated build outputs', () => {
+  const manifest = manifestFor([
+    { path: 'src/player-control-renderer.ts', content: 'export {}' },
+    { path: 'src/player-control.html', content: '<main></main>' },
+    { path: 'src/player-control.css', content: '.player {}' },
+    { path: 'src/welcome-renderer.ts', content: 'export {}' },
+    { path: 'src/welcome.html', content: '<main></main>' },
+    { path: 'src/welcome.css', content: '.welcome {}' }
+  ])
+  assert.deepEqual([...generatedBuildPaths([manifest])].sort(), [
+    'build/src/player-control-renderer.bundle.js',
+    'build/src/player-control-renderer.js',
+    'build/src/player-control.css', 'build/src/player-control.html',
+    'build/src/welcome-renderer.bundle.js', 'build/src/welcome-renderer.js',
+    'build/src/welcome.css', 'build/src/welcome.html'
+  ].sort())
+})
+
 test('blocks environment secrets, token/password files, and SQLite journal sidecars from transfer', () => {
   for (const candidate of [
     '.envrc',
@@ -169,6 +260,33 @@ test('rejects a hash mismatch before invoking the build/test sentinel', t => {
     /Divergência no checkout Windows/
   )
   assert.equal(buildOrTestStarted, false)
+})
+
+test('rejects a checkout from another branch before creating snapshot staging', t => {
+  const root = tempDirectory(t)
+  const stagingRoot = tempDirectory(t)
+  const content = 'verified source\n'
+  fs.writeFileSync(path.join(root, 'app.ts'), content)
+  const manifest = manifestFor([{ path: 'app.ts', content }])
+
+  assert.throws(
+    () => stageSnapshot(root, manifest, { branch: 'another-branch', head }, stagingRoot),
+    /Branch do checkout Windows diverge da origem/
+  )
+  assert.deepEqual(fs.readdirSync(stagingRoot), [])
+})
+
+test('removes incomplete staging when a source file changes after snapshot hashing', t => {
+  const root = tempDirectory(t)
+  const stagingRoot = tempDirectory(t)
+  fs.writeFileSync(path.join(root, 'app.ts'), 'changed source\n')
+  const manifest = manifestFor([{ path: 'app.ts', content: 'expected source\n' }])
+
+  assert.throws(
+    () => stageSnapshot(root, manifest, null, stagingRoot),
+    /A origem mudou durante o staging/
+  )
+  assert.deepEqual(fs.readdirSync(stagingRoot), [])
 })
 
 test('replaces only content matching the previous marker and validates its backup before cleanup', t => {

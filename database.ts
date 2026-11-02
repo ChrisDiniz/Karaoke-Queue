@@ -1,11 +1,25 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import {
+  calculateMusicCatalogRevision,
+  normalizeCatalogCodeForVideoMatch,
+  normalizeMusicCatalogText
+} from './src/music-catalog'
+import type {
+  MusicCatalogDatabasePage,
+  MusicCatalogDatabaseQuery,
+  MusicCatalogMetadata,
+  MusicCatalogRecord,
+  MusicCatalogRepository
+} from './src/music-catalog'
 
 const DATABASE_FILENAME = 'karaoke.sqlite'
 const LEGACY_FILENAME = 'karaoke-data.json'
 const LEGACY_MIGRATION = 'electron-store-v1'
-const SCHEMA_VERSION = 4
+const BASE_SCHEMA_VERSION = 4
+const PREVIOUS_SCHEMA_VERSION = 5
+const SCHEMA_VERSION = 6
 
 interface DatabaseEntry {
   id: string
@@ -84,10 +98,31 @@ interface DatabaseAppStateRow {
   license_activated: number
 }
 
-interface KaraokeDatabase {
+interface DatabaseMusicCatalogRow {
+  music_number: string
+  video_code: string
+  artist: string | null
+  title: string | null
+  normalized_artist: string
+  normalized_title: string
+}
+
+interface DatabaseMusicCatalogMetadataRow {
+  revision: string
+  imported_at: string
+  record_count: number
+  source_name: string | null
+}
+
+interface KaraokeDatabase extends MusicCatalogRepository {
   databasePath: string
   loadState: () => StoredAppState
   saveState: (state: AppState) => void
+  close: () => void
+}
+
+export interface PlayerMusicCatalogDatabase extends MusicCatalogRepository {
+  databasePath: string
   close: () => void
 }
 
@@ -103,12 +138,34 @@ function transaction<T>(database: DatabaseSync, operation: () => T): T {
   }
 }
 
+function readTransaction<T>(database: DatabaseSync, operation: () => T): T {
+  if (database.isTransaction) throw new Error('SQLite transaction is unresolved; catalog reads require reopening the database.')
+  database.exec('BEGIN')
+  try {
+    const result = operation()
+    database.exec('COMMIT')
+    return result
+  } catch (error) {
+    try { database.exec('ROLLBACK') } catch {}
+    throw error
+  }
+}
+
 function initializeSchema(database: DatabaseSync): void {
-  const version = Number(database.prepare('PRAGMA user_version').get()?.user_version ?? 0)
+  let version = Number(database.prepare('PRAGMA user_version').get()?.user_version ?? 0)
   if (version > SCHEMA_VERSION) {
     throw new Error(`Database schema version ${version} is newer than supported version ${SCHEMA_VERSION}.`)
   }
   if (version === SCHEMA_VERSION) return
+
+  if (version === PREVIOUS_SCHEMA_VERSION) {
+    transaction(database, () => {
+      database.exec(`ALTER TABLE music_catalog_metadata ADD COLUMN source_name TEXT
+        CHECK (source_name IS NULL OR length(source_name) <= 255);`)
+      database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`)
+    })
+    return
+  }
 
   if (version === 1) {
     transaction(database, () => {
@@ -117,9 +174,9 @@ function initializeSchema(database: DatabaseSync): void {
       database.exec('ALTER TABLE app_state ADD COLUMN queue_order_policy_version INTEGER NOT NULL DEFAULT 0;')
       database.exec('ALTER TABLE app_state ADD COLUMN regulars_since_debut INTEGER NOT NULL DEFAULT 0;')
       database.exec('ALTER TABLE app_state ADD COLUMN current_turn_automatic INTEGER NOT NULL DEFAULT 0;')
-      database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`)
+      database.exec(`PRAGMA user_version = ${BASE_SCHEMA_VERSION};`)
     })
-    return
+    version = BASE_SCHEMA_VERSION
   }
 
   if (version === 2) {
@@ -128,9 +185,9 @@ function initializeSchema(database: DatabaseSync): void {
       database.exec('ALTER TABLE app_state ADD COLUMN queue_order_policy_version INTEGER NOT NULL DEFAULT 0;')
       database.exec('ALTER TABLE app_state ADD COLUMN regulars_since_debut INTEGER NOT NULL DEFAULT 0;')
       database.exec('ALTER TABLE app_state ADD COLUMN current_turn_automatic INTEGER NOT NULL DEFAULT 0;')
-      database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`)
+      database.exec(`PRAGMA user_version = ${BASE_SCHEMA_VERSION};`)
     })
-    return
+    version = BASE_SCHEMA_VERSION
   }
 
   if (version === 3) {
@@ -138,9 +195,9 @@ function initializeSchema(database: DatabaseSync): void {
       database.exec('ALTER TABLE app_state ADD COLUMN queue_order_policy_version INTEGER NOT NULL DEFAULT 0;')
       database.exec('ALTER TABLE app_state ADD COLUMN regulars_since_debut INTEGER NOT NULL DEFAULT 0;')
       database.exec('ALTER TABLE app_state ADD COLUMN current_turn_automatic INTEGER NOT NULL DEFAULT 0;')
-      database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`)
+      database.exec(`PRAGMA user_version = ${BASE_SCHEMA_VERSION};`)
     })
-    return
+    version = BASE_SCHEMA_VERSION
   }
 
   transaction(database, () => {
@@ -194,6 +251,40 @@ function initializeSchema(database: DatabaseSync): void {
       CREATE TABLE IF NOT EXISTS app_metadata (
         name TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+
+      PRAGMA user_version = ${BASE_SCHEMA_VERSION};
+    `)
+  })
+  if (version === 0) version = BASE_SCHEMA_VERSION
+
+  if (version !== BASE_SCHEMA_VERSION) {
+    throw new Error(`Database schema version ${version} cannot be migrated to ${SCHEMA_VERSION}.`)
+  }
+
+  transaction(database, () => {
+    database.exec(`
+      CREATE TABLE music_catalog (
+        music_number TEXT PRIMARY KEY COLLATE BINARY
+          CHECK (length(music_number) BETWEEN 1 AND 5
+            AND substr(music_number, 1, 1) BETWEEN '1' AND '9'
+            AND music_number NOT GLOB '*[^0-9]*'),
+        video_code TEXT NOT NULL UNIQUE
+          CHECK (length(video_code) = 5 AND video_code NOT GLOB '*[^0-9]*'),
+        artist TEXT,
+        title TEXT,
+        normalized_artist TEXT NOT NULL,
+        normalized_title TEXT NOT NULL,
+        CHECK (artist IS NULL OR length(artist) <= 4096),
+        CHECK (title IS NULL OR length(title) <= 4096)
+      ) WITHOUT ROWID;
+
+      CREATE TABLE music_catalog_metadata (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        revision TEXT NOT NULL CHECK (length(revision) = 64 AND revision NOT GLOB '*[^a-f0-9]*'),
+        imported_at TEXT NOT NULL,
+        record_count INTEGER NOT NULL CHECK (record_count > 0),
+        source_name TEXT CHECK (source_name IS NULL OR length(source_name) <= 255)
       );
 
       PRAGMA user_version = ${SCHEMA_VERSION};
@@ -388,6 +479,249 @@ function mapEntry(row: DatabaseEntryRow): QueueEntry {
   return entry
 }
 
+function mapMusicCatalogRecord(row: DatabaseMusicCatalogRow): MusicCatalogRecord {
+  return {
+    musicNumber: row.music_number,
+    videoCode: row.video_code,
+    artist: row.artist,
+    title: row.title,
+    normalizedArtist: row.normalized_artist,
+    normalizedTitle: row.normalized_title
+  }
+}
+
+function mapMusicCatalogMetadata(row: DatabaseMusicCatalogMetadataRow | undefined): MusicCatalogMetadata {
+  return row
+    ? { revision: row.revision, importedAt: row.imported_at, recordCount: row.record_count, sourceName: row.source_name ?? null }
+    : { revision: null, importedAt: null, recordCount: 0, sourceName: null }
+}
+
+function validateMusicCatalogRecords(records: readonly MusicCatalogRecord[]): MusicCatalogRecord[] {
+  if (!Array.isArray(records) || records.length === 0 || records.length > 100_000) {
+    throw new Error('A catalog replacement must contain between 1 and 100000 records.')
+  }
+  return records.map(record => {
+    if (!record || typeof record !== 'object' ||
+        typeof record.musicNumber !== 'string' || typeof record.videoCode !== 'string' ||
+        (record.artist !== null && typeof record.artist !== 'string') ||
+        (record.title !== null && typeof record.title !== 'string') ||
+        typeof record.normalizedArtist !== 'string' || typeof record.normalizedTitle !== 'string') {
+      throw new Error('A catalog replacement contains an invalid record.')
+    }
+    if (normalizeCatalogCodeForVideoMatch(record.musicNumber) !== record.videoCode ||
+        record.artist?.length > 4096 || record.title?.length > 4096 ||
+        record.normalizedArtist !== normalizeMusicCatalogText(record.artist) ||
+        record.normalizedTitle !== normalizeMusicCatalogText(record.title)) {
+      throw new Error('A catalog replacement contains inconsistent music metadata.')
+    }
+    return { ...record }
+  })
+}
+
+function createMusicCatalogRepository(database: DatabaseSync): MusicCatalogRepository {
+  const readMetadata = (): MusicCatalogMetadata => {
+    const row = database.prepare(
+      'SELECT revision, imported_at, record_count, source_name FROM music_catalog_metadata WHERE singleton = 1'
+    ).get() as unknown as DatabaseMusicCatalogMetadataRow | undefined
+    return mapMusicCatalogMetadata(row)
+  }
+
+  const getMusicCatalogMetadata = (): MusicCatalogMetadata => {
+    if (database.isTransaction) throw new Error('SQLite transaction is unresolved; catalog metadata cannot be read.')
+    return readMetadata()
+  }
+
+  const replaceMusicCatalog = (inputRecords: readonly MusicCatalogRecord[], metadata: { revision: string; importedAt: string; sourceName?: string | null }): void => {
+    const records = validateMusicCatalogRecords(inputRecords)
+    if (!metadata || typeof metadata.revision !== 'string' || !/^[a-f0-9]{64}$/.test(metadata.revision) ||
+        typeof metadata.importedAt !== 'string' || !Number.isFinite(Date.parse(metadata.importedAt)) ||
+        new Date(metadata.importedAt).toISOString() !== metadata.importedAt ||
+        (metadata.sourceName !== undefined && metadata.sourceName !== null &&
+          (typeof metadata.sourceName !== 'string' || metadata.sourceName.length > 255 || /[\u0000-\u001f\u007f]/.test(metadata.sourceName))) ||
+        calculateMusicCatalogRevision(records) !== metadata.revision) {
+      throw new Error('Catalog revision or import timestamp is invalid.')
+    }
+    if (database.isTransaction) throw new Error('SQLite transaction is unresolved; catalog replacement is blocked.')
+    transaction(database, () => {
+      database.exec('DELETE FROM music_catalog;')
+      const insertRecord = database.prepare(`
+        INSERT INTO music_catalog (
+          music_number, video_code, artist, title, normalized_artist, normalized_title
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `)
+      for (const record of records) {
+        insertRecord.run(record.musicNumber, record.videoCode, record.artist, record.title,
+          record.normalizedArtist, record.normalizedTitle)
+      }
+      database.prepare(`
+        INSERT INTO music_catalog_metadata (singleton, revision, imported_at, record_count, source_name)
+        VALUES (1, ?, ?, ?, ?)
+        ON CONFLICT(singleton) DO UPDATE SET
+          revision = excluded.revision,
+          imported_at = excluded.imported_at,
+          record_count = excluded.record_count,
+          source_name = excluded.source_name
+      `).run(metadata.revision, metadata.importedAt, records.length, metadata.sourceName ?? null)
+    })
+  }
+
+  const searchMusicCatalog = (query: MusicCatalogDatabaseQuery): MusicCatalogDatabasePage => {
+    if (!query || typeof query !== 'object' ||
+        (query.originalCodePrefix !== null && typeof query.originalCodePrefix !== 'string') ||
+        (query.videoCodePrefix !== null && typeof query.videoCodePrefix !== 'string') ||
+        typeof query.normalizedText !== 'string' || query.normalizedText.length > 256 ||
+        !Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 100 ||
+        !Number.isSafeInteger(query.offset) || query.offset < 0 || query.offset > 1_000_000) {
+      throw new Error('Catalog search parameters are invalid.')
+    }
+    return readTransaction(database, () => {
+      const metadata = readMetadata()
+      if (query.normalizedText.length === 0 && !query.originalCodePrefix && !query.videoCodePrefix) {
+        return { metadata, total: 0, records: [] }
+      }
+      const where = `
+        ((? <> '' AND music_number >= ? AND music_number < ?)
+         OR (? <> '' AND video_code >= ? AND video_code < ?)
+         OR (? <> '' AND (instr(normalized_artist, ?) > 0 OR instr(normalized_title, ?) > 0)))
+      `
+      const parameters = [
+        query.originalCodePrefix ?? '', query.originalCodePrefix ?? '', `${query.originalCodePrefix ?? ''}\uffff`,
+        query.videoCodePrefix ?? '', query.videoCodePrefix ?? '', `${query.videoCodePrefix ?? ''}\uffff`,
+        query.normalizedText, query.normalizedText, query.normalizedText
+      ]
+      const totalRow = database.prepare(`SELECT COUNT(*) AS count FROM music_catalog WHERE ${where}`)
+        .get(...parameters) as { count: number }
+      const rows = database.prepare(`
+        SELECT music_number, video_code, artist, title, normalized_artist, normalized_title
+        FROM music_catalog WHERE ${where}
+        ORDER BY length(music_number), music_number COLLATE BINARY LIMIT ? OFFSET ?
+      `).all(...parameters, query.limit, query.offset) as unknown as DatabaseMusicCatalogRow[]
+      return { metadata, total: totalRow.count, records: rows.map(mapMusicCatalogRecord) }
+    })
+  }
+
+  const getMusicCatalogRecordByVideoCode = (videoCode: string): { metadata: MusicCatalogMetadata; record: MusicCatalogRecord | null } => {
+    if (typeof videoCode !== 'string' || !/^[0-9]{5}$/.test(videoCode)) throw new Error('A canonical five-digit video code is required.')
+    return readTransaction(database, () => {
+      const metadata = readMetadata()
+      const row = database.prepare(`
+        SELECT music_number, video_code, artist, title, normalized_artist, normalized_title
+        FROM music_catalog WHERE video_code = ?
+      `).get(videoCode) as unknown as DatabaseMusicCatalogRow | undefined
+      return { metadata, record: row ? mapMusicCatalogRecord(row) : null }
+    })
+  }
+  return { getMusicCatalogMetadata, replaceMusicCatalog, searchMusicCatalog, getMusicCatalogRecordByVideoCode }
+}
+
+const PLAYER_MUSIC_CATALOG_FILENAME = 'player-music-catalog.sqlite'
+const PLAYER_CATALOG_SCHEMA_VERSION = 2
+
+function sameDatabaseFile(first: fs.BigIntStats, second: fs.BigIntStats): boolean {
+  return first.dev === second.dev && first.ino === second.ino
+}
+
+function optionalLstat(filePath: string): fs.BigIntStats | undefined {
+  try { return fs.lstatSync(filePath, { bigint: true }) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+/** Reject links and aliases before SQLite can touch a Controller database or its WAL files. */
+function assertPlayerCatalogDatabasePathsSafe(userDataPath: string, playerDatabasePath: string): void {
+  const operationalPaths = [DATABASE_FILENAME, `${DATABASE_FILENAME}-wal`, `${DATABASE_FILENAME}-shm`]
+    .map(name => path.join(userDataPath, name))
+  const protectedFiles: fs.BigIntStats[] = []
+  for (const filePath of operationalPaths) {
+    try {
+      const stats = fs.statSync(filePath, { bigint: true })
+      if (stats.isFile()) protectedFiles.push(stats)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+
+  for (const candidate of [playerDatabasePath, `${playerDatabasePath}-wal`, `${playerDatabasePath}-shm`]) {
+    const linkStats = optionalLstat(candidate)
+    if (!linkStats) continue
+    const attributes = (linkStats as fs.BigIntStats & { attributes?: number }).attributes ?? 0
+    if (!linkStats.isFile() || linkStats.isSymbolicLink() || (process.platform === 'win32' && (attributes & 0x400) !== 0)) {
+      throw new Error('Player music catalog database must be a regular file without reparse points.')
+    }
+    let targetStats: fs.BigIntStats
+    try { targetStats = fs.statSync(candidate, { bigint: true }) }
+    catch { throw new Error('Player music catalog database could not be verified safely.') }
+    if (protectedFiles.some(protectedFile => sameDatabaseFile(targetStats, protectedFile))) {
+      throw new Error('Player music catalog database must not alias the Controller operational database.')
+    }
+  }
+}
+
+function ensurePlayerCatalogFileExists(databasePath: string): void {
+  if (optionalLstat(databasePath)) return
+  let descriptor: number
+  try { descriptor = fs.openSync(databasePath, 'wx', 0o600) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST' && optionalLstat(databasePath)) return
+    throw error
+  }
+  fs.closeSync(descriptor)
+}
+
+/** Metadata-only store for Player mode. It has no Controller queue/session tables. */
+export function createPlayerMusicCatalogDatabase(userDataPath: string): PlayerMusicCatalogDatabase {
+  const databasePath = path.join(userDataPath, PLAYER_MUSIC_CATALOG_FILENAME)
+  fs.mkdirSync(path.dirname(databasePath), { recursive: true })
+  assertPlayerCatalogDatabasePathsSafe(userDataPath, databasePath)
+  ensurePlayerCatalogFileExists(databasePath)
+  assertPlayerCatalogDatabasePathsSafe(userDataPath, databasePath)
+  const beforeOpen = optionalLstat(databasePath)
+  if (!beforeOpen) throw new Error('Player music catalog database could not be created safely.')
+  const database = new DatabaseSync(databasePath)
+  try {
+    const openedDatabase = database.prepare('PRAGMA database_list').all() as Array<{ name: string; file: string }>
+    const mainDatabase = openedDatabase.find(entry => entry.name === 'main')
+    const afterOpen = optionalLstat(databasePath)
+    assertPlayerCatalogDatabasePathsSafe(userDataPath, databasePath)
+    if (!mainDatabase || path.resolve(mainDatabase.file) !== path.resolve(databasePath) ||
+        !afterOpen || !sameDatabaseFile(beforeOpen, afterOpen)) {
+      throw new Error('Player music catalog database changed identity while it was opened.')
+    }
+    database.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;')
+    const version = Number(database.prepare('PRAGMA user_version').get()?.user_version ?? 0)
+    if (version > PLAYER_CATALOG_SCHEMA_VERSION) throw new Error('Player music catalog database version is newer than this application.')
+    if (version === 1) transaction(database, () => {
+      database.exec(`ALTER TABLE music_catalog_metadata ADD COLUMN source_name TEXT
+        CHECK (source_name IS NULL OR length(source_name) <= 255);`)
+      database.exec(`PRAGMA user_version = ${PLAYER_CATALOG_SCHEMA_VERSION};`)
+    })
+    if (version === 0) transaction(database, () => {
+      database.exec(`
+        CREATE TABLE music_catalog (
+          music_number TEXT PRIMARY KEY COLLATE BINARY
+            CHECK (length(music_number) BETWEEN 1 AND 5 AND substr(music_number, 1, 1) BETWEEN '1' AND '9' AND music_number NOT GLOB '*[^0-9]*'),
+          video_code TEXT NOT NULL UNIQUE CHECK (length(video_code) = 5 AND video_code NOT GLOB '*[^0-9]*'),
+          artist TEXT, title TEXT, normalized_artist TEXT NOT NULL, normalized_title TEXT NOT NULL,
+          CHECK (artist IS NULL OR length(artist) <= 4096), CHECK (title IS NULL OR length(title) <= 4096)
+        ) WITHOUT ROWID;
+        CREATE TABLE music_catalog_metadata (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          revision TEXT NOT NULL CHECK (length(revision) = 64 AND revision NOT GLOB '*[^a-f0-9]*'),
+          imported_at TEXT NOT NULL, record_count INTEGER NOT NULL CHECK (record_count > 0),
+          source_name TEXT CHECK (source_name IS NULL OR length(source_name) <= 255)
+        );
+        PRAGMA user_version = ${PLAYER_CATALOG_SCHEMA_VERSION};
+      `)
+    })
+  } catch (error) {
+    database.close()
+    throw error
+  }
+  return { databasePath, ...createMusicCatalogRepository(database), close: () => database.close() }
+}
+
 export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
   const databasePath = path.join(userDataPath, DATABASE_FILENAME)
   fs.mkdirSync(path.dirname(databasePath), { recursive: true })
@@ -556,11 +890,12 @@ export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
     }
     previousSnapshot = nextSnapshot
   }
-
+  const catalogRepository = createMusicCatalogRepository(database)
   return {
     databasePath,
     loadState: readState,
     saveState,
+    ...catalogRepository,
     close: () => database.close()
   }
 }

@@ -8,6 +8,16 @@ import { createKaraokeDatabase } from '../database'
 import { KaraokeApplication } from '../src/application'
 import { createStateRepository } from '../src/state-repository'
 
+function assertMusicCatalogSchema(database: DatabaseSync): void {
+  const tables = new Set((database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[])
+    .map(table => table.name))
+  assert.ok(tables.has('music_catalog'))
+  assert.ok(tables.has('music_catalog_metadata'))
+  assert.equal(database.prepare('PRAGMA user_version').get()?.user_version, 6)
+  assert.ok(database.prepare('PRAGMA table_info(music_catalog_metadata)').all()
+    .some((column: any) => column.name === 'source_name'))
+}
+
 test('upgrades a schema-v1 SQLite profile in place and retains app state', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-schema-v1-'))
   const databasePath = path.join(directory, 'karaoke.sqlite')
@@ -41,7 +51,7 @@ test('upgrades a schema-v1 SQLite profile in place and retains app state', () =>
     assert.equal(state.queue?.length, 2)
     const upgraded = new DatabaseSync(databasePath, { readOnly: true })
     try {
-      assert.equal(upgraded.prepare('PRAGMA user_version').get()?.user_version, 4)
+      assertMusicCatalogSchema(upgraded)
       assert.ok(upgraded.prepare('PRAGMA table_info(app_state)').all()
         .some((column: any) => column.name === 'fixed_turn_positions_json'))
       assert.ok(upgraded.prepare('PRAGMA table_info(app_state)').all()
@@ -92,7 +102,7 @@ test('upgrades a schema-v2 SQLite profile and preserves individual fixed positio
     assert.deepEqual(state.frozenTurnIds, [])
     const upgraded = new DatabaseSync(databasePath, { readOnly: true })
     try {
-      assert.equal(upgraded.prepare('PRAGMA user_version').get()?.user_version, 4)
+      assertMusicCatalogSchema(upgraded)
       assert.equal(upgraded.prepare('SELECT frozen_turn_ids_json FROM app_state WHERE singleton = 1').get()?.frozen_turn_ids_json, '[]')
     } finally {
       upgraded.close()
@@ -137,12 +147,107 @@ test('upgrades a schema-v3 profile with cadence defaults and retains the queue',
     assert.equal(state.currentTurnAutomatic, false)
     const upgraded = new DatabaseSync(databasePath, { readOnly: true })
     try {
-      assert.equal(upgraded.prepare('PRAGMA user_version').get()?.user_version, 4)
+      assertMusicCatalogSchema(upgraded)
     } finally {
       upgraded.close()
     }
   } finally {
     database.close()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('upgrades a schema-v4 profile to catalog schema v6 without changing operational state', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-schema-v4-'))
+  const databasePath = path.join(directory, 'karaoke.sqlite')
+  const old = new DatabaseSync(databasePath)
+  old.exec(`
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY, started_at INTEGER NOT NULL, ended_at INTEGER, session_order INTEGER NOT NULL
+    );
+    CREATE TABLE entries (
+      id TEXT PRIMARY KEY, session_id TEXT, name TEXT NOT NULL, song_number TEXT NOT NULL,
+      song_number2 TEXT NOT NULL DEFAULT '', table_number TEXT NOT NULL, inserted_at INTEGER NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('pending', 'done', 'cancelled')), done_at INTEGER, cancelled_at INTEGER,
+      queue_order INTEGER, history_order INTEGER,
+      CHECK ((status = 'pending' AND queue_order IS NOT NULL AND history_order IS NULL)
+        OR (status IN ('done', 'cancelled') AND queue_order IS NULL AND history_order IS NOT NULL))
+    );
+    CREATE INDEX entries_by_session_status ON entries(session_id, status);
+    CREATE TABLE app_state (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1), current_session_id TEXT,
+      priority_ids_json TEXT NOT NULL DEFAULT '[]', fixed_turn_positions_json TEXT NOT NULL DEFAULT '{}',
+      frozen_turn_ids_json TEXT NOT NULL DEFAULT '[]', queue_order_policy_version INTEGER NOT NULL DEFAULT 0,
+      regulars_since_debut INTEGER NOT NULL DEFAULT 0, current_turn_automatic INTEGER NOT NULL DEFAULT 0,
+      next_turn_id TEXT, current_turn_id TEXT, last_reset TEXT, trial_started_at INTEGER,
+      license_activated INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE app_metadata (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+    INSERT INTO sessions VALUES ('s-v4', 1, NULL, 0);
+    INSERT INTO entries VALUES ('v4-entry', 's-v4', 'Legacy singer', '123', '', '7', 2, 'pending', NULL, NULL, 0, NULL);
+    INSERT INTO entries VALUES ('v4-history', 's-v4', 'Past singer', '456', '', '8', 3, 'done', 4, NULL, NULL, 0);
+    INSERT INTO app_state VALUES (1, 's-v4', '[]', '{"v4-entry":0}', '["v4-entry"]', 1, 2, 1, NULL, 'v4-entry', NULL, NULL, 0);
+    PRAGMA user_version = 4;
+  `)
+  old.close()
+
+  const database = createKaraokeDatabase(directory)
+  try {
+    const state = database.loadState()
+    assert.equal(state.currentSessionId, 's-v4')
+    assert.deepEqual(state.queue?.map(entry => entry.id), ['v4-entry'])
+    assert.deepEqual(state.history?.map(entry => entry.id), ['v4-history'])
+    assert.deepEqual(state.fixedTurnPositions, { 'v4-entry': 0 })
+    assert.deepEqual(state.frozenTurnIds, ['v4-entry'])
+    assert.equal(state.regularsSinceDebut, 2)
+    const upgraded = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      assertMusicCatalogSchema(upgraded)
+      const preservedEntries = upgraded.prepare('SELECT id, name, status FROM entries ORDER BY id').all()
+        .map((row: any) => ({ id: row.id, name: row.name, status: row.status }))
+      assert.deepEqual(preservedEntries, [
+        { id: 'v4-entry', name: 'Legacy singer', status: 'pending' },
+        { id: 'v4-history', name: 'Past singer', status: 'done' }
+      ])
+      assert.equal(upgraded.prepare('SELECT count(*) AS count FROM music_catalog').get()?.count, 0)
+    } finally {
+      upgraded.close()
+    }
+  } finally {
+    database.close()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('upgrades a schema-v5 profile with catalog metadata in place', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-schema-v5-'))
+  const initial = createKaraokeDatabase(directory)
+  initial.close()
+  const databasePath = path.join(directory, 'karaoke.sqlite')
+  const old = new DatabaseSync(databasePath)
+  old.exec(`
+    DROP TABLE music_catalog_metadata;
+    CREATE TABLE music_catalog_metadata (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1), revision TEXT NOT NULL,
+      imported_at TEXT NOT NULL, record_count INTEGER NOT NULL
+    );
+    INSERT INTO music_catalog_metadata (singleton, revision, imported_at, record_count)
+      VALUES (1, '${'a'.repeat(64)}', '2026-01-02T03:04:05.000Z', 1);
+    PRAGMA user_version = 5;
+  `)
+  old.close()
+
+  const upgradedDatabase = createKaraokeDatabase(directory)
+  try {
+    const upgraded = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      assertMusicCatalogSchema(upgraded)
+      assert.deepEqual({ ...upgraded.prepare('SELECT revision, imported_at, record_count, source_name FROM music_catalog_metadata WHERE singleton = 1').get() }, {
+        revision: 'a'.repeat(64), imported_at: '2026-01-02T03:04:05.000Z', record_count: 1, source_name: null
+      })
+    } finally { upgraded.close() }
+  } finally {
+    upgradedDatabase.close()
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })

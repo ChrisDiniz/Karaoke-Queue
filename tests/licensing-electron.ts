@@ -7,12 +7,14 @@ const os = require('node:os')
 const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
+const { prepareControllerModeProfile } = require('./electron-test-profile')
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-license-e2e-'))
 const validToken = 'YU3ZYVR88H4DRH2KLW43'
 const dayMs = 24 * 60 * 60 * 1000
 
 async function launch(profile) {
+  prepareControllerModeProfile(profile)
   const app = await electron.launch({
     executablePath: require('electron'),
     args: [path.resolve(__dirname, '../..'), `--user-data-dir=${profile}`],

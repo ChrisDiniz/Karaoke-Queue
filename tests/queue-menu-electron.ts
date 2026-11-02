@@ -6,12 +6,14 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { _electron: electron } = require('playwright')
+const { prepareControllerModeProfile } = require('./electron-test-profile')
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-queue-menu-e2e-'))
 const profile = path.join(root, 'profile')
 const screenshots = path.join(root, 'screenshots')
 fs.mkdirSync(profile, { recursive: true })
 fs.mkdirSync(screenshots, { recursive: true })
+prepareControllerModeProfile(profile)
 
 async function run() {
   const app = await electron.launch({ executablePath: require('electron'),

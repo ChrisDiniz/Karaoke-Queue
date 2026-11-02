@@ -6,6 +6,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
+const { prepareControllerModeProfile } = require('./electron-test-profile')
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-persistence-'))
 const profile = path.join(root, 'profile')
 const project = path.resolve(__dirname, '../..')
@@ -29,6 +30,7 @@ const add = async (table, name = `Test ${table}`) => {
 }
 const settled = () => page.evaluate(() => window.__kqueue.flushState().catch(() => false))
 async function launch() {
+  prepareControllerModeProfile(profile)
   app = await electron.launch({ executablePath: require('electron'), args: [project, `--user-data-dir=${profile}`],
     env: { ...process.env, XDG_CONFIG_HOME: path.join(root, 'config'), XDG_CACHE_HOME: path.join(root, 'cache'), XDG_DATA_HOME: path.join(root, 'data') } })
   page = await app.firstWindow()

@@ -1,4 +1,5 @@
 import { assertFrozenDragBlocked, dragQueuePreview, assertDragClean, settleQueue, observeDrag, saveDragDiagnostics } from './drag-diagnostics'
+import { prepareControllerModeProfile } from './electron-test-profile'
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -17,6 +18,7 @@ async function run() {
   let windowIndex = 0
   const traceNames = new Map<import('playwright').ElectronApplication, string>()
   const launch = async () => {
+    prepareControllerModeProfile(userDataDir)
     const launched = await electron.launch({
     executablePath: require('electron'),
     args: [projectRoot, `--user-data-dir=${userDataDir}`],

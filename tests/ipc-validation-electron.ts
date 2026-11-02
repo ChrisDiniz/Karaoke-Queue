@@ -6,6 +6,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
+const { prepareControllerModeProfile } = require('./electron-test-profile')
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-ipc-validation-'))
 const profile = path.join(root, 'profile')
@@ -29,6 +30,7 @@ function readPersistedState() {
 }
 
 async function launch() {
+  prepareControllerModeProfile(profile)
   app = await electron.launch({
     executablePath: require('electron'),
     args: [project, `--user-data-dir=${profile}`],

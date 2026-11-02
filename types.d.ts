@@ -59,6 +59,7 @@ interface KaraokeDatabaseBridge {
 
 type UiScalePreference = import('./src/ui/ui-scale').UiScalePreference
 type UiScaleState = import('./src/ui/ui-scale').UiScaleState
+type KaraokePlayerBridge = import('./src/player-ui-contracts').KaraokePlayerBridge
 
 interface KaraokeUiScaleBridge {
   getState: () => Promise<UiScaleState>
@@ -90,6 +91,7 @@ interface Window {
   karaokePreferences?: KaraokePreferencesBridge
   karaokeDiagnostics?: KaraokeDiagnosticsBridge
   karaokeLicense?: KaraokeLicenseBridge
+  karaokePlayer?: KaraokePlayerBridge
   __kqueue?: {
     prepareToClose: () => Promise<void>
     cancelClose: () => void
