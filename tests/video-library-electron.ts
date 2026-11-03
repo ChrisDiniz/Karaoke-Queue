@@ -52,6 +52,24 @@ function launch(profile) {
   })
 }
 
+async function waitForEmbeddedPlayer(page) {
+  return page.evaluate(() => new Promise((resolve, reject) => {
+    const bridge = window.karaokePlayer
+    if (!bridge) { reject(new Error('Player bridge is unavailable.')); return }
+    const isReady = snapshot => snapshot.videoWindow.open && snapshot.videoWindow.location === 'inline' && snapshot.videoWindow.ready
+    let unsubscribe = () => {}
+    const timeout = window.setTimeout(() => finish(new Error('Embedded Player surface did not become ready.')), 15000)
+    const finish = (error, snapshot) => {
+      window.clearTimeout(timeout)
+      unsubscribe()
+      if (error) reject(error)
+      else resolve(snapshot)
+    }
+    unsubscribe = bridge.onSnapshot(snapshot => { if (isReady(snapshot)) finish(undefined, snapshot) })
+    void bridge.getSnapshot().then(snapshot => { if (isReady(snapshot)) finish(undefined, snapshot) }, finish)
+  }))
+}
+
 function readRecords(profile) {
   const logPath = path.join(profile.userData, 'logs', 'app.log')
   if (!fs.existsSync(logPath)) return []
@@ -151,9 +169,10 @@ async function runPlayerScanAndRestart() {
     assert.equal(playerWindowUrls.some(url => url.includes('player-control.html')), true)
     assert.equal(playerWindowUrls.some(url => url.includes('player-playback.html')), false,
       'The independent video window must remain closed until an explicit operator action')
-    const initialPlayerSnapshot = await controlPage.evaluate(() => window.karaokePlayer.getSnapshot())
+    const initialPlayerSnapshot = await waitForEmbeddedPlayer(controlPage)
     assert.equal(initialPlayerSnapshot.playback.status, 'idle', 'Player-only startup must not autoplay')
-    assert.equal(initialPlayerSnapshot.videoWindow.open, false, 'Player-only startup must not expose a video window')
+    assert.equal(initialPlayerSnapshot.videoWindow.open, true, 'Player-only startup must make the embedded video surface available')
+    assert.equal(initialPlayerSnapshot.videoWindow.location, 'inline', 'Player-only startup must keep video embedded')
 
     const previousRunId = ready.runId
     await app.close()
@@ -178,9 +197,10 @@ async function runPlayerScanAndRestart() {
       'the Player control shell must be restored for the configured Player mode')
     assert.equal(restartedPlayerWindowUrls.some(url => url.includes('player-playback.html')), false,
       'the independent video window must remain closed after restart')
-    const restartedPlayerSnapshot = await restartedControlPage.evaluate(() => window.karaokePlayer.getSnapshot())
+    const restartedPlayerSnapshot = await waitForEmbeddedPlayer(restartedControlPage)
     assert.equal(restartedPlayerSnapshot.playback.status, 'idle', 'Player-only restart must not autoplay')
-    assert.equal(restartedPlayerSnapshot.videoWindow.open, false, 'Player-only restart must not expose video output')
+    assert.equal(restartedPlayerSnapshot.videoWindow.open, true, 'Player-only restart must restore the embedded video surface')
+    assert.equal(restartedPlayerSnapshot.videoWindow.location, 'inline', 'Player-only restart must keep video embedded')
     assert.equal(fs.existsSync(path.join(profile.userData, 'karaoke.sqlite')), false)
   } finally { await app?.close().catch(() => {}) }
 }

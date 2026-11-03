@@ -109,6 +109,46 @@ async function capturePlaybackHost(app, filePath) {
   fs.writeFileSync(filePath, Buffer.from(imageUrl.slice(imageUrl.indexOf(',') + 1), 'base64'))
 }
 
+async function waitForFullscreenHint(app, expectedVisible, timeout = 5000) {
+  return playbackHostEvaluate(app, `new Promise(resolve => {
+    const hint = document.querySelector('#player-fullscreen-hint')
+    if (!hint) return resolve(false)
+    const matches = () => {
+      const style = getComputedStyle(hint)
+      const rect = hint.getBoundingClientRect()
+      const rendered = !hint.hidden && style.display !== 'none' && style.visibility !== 'hidden' &&
+        Number(style.opacity) > 0 && rect.width > 0 && rect.height > 0
+      return rendered === ${expectedVisible}
+    }
+    if (matches()) return resolve(true)
+    const observer = new MutationObserver(() => {
+      if (!matches()) return
+      clearTimeout(timer)
+      observer.disconnect()
+      resolve(true)
+    })
+    observer.observe(hint, { attributes: true, attributeFilter: ['hidden'] })
+    const timer = setTimeout(() => { observer.disconnect(); resolve(false) }, ${timeout})
+  })`)
+}
+
+async function waitForWindowTip(app, expectedVisible, timeout = 5000) {
+  return playbackHostEvaluate(app, `new Promise(resolve => {
+    const tip = document.querySelector('#player-window-tip')
+    if (!tip) return resolve(false)
+    const matches = () => !tip.hidden === ${expectedVisible}
+    if (matches()) return resolve(true)
+    const observer = new MutationObserver(() => {
+      if (!matches()) return
+      clearTimeout(timer)
+      observer.disconnect()
+      resolve(true)
+    })
+    observer.observe(tip, { attributes: true, attributeFilter: ['hidden'] })
+    const timer = setTimeout(() => { observer.disconnect(); resolve(false) }, ${timeout})
+  })`)
+}
+
 async function captureCompositedPlayerWindow(app, filePath) {
   try {
     const capture = await app.evaluate(async ({ BrowserWindow, desktopCapturer }) => {
@@ -130,6 +170,71 @@ async function captureCompositedPlayerWindow(app, filePath) {
   } catch (error) {
     return { captured: false, error: error.message }
   }
+}
+
+async function readEmbeddedLayout(app) {
+  return app.evaluate(async ({ BrowserWindow }) => {
+    const control = BrowserWindow.getAllWindows().find(candidate =>
+      candidate.webContents.getURL().includes('player-control.html'))
+    const view = BrowserWindow.getAllWindows().flatMap(candidate => candidate.contentView.children)
+      .find(child => child.webContents?.getURL().includes('player-playback.html'))
+    if (!control || !view) throw new Error('The embedded Player window or surface is unavailable.')
+    const renderer = await control.webContents.executeJavaScript(`(() => {
+      const stage = document.querySelector('#player-inline-stage')
+      const header = document.querySelector('.player-header')
+      const rect = stage.getBoundingClientRect()
+      return {
+        stage: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        fullscreenStyle: document.body.dataset.playerFullscreen === 'true',
+        headerVisible: Boolean(header && !header.hidden && getComputedStyle(header).display !== 'none'),
+        videoNavigationVisible: !document.querySelector('#player-nav-video').hidden,
+        manualNavigationVisible: !document.querySelector('#player-nav-manual').hidden
+      }
+    })()`)
+    const zoomFactor = control.webContents.getZoomFactor()
+    const bounds = view.getBounds()
+    const expected = {
+      x: Math.round(renderer.stage.x * zoomFactor),
+      y: Math.round(renderer.stage.y * zoomFactor),
+      width: Math.round(renderer.stage.width * zoomFactor),
+      height: Math.round(renderer.stage.height * zoomFactor)
+    }
+    return {
+      fullscreen: control.isFullScreen(),
+      controlVisible: control.isVisible(),
+      controlFocused: BrowserWindow.getFocusedWindow() === control,
+      surfaceFocused: view.webContents.isFocused(),
+      surfaceVisible: view.getVisible(),
+      bounds,
+      expected,
+      renderer
+    }
+  })
+}
+
+async function waitForEmbeddedLayout(app, expectedFullscreen, context) {
+  const deadline = Date.now() + 10000
+  let latest
+  while (Date.now() < deadline) {
+    latest = await readEmbeddedLayout(app)
+    const aligned = ['x', 'y', 'width', 'height'].every(key =>
+      Math.abs(latest.bounds[key] - latest.expected[key]) <= 2)
+    if (latest.fullscreen === expectedFullscreen && latest.controlVisible && latest.surfaceVisible &&
+        aligned && latest.renderer.fullscreenStyle === expectedFullscreen &&
+        latest.renderer.headerVisible === !expectedFullscreen) return latest
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(`${context}: embedded window layout did not settle: ${JSON.stringify(latest)}`)
+}
+
+async function sendEmbeddedKey(app, keyCode) {
+  await app.evaluate(({ BrowserWindow }, key) => {
+    const view = BrowserWindow.getAllWindows().flatMap(window => window.contentView.children)
+      .find(child => child.webContents?.getURL().includes('player-playback.html'))
+    if (!view) throw new Error('The embedded Player surface is unavailable for keyboard input.')
+    view.webContents.sendInputEvent({ type: 'keyDown', keyCode: key })
+    view.webContents.sendInputEvent({ type: 'keyUp', keyCode: key })
+  }, keyCode)
 }
 
 async function captureCompositedOutputWindow(app, filePath) {
@@ -218,6 +323,9 @@ async function run() {
   for (const code of ['01001', '01002']) {
     assert.equal(codes.has(code), true, `A mídia de teste precisa incluir o vídeo ${code}.`)
   }
+  const noMetadataCode = [...codes].find(code => !['01001', '01002'].includes(code))
+  assert.ok(noMetadataCode, 'A mídia de teste precisa incluir um vídeo real sem metadados no catálogo de teste.')
+  const noMetadataInputCode = noMetadataCode.replace(/^0+/, '')
 
   const root = makeIsolatedRoot()
   process.stdout.write(`TEST_PROFILE_RUN ${path.basename(root)}\n`)
@@ -239,6 +347,7 @@ async function run() {
   const launchApp = () => electron.launch({
     executablePath: require('electron'),
     args: [
+      ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
       projectRoot,
       `--user-data-dir=${userData}`
     ],
@@ -364,6 +473,74 @@ async function run() {
     assert.equal(startupSnapshot.playback.status, 'idle', 'Player startup must not start playback automatically.')
     assert.equal(startupSnapshot.videoWindow.open, true, 'The embedded playback surface must be available at startup.')
     assert.equal(startupSnapshot.videoWindow.location, 'inline')
+    const inlineStartupLayout = await page.evaluate(() => {
+      const main = document.querySelector('.player-main')
+      const view = document.querySelector('#player-video-view')
+      const footer = document.querySelector('.player-video-footer')
+      const mainBounds = main.getBoundingClientRect()
+      const viewBounds = view.getBoundingClientRect()
+      const footerBounds = footer.getBoundingClientRect()
+      return {
+        mainScrolls: main.scrollHeight > main.clientHeight,
+        viewBottomWithinMain: viewBounds.bottom <= mainBounds.bottom + 0.5,
+        footerBottomWithinMain: footerBounds.bottom <= mainBounds.bottom + 0.5,
+        footerFullWidth: Math.abs(footerBounds.left) < 0.5 && Math.abs(footerBounds.right - window.innerWidth) < 0.5
+      }
+    })
+    assert.deepEqual(inlineStartupLayout, {
+      mainScrolls: false,
+      viewBottomWithinMain: true,
+      footerBottomWithinMain: true,
+      footerFullWidth: true
+    }, 'The embedded Player footer and frame must fit the desktop viewport without a stray scrollbar.')
+    const idlePlaybackSurface = await playbackHostEvaluate(app, `(() => ({
+      waitingVisible: !document.querySelector('#player-waiting').hidden,
+      title: document.querySelector('#player-waiting-title').textContent,
+      copy: document.querySelector('#player-waiting-copy').textContent,
+      controlHintVisible: !document.querySelector('#player-control-hint').hidden,
+      controlHint: document.querySelector('#player-control-hint').textContent.trim()
+    }))()`)
+    assert.deepEqual(idlePlaybackSurface, {
+      waitingVisible: true,
+      title: 'Aguardando música',
+      copy: 'Não há música em reprodução ou na sequência local.',
+      controlHintVisible: true,
+      controlHint: 'Abra Controle e adicione uma música à sequência.'
+    }, 'The idle inline Player must show its approved waiting state instead of a blank surface.')
+    assert.equal(await waitForWindowTip(app, true), true,
+      'The approved informational popover must render inside the real inline playback surface.')
+    const initialTipComposition = await playbackHostEvaluate(app, `(() => {
+      const stage = document.querySelector('#playback-stage')
+      const tip = document.querySelector('#player-window-tip')
+      const style = tip && getComputedStyle(tip)
+      const rect = tip?.getBoundingClientRect()
+      const stageRect = stage?.getBoundingClientRect()
+      return {
+        visible: Boolean(tip && !tip.hidden && style?.display !== 'none'),
+        isOverlaySibling: Boolean(stage && tip?.parentElement === stage),
+        heading: tip?.querySelector('strong')?.textContent,
+        copy: tip?.querySelector('span')?.textContent,
+        dismissLabel: tip?.querySelector('label')?.textContent.trim(),
+        aboveVideo: Number(style?.zIndex) > 0,
+        insideVideoSurface: Boolean(rect && stageRect && rect.left >= stageRect.left && rect.top >= stageRect.top &&
+          rect.right <= stageRect.right && rect.bottom <= stageRect.bottom)
+      }
+    })()`)
+    assert.deepEqual(initialTipComposition, {
+      visible: true,
+      isOverlaySibling: true,
+      heading: 'Precisa usar outra tela?',
+      copy: 'Abra o Player em uma janela separada e arraste para outro monitor.',
+      dismissLabel: 'Não mostrar novamente',
+      aboveVideo: true,
+      insideVideoSurface: true
+    }, 'The full approved popover must be composited above the actual video surface.')
+    await capturePlaybackHost(app, path.join(screenshotRoot, 'player-inline-idle-surface.png'))
+    const initialTipComposite = await captureCompositedPlayerWindow(app,
+      path.join(screenshotRoot, 'player-inline-idle-popover-composite.png'))
+    process.stdout.write(`PLAYER_INLINE_TIP_COMPOSITE ${JSON.stringify(initialTipComposite)}\n`)
+    if (process.platform === 'win32') assert.equal(initialTipComposite.captured, true,
+      'The native Windows composite must include the full inline informational popover.')
     const startupWindows = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(window => window.webContents.getURL()))
     assert.equal(startupWindows.length, 1, 'Clean startup must show only the main window.')
     assert.equal(startupWindows.some(url => url.includes('player-playback.html')), false,
@@ -461,7 +638,7 @@ async function run() {
     assert.equal(bridgeStatus.controllerApplication, 'undefined', 'A aplicação operacional do Controller não deve existir no Player-only.')
     assert.equal(bridgeStatus.nodeRequire, 'undefined', 'O Renderer não deve receber require.')
     assert.equal(bridgeStatus.nodeProcess, 'undefined', 'O Renderer não deve receber process Node.js.')
-    for (const expectedMethod of ['getSnapshot', 'addToSequence', 'playNow', 'pause', 'resume', 'restart', 'stop']) {
+    for (const expectedMethod of ['getSnapshot', 'addToSequence', 'addBatchToSequence', 'changeOperatingMode', 'playNow', 'pause', 'resume', 'restart', 'stop']) {
       assert.ok(bridgeStatus.playerMethods.includes(expectedMethod), `O bridge restrito deve expor ${expectedMethod}.`)
     }
 
@@ -495,11 +672,82 @@ async function run() {
     assert.equal(catalogLookup.videoCode, '01001')
     assert.equal(catalogLookup.title, 'Always')
     assert.equal(catalogLookup.artist, 'Bon Jovi')
-
+    await page.locator('#player-open-mode-settings').click()
+    await page.locator('#player-mode-view').waitFor({ state: 'visible' })
+    assert.equal(await page.locator('#player-mode-current').textContent(), 'Reprodutor',
+      'The dedicated mode page must identify the active Player mode.')
+    assert.equal(await page.evaluate(() => document.querySelector('#player-mode-change').getBoundingClientRect().bottom <= window.innerHeight), true,
+      'The complete mode selection and confirmation action must fit in a 1280×800 desktop viewport.')
+    assert.match(await page.locator('#player-mode-controller').textContent(), /Gerencie a fila, as mesas e as sessões neste computador/,
+      'The available Controller option must not claim that remote networking is already implemented.')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-settings-mode.png') })
+    assert.equal(await page.locator('#player-mode-combined').isDisabled(), true,
+      'Tudo em um must remain visibly unavailable before the Combined integration phase.')
+    const combinedModeError = await page.evaluate(async () => {
+      try { await window.karaokePlayer.changeOperatingMode('combined'); return '' }
+      catch (error) { return error.message }
+    })
+    assert.ok(combinedModeError.includes('MODE_NOT_AVAILABLE'),
+      `The Main IPC handler must reject Combined even when invoked outside the disabled UI: ${combinedModeError}`)
+    await page.locator('#player-nav-back').click()
+    assert.equal(await page.locator('#player-settings-view').isVisible(), true,
+      'The mode page back action must return to the existing Acervo e catálogo settings page.')
     await page.locator('#player-nav-back').click()
     await assertVisibleIconsRendered(page, 'controle manual vazio')
     await page.locator('#player-code').waitFor({ state: 'visible' })
+    assert.equal(await page.locator('#player-manual-view .player-page-heading p').textContent(),
+      'Adicione uma ou várias músicas na ordem em que deseja ouvi-las.',
+      'The manual page introduction must follow the approved batch-entry frame.')
+    assert.equal(await page.locator('#player-code-hint').textContent(),
+      'Separe os códigos por vírgula, espaço ou quebra de linha. A ordem informada será mantida.',
+      'The batch input helper must explain accepted separators and ordered insertion.')
+    assert.equal(await page.locator('#player-code-info').textContent(),
+      'Se o Player estiver parado, a primeira música começa a tocar; as demais entram na sequência.',
+      'The idle batch behavior must be explained separately from input syntax.')
+    assert.equal(await page.locator('#player-current-empty-hint').textContent(),
+      'Adicione uma música acima para começar; a primeira começa automaticamente.',
+      'The empty current-track card must describe the explicit first-add behavior.')
+    assert.equal(await page.locator('.sequence-badge').textContent(), 'Fila local',
+      'The pending-items section must use the approved local queue label.')
     await page.screenshot({ path: path.join(screenshotRoot, 'player-manual-empty.png') })
+
+    await page.locator('#player-code').fill('1001')
+    await page.locator('#player-add-sequence').click()
+    const idleBatchSnapshot = await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
+      snapshot.playback.musicCode === '01001' && snapshot.sequence.current?.musicCode === '01001',
+    'Adding a valid code while idle must explicitly start the first sequence item.')
+    assert.equal(await page.locator('#player-manual-view').isVisible(), true,
+      'Adding a music code must keep the operator on the Control view.')
+    assert.equal(await page.locator('#player-video-view').isVisible(), false,
+      'Starting playback from Control must not navigate to the Reprodutor view.')
+    assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1,
+      'Background playback from Control must not open a detached video window.')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-batch-idle-starts-in-control.png') })
+
+    await page.locator('#player-nav-settings').click()
+    await page.locator('#player-open-mode-settings').click()
+    await page.locator('#player-mode-controller').click()
+    assert.equal(await page.locator('#player-mode-change').isDisabled(), false,
+      'The implemented Controller mode must remain selectable while the Player is active.')
+    const activeBeforeRejectedModeChange = await page.evaluate(() => window.karaokePlayer.getSnapshot())
+    assert.equal(activeBeforeRejectedModeChange.playback.status, 'playing',
+      'The rejected mode-change scenario must begin with active playback.')
+    await page.locator('#player-mode-change').click()
+    await page.locator('#player-mode-error').waitFor({ state: 'visible', timeout: 10000 })
+    const rejectedModeMessage = await page.locator('#player-mode-error').textContent()
+    assert.match(rejectedModeMessage,
+      /Interrompa a reprodução com segurança|Aguarde a conclusão da operação atual/,
+      `An active playback or in-flight operation must block mode changes safely; observed message: ${rejectedModeMessage}`)
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(userData, 'operating-mode.json'), 'utf8')),
+      { version: 1, mode: 'player' }, 'Rejected mode changes must preserve the current persisted mode.')
+    await page.locator('#player-mode-player').click()
+    await page.locator('#player-nav-back').click()
+    await page.locator('#player-nav-back').click()
+
+    await page.locator('#player-stop').click()
+    await waitForSnapshot(page, snapshot => snapshot.playback.status === 'stopped' &&
+      snapshot.playback.attemptId === idleBatchSnapshot.playback.attemptId,
+    'The idle-start validation must stop explicitly without treating Stop as a natural ending.')
 
     const invalidMediaRoot = path.join(root, 'invalid-media')
     fs.mkdirSync(invalidMediaRoot, { recursive: true })
@@ -513,8 +761,19 @@ async function run() {
       snapshot.library.availableCodes > 0 && snapshot.library.configuredFolders.includes(path.resolve(invalidMediaRoot)),
     'A biblioteca temporária deve indexar o fixture inválido do E2E')
     await page.locator('#player-nav-back').click()
-    await page.locator('#player-code').fill('99999')
-    await page.locator('#player-play-now').click()
+    const beforeInvalidBatch = await page.evaluate(() => window.karaokePlayer.getSnapshot())
+    await page.locator('#player-code').fill('99999, 1001')
+    await page.locator('#player-add-sequence').click()
+    await page.locator('#player-batch-errors').waitFor({ state: 'visible', timeout: 10000 })
+    const afterInvalidBatch = await page.evaluate(() => window.karaokePlayer.getSnapshot())
+    assert.deepEqual(afterInvalidBatch.sequence.pending, beforeInvalidBatch.sequence.pending,
+      'A batch containing an unavailable code must leave the existing sequence unchanged.')
+    assert.equal(afterInvalidBatch.playback.status, 'stopped',
+      'A partially invalid batch must not start a valid prefix or replace the stopped attempt.')
+    assert.equal(await page.locator('#player-error-dialog').isVisible(), false,
+      'A validation failure must be reported before media playback is attempted.')
+    await page.locator('#player-code').fill('')
+    await page.evaluate(() => window.karaokePlayer.playNow('99999'))
     await waitForSnapshot(page, snapshot => snapshot.playback.status === 'failed',
       'Mídia inválida deve produzir falha reconhecida pelo serviço')
     await page.locator('#player-error-dialog').waitFor({ state: 'visible', timeout: 15000 })
@@ -525,8 +784,7 @@ async function run() {
     const failedState = await page.evaluate(() => window.karaokePlayer.getSnapshot())
     assert.equal(failedState.sequence.pending.length, 0, 'Falha não deve preencher ou avançar a sequência.')
     await page.locator('#player-nav-manual').click()
-    await page.locator('#player-code').fill('99999')
-    await page.locator('#player-play-now').click()
+    await page.evaluate(() => window.karaokePlayer.playNow('99999'))
     await waitForSnapshot(page, snapshot => snapshot.playback.status === 'failed' &&
       snapshot.playback.attemptId !== failedState.playback.attemptId,
     'Uma nova tentativa com falha deve receber uma nova identidade de reprodução')
@@ -544,44 +802,58 @@ async function run() {
       snapshot.library.availableCodes > 0 && snapshot.library.configuredFolders.includes(path.resolve(configuredMediaRoot)),
     'A biblioteca oficial somente leitura deve ser restaurada após o cenário de erro')
     await page.locator('#player-nav-back').click()
+    await page.evaluate(() => window.karaokePlayer.playNow('1001'))
+    await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' && snapshot.playback.musicCode === '01001',
+      'A valid explicit playback request must recover the local Player after the invalid-media scenario.')
 
-    // Add, reorder and remove pending entries through actual DOM controls and
-    // verify their authoritative order through the Main-owned snapshot.
-    await page.locator('#player-code').fill('1002')
+    // One explicit mixed-delimiter batch appends in order without replacing
+    // the active attempt or navigating away from the manual-control view.
+    const attemptBeforeBatchAppend = (await page.evaluate(() => window.karaokePlayer.getSnapshot())).playback.attemptId
+    await page.locator('#player-code').fill('1002, 1001\n1002 1001')
     await page.locator('#player-add-sequence').click()
-    await waitForSnapshot(page, snapshot => snapshot.sequence.pending.some(item => item.musicCode === '01002'),
-      'Adicionar à sequência deve publicar o item confirmado')
-    await page.locator('#player-code').fill('1001')
-    await page.locator('#player-add-sequence').click()
-    await waitForSnapshot(page, snapshot => snapshot.sequence.pending.length === 2,
-      'A sequência local deve conter os dois itens explicitamente adicionados')
+    const appendedBatch = await waitForSnapshot(page, snapshot => snapshot.sequence.pending.length === 4,
+      'A mixed-delimiter batch must append each explicit code in the submitted order.')
+    assert.deepEqual(appendedBatch.sequence.pending.map(item => item.musicCode),
+      ['01002', '01001', '01002', '01001'],
+      'The batch must preserve comma, whitespace, and newline entry order including intentional repeated codes.')
+    assert.equal(appendedBatch.playback.attemptId, attemptBeforeBatchAppend,
+      'Appending while playing must preserve the current playback attempt.')
+    assert.equal(await page.locator('#player-manual-view').isVisible(), true,
+      'Adding a batch must keep the operator on Controle.')
+    assert.equal(await page.locator('#player-video-view').isVisible(), false,
+      'Adding a batch must not navigate to Reprodutor.')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-batch-appended-stays-in-control.png') })
 
     let sequence = await page.evaluate(() => window.karaokePlayer.getSnapshot())
-    const firstOrder = sequence.sequence.pending.map(item => item.musicCode)
-    assert.deepEqual(firstOrder, ['01002', '01001'])
     const secondItem = sequence.sequence.pending[1]
     await page.locator(`#player-sequence .sequence-grip[data-sequence-id="${secondItem.id}"]`)
       .dragTo(page.locator(`#player-sequence .sequence-grip[data-sequence-id="${sequence.sequence.pending[0].id}"]`))
     await waitForSnapshot(page, snapshot => snapshot.sequence.pending[0]?.id === secondItem.id,
-      'Reordenar item pendente deve atualizar o snapshot autoritativo')
+      'Reorder pending item must update the authoritative snapshot.')
 
     sequence = await page.evaluate(() => window.karaokePlayer.getSnapshot())
     const removeItem = sequence.sequence.pending[0]
     await page.locator(`#player-sequence button[data-sequence-id="${removeItem.id}"][data-action="remove"]`).click()
-    await waitForSnapshot(page, snapshot => snapshot.sequence.pending.length === 1 &&
-      snapshot.sequence.pending[0].musicCode === '01002', 'Remover item deve preservar a ordem restante')
+    await waitForSnapshot(page, snapshot => snapshot.sequence.pending.length === 3 &&
+      snapshot.sequence.pending.map(item => item.musicCode).join(',') === '01002,01002,01001',
+    'Removing a reordered item must preserve the remaining batch order.')
+    await page.locator('#player-sequence-clear').click()
+    await waitForSnapshot(page, snapshot => snapshot.sequence.pending.length === 0,
+      'Clearing the explicit local sequence must not stop the current song.')
+    const seedItem = await page.evaluate(() => window.karaokePlayer.addToSequence('1002'))
+    assert.equal(seedItem.outcome, 'queued', 'A pending item may be added while another song is playing.')
 
     await page.locator('#player-nav-settings').click()
     await page.locator('#player-library-refresh').click()
     await page.locator('#player-toast').waitFor({ state: 'visible' })
     await page.locator('#player-nav-back').click()
 
-    // This selection occurs with CSV configured, but playback resolution is
-    // still backed by the indexed video library, not by catalog membership.
-    await page.locator('#player-code').fill('1001')
-    await page.locator('#player-play-now').click()
+    // Explicit navigation shows the already running playback surface; adding
+    // codes itself must never change the active view.
+    await page.locator('#player-nav-video').click()
+    await page.locator('#player-video-view').waitFor({ state: 'visible', timeout: 10000 })
     await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' && snapshot.playback.musicCode === '01001',
-      'Tocar agora deve iniciar a música pela biblioteca local')
+      'Explicit navigation to Reprodutor must show the song already running in the background.')
     await page.waitForFunction(() => document.querySelector('#player-current-title')?.textContent === 'Always')
     assert.equal(await page.locator('#player-current-code').textContent(), '1001',
       'A interface deve formatar o código do jeito aprovado no frame Doop.')
@@ -599,7 +871,31 @@ async function run() {
     await page.waitForFunction(() => document.querySelector('#player-current-status')?.textContent?.includes('00:01'),
       undefined, { timeout: 10000 })
     await assertVisibleIconsRendered(page, 'controle manual em reprodução')
+    assert.equal(await page.locator('#player-video-current-code').textContent(), '1001',
+      'The inline Player footer must show the music code using the approved display format.')
+    assert.equal(await page.locator('#player-video-current-title').textContent(), 'Always',
+      'The inline Player footer must show the imported song title when metadata is available.')
+    assert.equal(await page.locator('#player-video-current-artist').textContent(), 'Bon Jovi',
+      'The inline Player footer must show the imported artist when metadata is available.')
+    assert.deepEqual(await Promise.all([
+      page.locator('#player-video-previous').isVisible(),
+      page.locator('#player-video-stop').isVisible(),
+      page.locator('#player-video-toggle').isVisible(),
+      page.locator('#player-video-next').isVisible()
+    ]), [true, true, true, true], 'The inline Player footer must render all four transport controls.')
+    const inlineFooterAttempt = (await page.evaluate(() => window.karaokePlayer.getSnapshot())).playback.attemptId
+    await page.locator('#player-video-toggle').click()
+    const footerPaused = await waitForSnapshot(page, snapshot => snapshot.playback.status === 'paused' &&
+      snapshot.videoWindow.location === 'inline', 'The inline footer toggle must pause the active playback.')
+    assert.equal(footerPaused.playback.attemptId, inlineFooterAttempt,
+      'Pausing from the inline footer must preserve the current playback attempt.')
+    await page.locator('#player-video-toggle').click()
+    const footerResumed = await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
+      snapshot.videoWindow.location === 'inline', 'The inline footer toggle must resume the paused playback.')
+    assert.equal(footerResumed.playback.attemptId, inlineFooterAttempt,
+      'Resuming from the inline footer must preserve the current playback attempt.')
     await page.screenshot({ path: path.join(screenshotRoot, 'player-video-inline-shell.png') })
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-video-inline-footer-active.png') })
     await capturePlaybackHost(app, path.join(screenshotRoot, 'player-video-inline-media.png'))
     const inlineComposite = await captureCompositedPlayerWindow(app, path.join(screenshotRoot, 'player-video-inline-composite.png'))
     process.stdout.write(`PLAYER_INLINE_COMPOSITE ${JSON.stringify(inlineComposite)}\n`)
@@ -666,6 +962,26 @@ async function run() {
     })
     await waitForSnapshot(page, snapshot => snapshot.videoWindow.fullScreen,
       'F11 must enter fullscreen in the detached Player window.')
+    assert.equal(await waitForFullscreenHint(app, true), true,
+      'The detached Player must show the temporary Esc/F11 exit hint.')
+    const detachedHintComposition = await playbackHostEvaluate(app, `(() => {
+      const stage = document.querySelector('#playback-stage')
+      const hint = document.querySelector('#player-fullscreen-hint')
+      const video = document.querySelector('video')
+      const style = hint && getComputedStyle(hint)
+      const rect = hint?.getBoundingClientRect()
+      return {
+        isOverlaySibling: Boolean(stage && hint?.parentElement === stage),
+        videoVisible: Boolean(video && video.getBoundingClientRect().width > 0 && video.getBoundingClientRect().height > 0),
+        hintVisible: Boolean(hint && !hint.hidden && style?.display !== 'none' && style?.visibility !== 'hidden' &&
+          Number(style?.opacity) > 0 && rect?.width > 0 && rect?.height > 0),
+        hintAboveMedia: Number(style?.zIndex) > 0
+      }
+    })()`)
+    assert.deepEqual(detachedHintComposition,
+      { isOverlaySibling: true, videoVisible: true, hintVisible: true, hintAboveMedia: true },
+      'The fullscreen hint must be composited over the real detached playback surface.')
+    await capturePlaybackHost(app, path.join(screenshotRoot, 'player-detached-fullscreen-hint.png'))
     await app.evaluate(({ BrowserWindow }) => {
       const view = BrowserWindow.getAllWindows().flatMap(window => window.contentView.children)
         .find(child => child.webContents?.getURL().includes('player-playback.html'))
@@ -675,6 +991,9 @@ async function run() {
     })
     await waitForSnapshot(page, snapshot => !snapshot.videoWindow.fullScreen,
       'F11 must exit fullscreen in the detached Player window.')
+    assert.equal(await playbackHostEvaluate(app,
+      'document.querySelector("#player-fullscreen-hint")?.hidden'), true,
+    'Exiting detached fullscreen must immediately hide the temporary hint.')
 
     await app.evaluate(({ BrowserWindow }) => {
       const view = BrowserWindow.getAllWindows().flatMap(window => window.contentView.children)
@@ -715,41 +1034,148 @@ async function run() {
     if (process.platform === 'win32') assert.equal(returnedInlineComposite.captured, true,
       'The Windows validation must capture the inline Player composition after closing the detached window.')
 
-    const timeBeforeInlineFullscreen = await playbackHostEvaluate(app, 'document.querySelector("video").currentTime')
-    await page.locator('#player-inline-fullscreen').click()
-    await waitForSnapshot(page, snapshot => snapshot.videoWindow.fullScreen && snapshot.videoWindow.location === 'inline',
-      'Fullscreen must work in the embedded Player area.')
+    const inlineAttemptBeforeFullscreen = (await page.evaluate(() => window.karaokePlayer.getSnapshot())).playback.attemptId
+    let lastInlineMediaTime = await playbackHostEvaluate(app, 'document.querySelector("video").currentTime')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-embedded-before-fullscreen-shell.png') })
+    const beforeFullscreenComposite = await captureCompositedPlayerWindow(app,
+      path.join(screenshotRoot, 'player-embedded-before-fullscreen-composite.png'))
+    process.stdout.write(`PLAYER_EMBEDDED_BEFORE_FULLSCREEN ${JSON.stringify(beforeFullscreenComposite)}\n`)
+
+    const fullscreenCycles = [
+      { enter: 'button', exit: 'F11' },
+      { enter: 'F11', exit: 'ESC' },
+      { enter: 'F11', exit: 'F11' },
+      { enter: 'F11', exit: 'ESC' }
+    ]
+    for (const [index, cycle] of fullscreenCycles.entries()) {
+      if (cycle.enter === 'button') await page.locator('#player-inline-fullscreen').click()
+      else await sendEmbeddedKey(app, cycle.enter)
+      await waitForSnapshot(page, snapshot => snapshot.videoWindow.fullScreen && snapshot.videoWindow.location === 'inline',
+        `Embedded fullscreen cycle ${index + 1} must enter without changing playback location.`)
+      await waitForEmbeddedLayout(app, true, `Fullscreen cycle ${index + 1} entry`)
+      assert.equal(await waitForFullscreenHint(app, true), true,
+        'Entering fullscreen must show the temporary Esc/F11 exit hint.')
+      const fullscreenHintComposition = await playbackHostEvaluate(app, `(() => {
+        const stage = document.querySelector('#playback-stage')
+        const hint = document.querySelector('#player-fullscreen-hint')
+        const video = document.querySelector('video')
+        const hintStyle = hint && getComputedStyle(hint)
+        const hintRect = hint?.getBoundingClientRect()
+        const stageRect = stage?.getBoundingClientRect()
+        return {
+          isOverlaySibling: Boolean(stage && hint?.parentElement === stage),
+          videoVisible: Boolean(video && video.getBoundingClientRect().width > 0 && video.getBoundingClientRect().height > 0),
+          hintVisible: Boolean(hint && !hint.hidden && hintStyle?.display !== 'none' && hintStyle?.visibility !== 'hidden' &&
+            Number(hintStyle?.opacity) > 0 && hintRect?.width > 0 && hintRect?.height > 0),
+          hintAboveMedia: Number(hintStyle?.zIndex) > 0,
+          windowTipHidden: Boolean(document.querySelector('#player-window-tip')?.hidden),
+          insideStage: Boolean(hintRect && stageRect && hintRect.right <= stageRect.right && hintRect.bottom <= stageRect.bottom)
+        }
+      })()`)
+      assert.deepEqual(fullscreenHintComposition, {
+        isOverlaySibling: true, videoVisible: true, hintVisible: true, hintAboveMedia: true,
+        windowTipHidden: true, insideStage: true
+      }, 'The fullscreen hint must be visibly composited over the active video surface, not hidden under the waiting panel.')
+      if (index === 0) {
+        const fullscreenHintComposite = await captureCompositedPlayerWindow(app,
+          path.join(screenshotRoot, 'player-embedded-fullscreen-hint-composite.png'))
+        process.stdout.write(`PLAYER_EMBEDDED_FULLSCREEN_HINT ${JSON.stringify(fullscreenHintComposite)}\n`)
+        if (process.platform === 'win32') assert.equal(fullscreenHintComposite.captured, true,
+          'The native Windows run must capture the fullscreen exit hint over the embedded video.')
+      }
+      if (index === 0) {
+        assert.equal(await waitForFullscreenHint(app, false, 5000), true,
+          'The fullscreen exit hint must disappear while fullscreen playback continues.')
+      }
+      await page.screenshot({ path: path.join(screenshotRoot, `player-embedded-fullscreen-${index + 1}-shell.png`) })
+      const fullscreenComposite = await captureCompositedPlayerWindow(app,
+        path.join(screenshotRoot, `player-embedded-fullscreen-${index + 1}-composite.png`))
+      process.stdout.write(`PLAYER_EMBEDDED_FULLSCREEN_${index + 1} ${JSON.stringify(fullscreenComposite)}\n`)
+      if (process.platform === 'win32') assert.equal(fullscreenComposite.captured, true,
+        'The native Windows run must capture the composed embedded fullscreen window.')
+      const fullscreenSnapshot = await page.evaluate(() => window.karaokePlayer.getSnapshot())
+      assert.equal(fullscreenSnapshot.playback.attemptId, inlineAttemptBeforeFullscreen,
+        'Fullscreen entry must preserve the current playback attempt.')
+      assert.equal(fullscreenSnapshot.playback.status, 'playing',
+        'Fullscreen entry must not pause or interrupt playback.')
+
+      await sendEmbeddedKey(app, cycle.exit)
+      await waitForSnapshot(page, snapshot => !snapshot.videoWindow.fullScreen && snapshot.videoWindow.location === 'inline',
+        `Embedded fullscreen cycle ${index + 1} must exit with ${cycle.exit}.`)
+      const restoredState = await waitForEmbeddedLayout(app, false, `Fullscreen cycle ${index + 1} exit`)
+      assert.equal(await playbackHostEvaluate(app,
+        'document.querySelector("#player-fullscreen-hint")?.hidden'), true,
+      'Exiting fullscreen must remove the temporary hint immediately.')
+      assert.equal(restoredState.renderer.videoNavigationVisible, true,
+        'The Reprodutor navigation must be restored after embedded fullscreen.')
+      assert.equal(restoredState.renderer.manualNavigationVisible, true,
+        'The Controle navigation must be restored after embedded fullscreen.')
+      assert.equal(restoredState.renderer.headerVisible, true,
+        'The main Player header must be visible after embedded fullscreen.')
+      assert.equal(await page.locator('.player-header').isVisible(), true,
+        'The main Player header must remain visible after the native fullscreen transition.')
+      assert.equal(await page.locator('#player-nav-manual').isVisible(), true,
+        'The Controle menu must be operable after fullscreen restoration.')
+      assert.equal(await page.locator('#player-close-confirm').isVisible(), false,
+        'Fullscreen exit must not leave a shutdown dialog or hidden close state behind.')
+      assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1,
+        'Embedded fullscreen cycles must not create extra BrowserWindows.')
+      if (process.platform === 'win32') {
+        assert.equal(restoredState.controlFocused, true,
+          'The owning Player window must retain native focus after embedded fullscreen exit.')
+        assert.equal(restoredState.surfaceFocused, true,
+          'The embedded playback surface must regain focus so another shortcut works without a click.')
+      }
+      const restoredSnapshot = await page.evaluate(() => window.karaokePlayer.getSnapshot())
+      assert.equal(restoredSnapshot.playback.attemptId, inlineAttemptBeforeFullscreen,
+        'Fullscreen exit must preserve the same playback attempt.')
+      assert.equal(restoredSnapshot.playback.status, 'playing',
+        'Fullscreen exit must preserve active playback.')
+      const restoredMediaTime = await playbackHostEvaluate(app, 'document.querySelector("video").currentTime')
+      assert.ok(restoredMediaTime > lastInlineMediaTime,
+        'Playback time must continue advancing across fullscreen transitions.')
+      lastInlineMediaTime = restoredMediaTime
+      await page.screenshot({ path: path.join(screenshotRoot, `player-embedded-restored-${index + 1}-shell.png`) })
+      const restoredComposite = await captureCompositedPlayerWindow(app,
+        path.join(screenshotRoot, `player-embedded-restored-${index + 1}-composite.png`))
+      process.stdout.write(`PLAYER_EMBEDDED_RESTORED_${index + 1} ${JSON.stringify(restoredComposite)}\n`)
+      if (process.platform === 'win32') assert.equal(restoredComposite.captured, true,
+        'The native Windows run must capture the composed Player after exiting embedded fullscreen.')
+    }
+
     await app.evaluate(({ BrowserWindow }) => {
-      const view = BrowserWindow.getAllWindows().flatMap(window => window.contentView.children)
-        .find(child => child.webContents?.getURL().includes('player-playback.html'))
-      if (!view) throw new Error('The embedded Player must retain its Chromium surface.')
-      view.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'F11' })
-      view.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'F11' })
+      const control = BrowserWindow.getAllWindows().find(candidate =>
+        candidate.webContents.getURL().includes('player-control.html'))
+      if (!control) throw new Error('The Player control window was not found after fullscreen restoration.')
+      control.close()
     })
-    await waitForSnapshot(page, snapshot => !snapshot.videoWindow.fullScreen && snapshot.videoWindow.location === 'inline',
-      'F11 must exit embedded fullscreen and restore the Player area.')
-    await page.locator('.player-header').waitFor({ state: 'visible', timeout: 10000 })
-    const restoredInlineBounds = await app.evaluate(({ BrowserWindow }) => {
-      const view = BrowserWindow.getAllWindows().flatMap(window => window.contentView.children)
-        .find(child => child.webContents?.getURL().includes('player-playback.html'))
-      return view?.getBounds() ?? null
-    })
-    assert.ok(restoredInlineBounds && restoredInlineBounds.width > 0 && restoredInlineBounds.height > 0,
-      `Exiting fullscreen must restore valid bounds for the embedded Player: ${JSON.stringify(restoredInlineBounds)}`)
-    await page.locator('#player-inline-fullscreen').click()
-    await waitForSnapshot(page, snapshot => snapshot.videoWindow.fullScreen,
-      'The Tela cheia control must enter fullscreen from the embedded Player area.')
-    await app.evaluate(({ BrowserWindow }) => {
-      const view = BrowserWindow.getAllWindows().flatMap(window => window.contentView.children)
-        .find(child => child.webContents?.getURL().includes('player-playback.html'))
-      if (!view) throw new Error('The embedded Player must retain its Chromium surface.')
-      view.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ESC' })
-      view.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ESC' })
-    })
-    await waitForSnapshot(page, snapshot => !snapshot.videoWindow.fullScreen,
-      'Escape must exit embedded fullscreen and restore the navigation and video area.')
+    const mediaTimeBeforeCloseConfirmation = await playbackHostEvaluate(app, 'document.querySelector("video").currentTime')
+    await page.locator('#player-close-confirm').waitFor({ state: 'visible', timeout: 10000 })
+    await waitForPlaybackViewVisibility(app, false)
+    const closeAfterFullscreenSnapshot = await page.evaluate(() => window.karaokePlayer.getSnapshot())
+    assert.equal(closeAfterFullscreenSnapshot.playback.attemptId, inlineAttemptBeforeFullscreen,
+      'A close request after fullscreen must not replace the active playback attempt.')
+    assert.equal(closeAfterFullscreenSnapshot.playback.status, 'playing',
+      'A close request after fullscreen must keep playback active until the operator decides.')
+    assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1,
+      'A close request after fullscreen must keep the Player application window alive.')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-embedded-close-confirmation-shell.png') })
+    const closeAfterFullscreenComposite = await captureCompositedPlayerWindow(app,
+      path.join(screenshotRoot, 'player-embedded-close-confirmation-composite.png'))
+    process.stdout.write(`PLAYER_EMBEDDED_CLOSE_CONFIRMATION ${JSON.stringify(closeAfterFullscreenComposite)}\n`)
+    if (process.platform === 'win32') assert.equal(closeAfterFullscreenComposite.captured, true,
+      'The native Windows run must capture the shutdown confirmation after fullscreen restoration.')
     await playbackHostEvaluate(app,
-      `new Promise((resolve, reject) => { const check = () => { const media = document.querySelector("video"); if (media && media.currentTime > ${timeBeforeInlineFullscreen} + 0.5) resolve(true); else setTimeout(check, 50) }; check() })`)
+      `new Promise((resolve, reject) => { const check = () => { const media = document.querySelector("video"); if (media && media.currentTime > ${mediaTimeBeforeCloseConfirmation} + 0.25) resolve(true); else setTimeout(check, 50) }; check() })`)
+    const mediaTimeDuringCloseConfirmation = await playbackHostEvaluate(app, 'document.querySelector("video").currentTime')
+    assert.ok(mediaTimeDuringCloseConfirmation > mediaTimeBeforeCloseConfirmation,
+      'The hidden inline surface must not interrupt media playback while the shutdown decision is open.')
+    await page.locator('#player-close-cancel').click()
+    await page.locator('#player-close-confirm').waitFor({ state: 'hidden', timeout: 10000 })
+    await waitForPlaybackViewVisibility(app, true)
+    await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
+      snapshot.playback.attemptId === inlineAttemptBeforeFullscreen,
+    'Canceling the post-fullscreen close request must preserve the active playback attempt.')
 
     await page.locator('#player-nav-manual').click()
     await page.locator('#player-manual-view').waitFor({ state: 'visible', timeout: 10000 })
@@ -778,27 +1204,138 @@ async function run() {
     }
     await waitForSnapshot(page, snapshot => snapshot.sequence.pending.length === 3,
       'Inline Next and Previous must use explicit sequence items without replacing the playback surface.')
-    const inlineNext = await page.evaluate(() => window.karaokePlayer.next())
-    assert.equal(inlineNext.outcome, 'started')
+    assert.equal(await page.locator('#player-next').isDisabled(), false,
+      'The approved current-track card must expose Next when an explicit pending item exists.')
+    await page.locator('#player-next').click()
     await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
       snapshot.playback.musicCode === '01002' && snapshot.videoWindow.location === 'inline',
-    'Next must keep playback inline.')
+    'The visible Next control must use the explicit local sequence and keep playback inline.')
     const inlineNextAgain = await page.evaluate(() => window.karaokePlayer.next())
     assert.equal(inlineNextAgain.outcome, 'started')
     await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
       snapshot.playback.musicCode === '01001' && snapshot.videoWindow.location === 'inline',
     'Next must follow the explicit sequence and keep the inline display location.')
-    const inlinePrevious = await page.evaluate(() => window.karaokePlayer.previous())
-    assert.equal(inlinePrevious.outcome, 'started')
+    assert.equal(await page.locator('#player-previous').isDisabled(), false,
+      'The approved current-track card must expose Previous when an explicit prior item exists.')
+    await page.locator('#player-previous').click()
     await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
       snapshot.playback.musicCode === '01002' && snapshot.videoWindow.location === 'inline',
-    'Previous must follow the explicit sequence without opening a detached window.')
+    'The visible Previous control must follow the explicit sequence without opening a detached window.')
     const inlineNextToCurrent = await page.evaluate(() => window.karaokePlayer.next())
     assert.equal(inlineNextToCurrent.outcome, 'started')
     await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
       snapshot.playback.musicCode === '01001' && snapshot.sequence.pending.length === 1 &&
       snapshot.videoWindow.location === 'inline',
     'Inline sequence navigation must preserve the single remaining explicit item.')
+
+    const removableCurrent = await page.evaluate(() => window.karaokePlayer.getSnapshot())
+    const removableAttemptId = removableCurrent.playback.attemptId
+    assert.ok(removableAttemptId, 'The current-track removal flow requires a confirmed active attempt.')
+    await page.locator('#player-current-menu').click()
+    const currentMenu = page.locator('#player-current-menu-popover')
+    await currentMenu.waitFor({ state: 'visible', timeout: 5000 })
+    assert.equal(await page.locator('#player-current-menu').getAttribute('aria-expanded'), 'true',
+      'The three-dot current-track menu must expose its expanded state.')
+    const menuBounds = await currentMenu.boundingBox()
+    assert.ok(menuBounds && menuBounds.width >= 132 && menuBounds.height >= 36 &&
+      menuBounds.x >= 0 && menuBounds.y >= 0 && menuBounds.x + menuBounds.width <= 1280 &&
+      menuBounds.y + menuBounds.height <= 800,
+    'The current-track popover must be fully visible within the 1280×800 control window.')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-current-menu-open.png') })
+    await page.locator('#player-current-remove').click()
+    await page.locator('#player-remove-current-modal').waitFor({ state: 'visible', timeout: 5000 })
+    await assertVisibleIconsRendered(page, 'confirmação de remoção da música atual')
+    const removalModalVisual = await page.locator('#player-remove-current-modal').evaluate(element => {
+      const cancel = element.querySelector('#player-remove-current-cancel')
+      const confirm = element.querySelector('#player-remove-current-confirm')
+      return {
+        width: element.getBoundingClientRect().width,
+        cancelBackground: getComputedStyle(cancel).backgroundColor,
+        confirmBackground: getComputedStyle(confirm).backgroundColor,
+        confirmBorder: getComputedStyle(confirm).borderTopColor
+      }
+    })
+    assert.equal(removalModalVisual.width, 550, 'The removal dialog width must match the approved Doop frame.')
+    assert.equal(removalModalVisual.cancelBackground, 'rgb(34, 34, 39)',
+      'Cancel must use the approved quiet dark fill and outline.')
+    assert.match(removalModalVisual.confirmBackground, /244, 63, 94/,
+      'The destructive confirmation must use the approved red danger treatment.')
+    assert.match(removalModalVisual.confirmBorder, /244, 63, 94/,
+      'The destructive confirmation must retain a red outline.')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-remove-current-confirmation.png') })
+    await page.locator('#player-remove-current-cancel').click()
+    await page.locator('#player-remove-current-modal').waitFor({ state: 'hidden', timeout: 5000 })
+    await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
+      snapshot.playback.attemptId === removableAttemptId && snapshot.sequence.current?.musicCode === '01001',
+    'Canceling current-track removal must preserve the active attempt and sequence position.')
+    await page.locator('#player-current-menu').click()
+    await page.locator('#player-current-remove').click()
+    await page.locator('#player-remove-current-modal').waitFor({ state: 'visible', timeout: 5000 })
+    await page.evaluate(() => {
+      window.__phase5fb5RemovalEvents = []
+      window.__phase5fb5RemovalUnsubscribe = window.karaokePlayer.onPlaybackEvent(event => {
+        window.__phase5fb5RemovalEvents.push(event)
+      })
+    })
+    await page.locator('#player-remove-current-confirm').click()
+    const removedCurrent = await waitForSnapshot(page, snapshot => snapshot.playback.status === 'idle' &&
+      snapshot.sequence.current === null && snapshot.sequence.pending.length === 1,
+    'After Stop ACK and surface clearing, confirming removal must return to idle and preserve pending explicit items.')
+    assert.equal(removedCurrent.playback.attemptId, undefined,
+      'The UI clears the selected attempt only after the confirmed Stop and media cleanup complete.')
+    assert.equal(removedCurrent.sequence.pending[0].musicCode, '01002',
+      'Manual removal must not discard or automatically start the next queued song.')
+    const removalEvents = await page.evaluate(() => {
+      window.__phase5fb5RemovalUnsubscribe?.()
+      return window.__phase5fb5RemovalEvents
+    })
+    assert.equal(removalEvents.some(event => event.type === 'natural-end-candidate' &&
+      event.attemptId === removableAttemptId), false,
+    'Manual removal must never be published as natural EOF.')
+    assert.equal(await page.locator('#player-next').isDisabled(), false,
+      'The preserved pending item remains available for an explicit Next action after removal.')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-after-current-removal.png') })
+    await page.locator('#player-next').click()
+    await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
+      snapshot.playback.musicCode === '01002',
+    'Starting a preserved pending item after removal must require an explicit operator action.')
+    const standalonePlayback = await page.evaluate(() => window.karaokePlayer.playNow('1001'))
+    assert.equal(standalonePlayback.outcome, 'started',
+      'An explicit Play Now command must support the current-track removal flow without a sequence item.')
+    const standaloneSnapshot = await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
+      snapshot.playback.musicCode === '01001' && snapshot.sequence.current === null,
+    'A manually started song outside the local sequence must remain identifiable by its active attempt.')
+    const standaloneAttemptId = standaloneSnapshot.playback.attemptId
+    assert.ok(standaloneAttemptId, 'Standalone removal must correlate to the active playback attempt.')
+    await page.locator('#player-current-menu').click()
+    await page.locator('#player-current-remove').click()
+    await page.locator('#player-remove-current-modal').waitFor({ state: 'visible', timeout: 5000 })
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-remove-standalone-confirmation.png') })
+    await page.evaluate(() => {
+      window.__phase5fb5StandaloneRemovalEvents = []
+      window.__phase5fb5StandaloneRemovalUnsubscribe = window.karaokePlayer.onPlaybackEvent(event => {
+        window.__phase5fb5StandaloneRemovalEvents.push(event)
+      })
+    })
+    await page.locator('#player-remove-current-confirm').click()
+    const standaloneRemoved = await waitForSnapshot(page, snapshot => snapshot.playback.status === 'idle' &&
+      snapshot.sequence.current === null,
+    'Confirming standalone removal must Stop and clear only the selected active attempt.')
+    assert.deepEqual(standaloneRemoved.sequence.pending, [],
+      'Standalone removal must preserve the existing empty pending sequence.')
+    const standaloneRemovalEvents = await page.evaluate(() => {
+      window.__phase5fb5StandaloneRemovalUnsubscribe?.()
+      return window.__phase5fb5StandaloneRemovalEvents
+    })
+    assert.equal(standaloneRemovalEvents.some(event => event.type === 'natural-end-candidate' &&
+      event.attemptId === standaloneAttemptId), false,
+    'Removing a manually started song must never be reported as natural EOF.')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-after-standalone-removal.png') })
+    const resumedManualPlay = await page.evaluate(() => window.karaokePlayer.playNow('1001'))
+    assert.equal(resumedManualPlay.outcome, 'started',
+      'A new explicit manual selection may resume after the standalone removal is confirmed.')
+    await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' && snapshot.playback.musicCode === '01001',
+      'A new manual attempt must become the visible current song after standalone removal.')
     assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1,
       'Inline Next and Previous must not create a detached window.')
     const timeBeforeManualNavigation = await playbackHostEvaluate(app, 'document.querySelector("video").currentTime')
@@ -831,6 +1368,17 @@ async function run() {
     'Substituir CSV deve publicar a nova revisão do catálogo')
     await page.locator('#player-toast').waitFor({ state: 'hidden', timeout: 5000 })
     await assertVisibleIconsRendered(page, 'configurações após importar CSV')
+    assert.equal(await page.locator('#player-nav-video').isVisible(), true,
+      'The Reprodutor navigation item must remain visible in Settings.')
+    assert.equal(await page.locator('#player-nav-manual').isVisible(), true,
+      'The Controle navigation item must remain visible in Settings.')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-settings-navigation-visible.png') })
+    await page.locator('#player-nav-manual').click()
+    await page.locator('#player-manual-view').waitFor({ state: 'visible', timeout: 10000 })
+    await page.locator('#player-nav-video').click()
+    await page.locator('#player-video-view').waitFor({ state: 'visible', timeout: 10000 })
+    await page.locator('#player-nav-settings').click()
+    await page.locator('#player-settings-view').waitFor({ state: 'visible', timeout: 10000 })
     await page.waitForFunction(() => document.querySelector('#player-current-title')?.textContent === 'Always Atualizada',
       undefined, { timeout: 10000 })
     await page.waitForFunction(() => document.querySelector('#player-current-artist')?.textContent === 'Artista Atualizado',
@@ -867,10 +1415,15 @@ async function run() {
       userData: electronApp.getPath('userData')
     }))
     process.stdout.write(`PLAYER_RUNTIME ${JSON.stringify(runtimeIdentity)}\n`)
+    const finalPendingAddition = await page.evaluate(() => window.karaokePlayer.addToSequence('1002'))
+    assert.equal(finalPendingAddition.outcome, 'queued',
+      'The Stop regression scenario must explicitly prepare one pending sequence item.')
+    await waitForSnapshot(page, snapshot => snapshot.sequence.pending.length === 1,
+      'The active playback regression scenario must retain one explicit pending item before Stop.')
     const initialPlayback = await page.evaluate(() => window.karaokePlayer.getSnapshot())
     const initialAttemptId = initialPlayback.playback.attemptId
     assert.equal(initialPlayback.sequence.pending.length, 1,
-      'Tocar agora não deve descartar a sequência pendente')
+      'The explicitly added pending sequence item must remain after the active song is shown.')
 
     const observedEvents = await page.evaluate(() => {
       window.__playerControlEvents = []
@@ -1030,13 +1583,143 @@ async function run() {
       window.contentView.children).filter(child => child.webContents?.getURL().includes('player-playback.html')).length), 1,
     'A recriação concorrente após crash não pode criar WebContentsViews duplicados.')
     await page.locator('#player-nav-manual').click()
-    await page.locator('#player-code').fill('1002')
-    await page.locator('#player-play-now').click()
+    await page.evaluate(() => window.karaokePlayer.playNow('1002'))
     await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' && snapshot.playback.musicCode === '01002',
       'A reprodução deve continuar disponível após recriar a janela de vídeo')
     await page.locator('#player-stop').click()
     await waitForSnapshot(page, snapshot => snapshot.playback.status === 'stopped',
       'A reprodução de verificação deve parar com confirmação')
+
+    await page.evaluate(() => {
+      window.__phase5fb4PlaybackEvents = []
+      window.__phase5fb4PlaybackUnsubscribe = window.karaokePlayer.onPlaybackEvent(event => {
+        window.__phase5fb4PlaybackEvents.push(event)
+      })
+      return window.karaokePlayer.playNow('1001')
+    })
+    await page.locator('#player-nav-video').click()
+    await waitForSnapshot(page, snapshot => snapshot.videoWindow.location === 'inline',
+      'The final EOF empty-state scenario must explicitly use the embedded Player surface.')
+    const finalEofAttempt = await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
+      snapshot.playback.musicCode === '01001',
+    'An explicit final-track selection must start before the natural-end cleanup check.')
+    await playbackHostEvaluate(app, `(() => {
+      const media = document.querySelector('video')
+      if (!media || !Number.isFinite(media.duration) || media.duration <= 0) throw new Error('The real media duration is unavailable.')
+      media.currentTime = Math.max(0, media.duration - 0.35)
+      return true
+    })()`)
+    const clearedEof = await waitForSnapshot(page, snapshot => snapshot.playback.status === 'idle' &&
+      snapshot.playback.attemptId === undefined && snapshot.sequence.current === null &&
+      snapshot.sequence.pending.length === 0,
+    'A validated final EOF must clear the selected track and return the manual view to its empty state.', 20000)
+    assert.equal(clearedEof.progress, null, 'Final EOF must clear elapsed playback progress.')
+    const finalEofEvents = await page.evaluate(() => {
+      window.__phase5fb4PlaybackUnsubscribe?.()
+      return window.__phase5fb4PlaybackEvents
+    })
+    assert.equal(finalEofEvents.filter(event => event.type === 'natural-end-candidate' &&
+      event.attemptId === finalEofAttempt.playback.attemptId).length, 1,
+    'Final EOF must emit one correlated natural-end candidate before clearing the current track.')
+    const clearedSurface = await playbackHostEvaluate(app, `(() => ({
+      hasVideo: Boolean(document.querySelector('video')),
+      waitingVisible: !document.querySelector('#player-waiting').hidden,
+      waitingTitle: document.querySelector('#player-waiting-title').textContent
+    }))()`)
+    assert.equal(clearedSurface.hasVideo, false, 'Final EOF must remove the completed HTMLVideoElement from the real Chromium surface.')
+    assert.equal(clearedSurface.waitingVisible, true, 'The empty video surface must return to its approved waiting state.')
+    assert.equal(clearedSurface.waitingTitle, 'Aguardando música',
+      'Final EOF must show the approved waiting title instead of a blank black surface.')
+    assert.equal(await playbackHostEvaluate(app,
+      'document.querySelector("#player-waiting-copy")?.textContent'),
+    'Não há música em reprodução ou na sequência local.',
+    'Final EOF must restore the approved empty-state explanation.')
+    await app.evaluate(({ BrowserWindow }, event) => {
+      const control = BrowserWindow.getAllWindows().find(window => window.webContents.getURL().includes('player-control.html'))
+      if (!control) throw new Error('The Player control window is unavailable for the surface-containment notice check.')
+      control.webContents.send('player:playback-event', event)
+    }, { type: 'surface-cleanup-failed', attemptId: finalEofAttempt.playback.attemptId,
+      musicCode: '01001', errorCode: 'HOST_CONTAINMENT_FAILED' })
+    await page.locator('#player-toast').waitFor({ state: 'visible', timeout: 5000 })
+    assert.match(await page.locator('#player-toast').textContent(), /não confirmou a limpeza da imagem final/i,
+      'The Renderer must explain a correlated display cleanup failure without treating the completed song as active.')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-final-eof-cleanup-warning.png') })
+    await page.locator('#player-nav-manual').click()
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-manual-after-final-eof.png') })
+    await page.locator('#player-nav-video').click()
+    await page.locator('#player-video-view').waitFor({ state: 'visible', timeout: 10000 })
+    await capturePlaybackHost(app, path.join(screenshotRoot, 'player-video-after-final-eof.png'))
+    const finalEofComposite = await captureCompositedPlayerWindow(app,
+      path.join(screenshotRoot, 'player-final-eof-composite.png'))
+    process.stdout.write(`PLAYER_FINAL_EOF_COMPOSITE ${JSON.stringify(finalEofComposite)}\n`)
+    if (process.platform === 'win32') assert.equal(finalEofComposite.captured, true,
+      'The native Windows run must capture the complete embedded Player after final EOF.')
+    const noMetadataPlayback = await page.evaluate(code => window.karaokePlayer.playNow(code), noMetadataInputCode)
+    assert.equal(noMetadataPlayback.outcome, 'started', 'A real indexed video without CSV metadata must still play locally.')
+    const noMetadataSnapshot = await waitForSnapshot(page, snapshot => snapshot.playback.status === 'playing' &&
+      snapshot.playback.musicCode === noMetadataCode,
+    'The Player must report the selected real video that has no catalog entry.')
+    await page.locator('#player-video-current-metadata-missing').waitFor({ state: 'visible', timeout: 5000 })
+    assert.equal(await page.locator('#player-video-current-metadata-missing').textContent(), 'Metadados indisponíveis')
+    await page.screenshot({ path: path.join(screenshotRoot, 'player-no-metadata-inline-shell.png') })
+    const noMetadataComposite = await captureCompositedPlayerWindow(app,
+      path.join(screenshotRoot, 'player-no-metadata-inline-composite.png'))
+    process.stdout.write(`PLAYER_NO_METADATA_COMPOSITE ${JSON.stringify(noMetadataComposite)}\n`)
+    if (process.platform === 'win32') assert.equal(noMetadataComposite.captured, true,
+      'The native Windows run must capture the composed embedded Player without catalog metadata.')
+    await page.locator('#player-nav-manual').click()
+    await page.locator('#player-current-metadata-missing').waitFor({ state: 'visible', timeout: 5000 })
+    assert.equal(await page.locator('#player-current-metadata-missing').textContent(), 'Metadados indisponíveis')
+    const noMetadataAttemptId = noMetadataSnapshot.playback.attemptId
+    assert.ok(noMetadataAttemptId)
+    await page.locator('#player-current-menu').click()
+    await page.locator('#player-current-remove').click()
+    await page.locator('#player-remove-current-modal').waitFor({ state: 'visible', timeout: 5000 })
+    assert.equal(await page.locator('#player-remove-current-title-song').textContent(), '',
+      'Current-track removal must not invent a title when metadata is unavailable.')
+    await page.locator('#player-remove-current-confirm').click()
+    await waitForSnapshot(page, snapshot => snapshot.playback.status === 'idle' && snapshot.sequence.current === null,
+      'The no-metadata playback must be safely removable before switching modes.')
+    await playbackHostEvaluate(app, `(() => {
+      const checkbox = document.querySelector('#player-window-tip-dismiss')
+      if (!checkbox) throw new Error('A opção de ocultar a dica não está disponível.')
+      checkbox.checked = true
+      checkbox.dispatchEvent(new Event('change', { bubbles: true }))
+      return true
+    })()`)
+    assert.equal(await waitForWindowTip(app, false), true, 'Confirming the checkbox must dismiss the host popover.')
+    await page.waitForFunction(() => window.localStorage.getItem('player-window-tip-dismissed') === 'true', undefined,
+      { timeout: 5000 })
+
+    // A permitted mode change must use the existing relaunch lifecycle once
+    // playback and the volatile local sequence are both inactive.
+    await page.locator('#player-nav-settings').click()
+    await page.locator('#player-open-mode-settings').click()
+    await page.locator('#player-mode-controller').click()
+    await app.evaluate(({ app: electronApp }) => {
+      globalThis.__playerControlE2EOriginalQuit = electronApp.quit
+      globalThis.__playerControlE2EOriginalRelaunch = electronApp.relaunch
+      globalThis.__modeRelaunchRequested = false
+      globalThis.__modeQuitRequested = false
+      electronApp.relaunch = () => { globalThis.__modeRelaunchRequested = true }
+      electronApp.quit = () => { globalThis.__modeQuitRequested = true }
+    })
+    await page.locator('#player-mode-change').click()
+    await page.locator('#player-mode-error').waitFor({ state: 'visible', timeout: 10000 })
+    assert.match(await page.locator('#player-mode-error').textContent(), /reiniciado/i,
+      'An available Controller selection must communicate the controlled application restart.')
+    const modeTransition = await app.evaluate(({ app: electronApp }) => {
+      const transition = { relaunch: globalThis.__modeRelaunchRequested, quit: globalThis.__modeQuitRequested }
+      electronApp.quit = globalThis.__playerControlE2EOriginalQuit
+      electronApp.relaunch = globalThis.__playerControlE2EOriginalRelaunch
+      return transition
+    })
+    Object.assign(modeTransition, {
+      mode: JSON.parse(fs.readFileSync(path.join(userData, 'operating-mode.json'), 'utf8'))
+    })
+    assert.deepEqual(modeTransition, {
+      relaunch: true, quit: true, mode: { version: 1, mode: 'controller' }
+    }, 'An idle Player may switch to the implemented Controller mode through the persisted relaunch lifecycle.')
 
     assert.equal(fs.existsSync(path.join(userData, 'karaoke.sqlite')), false,
       'A integração manual e de catálogo Player-only não pode criar SQLite operacional do Controller.')
@@ -1045,6 +1728,10 @@ async function run() {
     process.stdout.write('PASS Player-only app E2E: Preload restrito, IPC real, biblioteca/CSV, sequência, controles, janela Chromium e isolamento do SQLite operacional.\n')
   } finally {
     if (app) {
+      await app.evaluate(({ app: electronApp }) => {
+        if (globalThis.__playerControlE2EOriginalQuit) electronApp.quit = globalThis.__playerControlE2EOriginalQuit
+        if (globalThis.__playerControlE2EOriginalRelaunch) electronApp.relaunch = globalThis.__playerControlE2EOriginalRelaunch
+      }).catch(() => {})
       let openWindows = []
       try { openWindows = app.windows() } catch {}
       const controlPage = openWindows.find(candidate => candidate.url().includes('player-control.html'))

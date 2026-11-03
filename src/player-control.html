@@ -43,7 +43,7 @@
 
       <div id="player-manual-content" class="player-manual-content">
       <div class="player-page-heading">
-        <div><h1>Controle manual</h1><p>Digite o código para iniciar uma música da biblioteca local.</p></div>
+        <div><h1>Controle manual</h1><p>Adicione uma ou várias músicas na ordem em que deseja ouvi-las.</p></div>
       </div>
 
       <section id="player-library-warning" class="player-notice" hidden role="status">
@@ -53,48 +53,53 @@
       </section>
 
       <section class="player-panel player-code-panel" aria-labelledby="player-code-label">
-        <label id="player-code-label" for="player-code">Código da música</label>
+        <label id="player-code-label" for="player-code">Códigos das músicas</label>
         <div class="player-code-row">
-          <input id="player-code" type="text" inputmode="numeric" autocomplete="off" maxlength="5" placeholder="Ex.: 1001" aria-describedby="player-code-hint">
-          <button id="player-add-sequence" class="btn btn-primary" type="button">Adicionar à sequência</button>
-          <button id="player-play-now" class="btn btn-secondary" type="button">Tocar agora</button>
+          <textarea id="player-code" inputmode="numeric" autocomplete="off" maxlength="4096" rows="2" placeholder="Ex.: 1001, 1002, 5540…" aria-describedby="player-code-hint player-code-info"></textarea>
+          <button id="player-add-sequence" class="btn btn-primary" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span>Adicionar à fila</span></button>
         </div>
-        <p id="player-code-hint" class="player-helper">Digite o número da música. Adicione-o à sequência ou escolha “Tocar agora” para iniciar imediatamente.</p>
+        <p id="player-code-hint" class="player-helper">Separe os códigos por vírgula, espaço ou quebra de linha. A ordem informada será mantida.</p>
+        <p id="player-code-info" class="player-code-info"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></svg><span>Se o Player estiver parado, a primeira música começa a tocar; as demais entram na sequência.</span></p>
+        <p id="player-batch-errors" class="player-batch-errors" role="alert" hidden></p>
       </section>
 
       <section class="player-panel player-current-panel" aria-labelledby="player-current-heading">
         <div class="player-section-heading">
           <h2 id="player-current-heading">MÚSICA ATUAL</h2>
-          <span id="player-current-status" class="playback-badge" hidden><i aria-hidden="true"></i></span>
+          <div class="player-current-heading-status"><span id="player-sequence-position" class="sequence-position-badge" hidden></span><span id="player-current-status" class="playback-badge" hidden><i aria-hidden="true"></i></span></div>
         </div>
         <div id="player-current-content" class="player-current-content">
           <div class="player-track">
             <span class="player-track-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span>
             <div class="player-track-copy">
               <strong><span id="player-current-code">Nenhuma música em reprodução</span><span id="player-current-separator" aria-hidden="true"> — </span><span id="player-current-title" hidden></span></strong>
-              <span id="player-current-empty-hint">Digite um código acima para começar.</span>
+          <span id="player-current-empty-hint">Adicione uma música acima para começar; a primeira começa automaticamente.</span>
               <small id="player-current-metadata-missing" hidden>Metadados indisponíveis</small>
               <small id="player-current-artist"></small>
             </div>
           </div>
           <div id="player-track-actions" class="player-track-actions" role="group" aria-label="Controles da música atual">
+            <button id="player-previous" class="player-control-secondary" type="button" title="Música anterior" aria-label="Música anterior"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14M18 6l-9 6 9 6z"/></svg></button>
             <button id="player-toggle" class="player-control-primary" type="button" title="Reproduzir" aria-label="Reproduzir"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 12 7-12 7z"/></svg></button>
+            <button id="player-next" class="player-control-secondary" type="button" title="Próxima música" aria-label="Próxima música"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14M6 6l9 6-9 6z"/></svg></button>
             <button id="player-restart" class="player-control-secondary" type="button" title="Reiniciar" aria-label="Reiniciar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 2.64-6.36L3 8"/><path d="M3 3v5h5"/></svg></button>
             <button id="player-stop" class="player-control-secondary" type="button" title="Parar" aria-label="Parar"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>
+            <button id="player-current-menu" class="player-control-menu-button" type="button" title="Mais opções" aria-label="Mais opções" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg></button>
           </div>
         </div>
+        <div id="player-current-menu-popover" class="player-current-menu-popover" role="menu" hidden><button id="player-current-remove" type="button" role="menuitem"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16m-10 4v7m4-7v7M6 7l1 14h10l1-14M9 7V4h6v3"/></svg><span>Remover</span></button></div>
         <p id="player-current-note" class="player-current-note" hidden></p>
         <div id="player-current-error" class="player-inline-error" hidden></div>
       </section>
 
       <section class="player-panel player-sequence-panel" aria-labelledby="player-sequence-heading">
         <div class="player-section-heading player-sequence-heading">
-          <div class="player-sequence-title"><h2 id="player-sequence-heading">Próximas da sequência</h2><span class="sequence-badge">Sequência local</span></div>
+          <div class="player-sequence-title"><h2 id="player-sequence-heading">Próximas da sequência</h2><span class="sequence-badge">Fila local</span></div>
           <button id="player-sequence-clear" class="player-text-button player-sequence-clear" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16m-10 4v7m4-7v7M6 7l1 14h10l1-14M9 7V4h6v3"/></svg><span>Limpar sequência</span></button>
         </div>
         <p id="player-sequence-policy" class="player-sequence-policy" hidden>As músicas serão reproduzidas na ordem abaixo, avançando automaticamente após cada término normal.</p>
         <div id="player-sequence" class="player-sequence-list"></div>
-        <div id="player-sequence-empty" class="player-sequence-empty"><span class="player-sequence-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 4v4m8 2v4m-6 2v4"/></svg></span><div><strong>Nenhuma música na sequência</strong><span>Adicione músicas pelo campo de código acima.</span></div></div>
+        <div id="player-sequence-empty" class="player-sequence-empty"><span class="player-sequence-empty-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><path d="M8 4v4m8 2v4m-6 2v4"/></svg></span><div><strong>Nenhuma música na sequência</strong><span>As músicas adicionadas aparecerão nesta sequência.</span></div></div>
         <span id="player-sequence-count" class="visually-hidden">0 músicas pendentes</span>
       </section>
       </div>
@@ -104,10 +109,22 @@
       <main class="player-video-main">
         <div id="player-inline-stage" class="player-area" aria-label="Vídeo da música atual"></div>
       </main>
-      <footer class="player-video-footer" aria-label="Opções de exibição do Player">
-        <div class="player-video-hint">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/></svg>
-          <div><strong>Precisa usar outra tela?</strong><span>Abra em janela separada e arraste o Player para o outro monitor.</span></div>
+      <footer class="player-video-footer" aria-label="Controles e opções de exibição do Player">
+        <div id="player-video-current" class="player-video-current" aria-live="polite">
+          <small>MÚSICA ATUAL</small>
+          <div class="player-video-current-track">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            <span id="player-video-current-code">Nenhuma música em reprodução</span>
+            <span id="player-video-current-title" hidden></span>
+            <span id="player-video-current-artist" hidden></span>
+            <span id="player-video-current-metadata-missing" hidden>Metadados indisponíveis</span>
+          </div>
+        </div>
+        <div id="player-video-transport" class="player-video-transport" role="group" aria-label="Controles da música atual">
+          <button id="player-video-previous" class="player-control-secondary" type="button" title="Música anterior" aria-label="Música anterior"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14M18 6l-9 6 9 6z"/></svg></button>
+          <button id="player-video-stop" class="player-control-secondary player-video-stop" type="button" title="Parar" aria-label="Parar"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></button>
+          <button id="player-video-toggle" class="player-control-primary" type="button" title="Reproduzir" aria-label="Reproduzir"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 12 7-12 7z"/></svg></button>
+          <button id="player-video-next" class="player-control-secondary" type="button" title="Próxima música" aria-label="Próxima música"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14M6 6l9 6-9 6z"/></svg></button>
         </div>
         <div class="player-video-actions">
           <button id="player-inline-fullscreen" class="player-action" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"/></svg><span>Tela cheia</span></button>
@@ -117,7 +134,7 @@
     </section>
 
     <section id="player-settings-view" class="player-view" hidden>
-      <div class="player-page-heading"><div><h1>Acervo e catálogo</h1><p>Configure os vídeos e os metadados das músicas do seu karaokê.</p></div></div>
+      <div class="player-page-heading"><div><h1>Acervo e catálogo</h1><p>Configure os vídeos e os metadados das músicas do seu karaokê.</p></div><button id="player-open-mode-settings" class="player-settings-entry" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H4zM8 19h8m-4-4v4"/><path d="m8 9 2 2 5-5"/></svg><span>Modo de operação</span><svg class="player-settings-entry-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></button></div>
       <section class="player-panel player-settings-panel">
         <div class="player-settings-heading"><span class="settings-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 6.5h7l2 2H21v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 8.5h18"/></svg></span><div><h2>Biblioteca de vídeos</h2><p>Selecione a pasta que contém os vídeos utilizados na reprodução das músicas.</p></div></div>
         <div class="player-settings-body">
@@ -134,7 +151,32 @@
       </section>
       <div id="player-library-toast" class="player-toast" role="status" aria-live="polite" hidden></div>
     </section>
+
+    <section id="player-mode-view" class="player-view player-mode-view" hidden aria-labelledby="player-mode-title">
+      <div class="player-page-heading"><div><h1 id="player-mode-title">Modo de operação</h1><p>Escolha como este computador será utilizado no Karaoke Queue.</p></div></div>
+      <section class="player-panel player-mode-panel">
+        <div class="player-mode-current">
+          <div class="player-mode-current-copy"><small>MODO ATUAL</small><div><span class="player-mode-current-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="13" rx="2"/><path d="M8 21h8m-4-4v4m-1-9 4-2-4-2z"/></svg></span><strong id="player-mode-current">Reprodutor</strong></div></div>
+          <span class="player-mode-active"><i aria-hidden="true"></i>Ativo neste computador</span>
+        </div>
+        <div class="player-mode-selection-heading"><strong>Selecionar outro modo</strong><span>Escolha como deseja usar o aplicativo neste computador.</span></div>
+        <div class="player-mode-options" role="radiogroup" aria-label="Modo de operação">
+          <button id="player-mode-controller" class="player-mode-option" type="button" role="radio" aria-checked="false" data-mode="controller"><span class="player-mode-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h8M8 13h5"/><circle cx="17" cy="15" r="1"/></svg></span><span><strong>Controlador</strong><small>Gerencie a fila, as mesas e as sessões neste computador.</small></span><span class="player-mode-radio" aria-hidden="true"></span></button>
+          <button id="player-mode-player" class="player-mode-option is-current" type="button" role="radio" aria-checked="true" data-mode="player"><span class="player-mode-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="13" rx="2"/><path d="M8 21h8m-4-4v4m-1-9 4-2-4-2z"/></svg></span><span><strong>Reprodutor</strong><small>Reproduza vídeos neste computador. Controle músicas manualmente pelo código, mesmo sem conexão.</small></span><em>Modo atual</em><span class="player-mode-radio" aria-hidden="true"></span></button>
+          <button id="player-mode-combined" class="player-mode-option is-unavailable" type="button" role="radio" aria-checked="false" data-mode="combined" aria-disabled="true" disabled><span class="player-mode-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="12" height="10" rx="1.5"/><path d="M6 18h6m-3-4v4M17 7h4v13h-9v-3"/></svg></span><span><strong>Tudo em um</strong><small>Gerencie a fila e reproduza as músicas no mesmo computador. O vídeo abre em uma janela independente para outra tela.</small></span><em>Em breve</em><span class="player-mode-radio" aria-hidden="true"></span></button>
+        </div>
+        <p class="player-mode-warning"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/></svg><span>A alteração do modo pode exigir a reinicialização do aplicativo. Uma reprodução ativa deve ser encerrada com segurança antes da troca. Sessões, fila e histórico serão preservados; nenhuma sessão será encerrada automaticamente.</span></p>
+        <div class="player-mode-actions"><span id="player-mode-error" role="status" hidden></span><button id="player-mode-change" class="btn btn-primary" type="button" disabled>Alterar modo<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button></div>
+      </section>
+    </section>
   </main>
+
+  <dialog id="player-remove-current-modal" class="player-dialog player-dialog--remove-current" aria-labelledby="player-remove-current-title">
+    <div class="remove-current-heading"><span class="remove-current-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 22 20H2Z"/><path d="M12 9v5m0 3h.01"/></svg></span><div><h2 id="player-remove-current-title">Remover música atual?</h2><p>Esta música está em reprodução. Se confirmar, ela será encerrada e removida da sequência.</p></div></div>
+    <div class="remove-current-track"><small>MÚSICA ATUAL</small><span id="player-remove-current-status" class="playback-badge"><i aria-hidden="true"></i><span>Em reprodução</span></span><strong><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><span id="player-remove-current-code"></span><span id="player-remove-current-title-song"></span></strong><span id="player-remove-current-artist"></span></div>
+    <p id="player-remove-current-pending" class="remove-current-pending"></p>
+    <div class="remove-current-actions"><button id="player-remove-current-cancel" class="btn btn-secondary" type="button">Cancelar</button><button id="player-remove-current-confirm" class="btn btn-danger" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16m-10 4v7m4-7v7M6 7l1 14h10l1-14M9 7V4h6v3"/></svg>Parar e remover</button></div>
+  </dialog>
 
   <div id="player-toast" class="player-toast" role="status" aria-live="polite" hidden></div>
 

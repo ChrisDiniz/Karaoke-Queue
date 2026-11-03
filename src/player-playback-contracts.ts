@@ -56,6 +56,7 @@ export class PlayerPlaybackError extends Error {
 export type PlayerPlaybackHostCommand =
   | { type: 'load'; commandId: string; attemptId: string; musicCode: string; mediaUrl: string }
   | { type: 'play' | 'pause' | 'stop'; commandId: string; attemptId: string }
+  | { type: 'clear'; commandId: string; attemptId: string }
 
 export interface PlayerPlaybackMediaObservation {
   type: 'loadedmetadata' | 'timeupdate' | 'playing' | 'pause' | 'ended' | 'error' | 'emptied' | 'waiting' | 'stalled'
@@ -93,6 +94,7 @@ export type PlayerPlaybackEvent =
   | { type: 'state-changed'; state: PlayerPlaybackState }
   | { type: 'progress'; attemptId: string; currentTime: number; duration: number | null }
   | { type: 'natural-end-candidate'; attemptId: string; musicCode: string; duration: number; endedAt: string }
+  | { type: 'surface-cleanup-failed'; attemptId: string; musicCode: string; errorCode: 'HOST_CONTAINMENT_FAILED' }
   | { type: 'interrupted'; attemptId: string; musicCode: string; reason: 'stop' | 'replace' | 'restart' | 'host-terminated' }
   | { type: 'uncertain'; attemptId: string; musicCode: string; reason: 'invalid-ended-evidence' | 'host-terminated' | 'command-outcome-unknown' }
   | { type: 'error'; attemptId?: string; musicCode?: string; errorCode: PlayerPlaybackErrorCode }

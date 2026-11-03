@@ -70,6 +70,7 @@ interface KaraokeUiScaleBridge {
 interface KaraokePreferencesBridge {
   getSidebarDisplayName: () => Promise<string>
   setSidebarDisplayName: (name: string) => Promise<string>
+  changeOperatingMode: (mode: 'player') => Promise<{ outcome: 'restarting'; mode: 'player' }>
 }
 
 interface KaraokeDiagnosticsBridge {

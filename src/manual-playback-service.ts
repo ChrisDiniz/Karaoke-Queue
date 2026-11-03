@@ -12,11 +12,22 @@ import {
 export type ManualPlaybackOperation = 'play' | 'pause' | 'resume' | 'restart' | 'stop' | 'next' | 'previous'
 
 export type ManualPlaybackResult =
-  | { outcome: 'started' | 'accepted' | 'queued'; operation: ManualPlaybackOperation | 'add' | 'remove' | 'reorder' | 'clear'; state: PlayerPlaybackState; itemId?: string }
-  | { outcome: 'unavailable'; operation: ManualPlaybackOperation | 'add' | 'remove' | 'reorder' | 'clear'; reason: string; state: PlayerPlaybackState }
+  | { outcome: 'started' | 'accepted' | 'queued'; operation: ManualPlaybackOperation | 'add' | 'remove' | 'remove-current' | 'reorder' | 'clear'; state: PlayerPlaybackState; itemId?: string }
+  | { outcome: 'unavailable'; operation: ManualPlaybackOperation | 'add' | 'remove' | 'remove-current' | 'reorder' | 'clear'; reason: string; state: PlayerPlaybackState }
   | { outcome: 'boundary'; operation: 'next' | 'previous'; reason: 'SEQUENCE_BOUNDARY'; state: PlayerPlaybackState }
   | { outcome: 'uncertain'; operation: ManualPlaybackOperation; reason: string; state: PlayerPlaybackState }
-  | { outcome: 'failed'; operation: ManualPlaybackOperation | 'add' | 'remove' | 'reorder' | 'clear'; reason: string; state: PlayerPlaybackState }
+  | { outcome: 'failed'; operation: ManualPlaybackOperation | 'add' | 'remove' | 'remove-current' | 'reorder' | 'clear'; reason: string; state: PlayerPlaybackState }
+
+export interface ManualBatchEntryIssue {
+  readonly index: number
+  readonly value: string
+  readonly reason: string
+}
+
+export type ManualBatchPlaybackResult =
+  | { outcome: 'started' | 'queued'; operation: 'add-batch'; state: PlayerPlaybackState; sequence: ManualSequenceSnapshot; acceptedCodes: readonly string[] }
+  | { outcome: 'unavailable' | 'uncertain'; operation: 'add-batch'; reason: string; state: PlayerPlaybackState; sequence: ManualSequenceSnapshot }
+  | { outcome: 'failed'; operation: 'add-batch'; reason: string; state: PlayerPlaybackState; sequence: ManualSequenceSnapshot; invalidEntries?: readonly ManualBatchEntryIssue[]; acceptedCodes?: readonly string[] }
 
 export interface ManualSequenceItem {
   readonly id: string
@@ -32,10 +43,13 @@ export interface ManualSequenceSnapshot {
 export interface ManualPlaybackEngine {
   getState(): PlayerPlaybackState
   playImmediately(canonicalCode: string, validateBeforeCommit?: () => void, recoveryAttemptId?: string): Promise<PlayerPlaybackState>
+  clearCompletedMedia?(expectedAttemptId: string): Promise<boolean>
+  clearStoppedMedia?(expectedAttemptId: string): Promise<boolean>
+  assertPlaybackAllowed?(): void
   pause(): Promise<PlayerPlaybackState>
   resume(): Promise<PlayerPlaybackState>
   restart(): Promise<PlayerPlaybackState>
-  stop(): Promise<PlayerPlaybackState>
+  stop(expectedAttemptId?: string): Promise<PlayerPlaybackState>
   validateMusicCode?(canonicalCode: string): Promise<void>
   subscribe?(listener: (event: PlayerPlaybackEvent) => void): () => void
 }
@@ -58,15 +72,17 @@ export class ManualPlaybackService {
   private legacyNavigationContext = false
   private disposed = false
   private commandRevision = 0
-  private sequenceRevision = 0
   private sequenceMutationRevision = 0
   private sequenceAddTail: Promise<void> = Promise.resolve()
+  private readonly batchRequests = new Map<string, { readonly payload: string; readonly promise: Promise<ManualBatchPlaybackResult>; settled: boolean }>()
   private activeAttemptId: string | undefined
   private readonly handledNaturalEnds = new Set<string>()
   private readonly earlyNaturalEnds = new Map<string, Extract<PlayerPlaybackEvent, { type: 'natural-end-candidate' }>>()
   private readonly unsubscribePlayback: (() => void) | undefined
   private autoAdvanceTask: Promise<void> | undefined
   private automaticItemId: string | undefined
+  private sequenceItemStartingId: string | undefined
+  private currentRemoval: { readonly itemId: string | null; readonly attemptId: string } | undefined
   private readonly listeners = new Set<() => void>()
 
   constructor(private readonly playback: ManualPlaybackEngine, private readonly options: ManualPlaybackOptions = {}) {
@@ -115,7 +131,6 @@ export class ManualPlaybackService {
     this.previousSequence = items.slice(0, currentPosition)
     this.pendingSequence = items.slice(currentPosition + 1)
     this.legacyNavigationContext = true
-    this.sequenceRevision++
     this.activeAttemptId = state.attemptId
     this.notifyChanged()
   }
@@ -149,23 +164,144 @@ export class ManualPlaybackService {
     return addition
   }
 
+  /** Validates and commits one explicit batch. Request identities make IPC retries idempotent. */
+  addBatchToSequence(rawText: unknown, requestId: unknown): Promise<ManualBatchPlaybackResult> {
+    this.ensureOpen()
+    if (typeof rawText !== 'string' || rawText.length > 4096) {
+      return Promise.resolve(this.batchFailure('failed', 'INVALID_BATCH_INPUT'))
+    }
+    if (typeof requestId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(requestId)) {
+      return Promise.resolve(this.batchFailure('failed', 'INVALID_REQUEST_ID'))
+    }
+    const payload = crypto.createHash('sha256').update(rawText, 'utf8').digest('hex')
+    const existing = this.batchRequests.get(requestId)
+    if (existing) {
+      if (existing.payload !== payload) return Promise.resolve(this.batchFailure('failed', 'REQUEST_ID_CONFLICT'))
+      return existing.promise
+    }
+    this.trimBatchRequestCache()
+    if (this.batchRequests.size >= 128) return Promise.resolve(this.batchFailure('unavailable', 'BATCH_BUSY'))
+
+    const promise = this.enqueueBatch(rawText)
+    const entry = { payload, promise, settled: false }
+    this.batchRequests.set(requestId, entry)
+    void promise.finally(() => { entry.settled = true; this.trimBatchRequestCache() }).catch(() => undefined)
+    return promise
+  }
+
+  private enqueueBatch(rawText: string): Promise<ManualBatchPlaybackResult> {
+    const addition = this.sequenceAddTail.then(async (): Promise<ManualBatchPlaybackResult> => {
+      try {
+        this.ensureOpen()
+        if (this.currentRemoval) return this.batchFailure('unavailable', 'CURRENT_REMOVAL_IN_PROGRESS')
+        this.playback.assertPlaybackAllowed?.()
+        const initialState = this.playback.getState()
+        if (initialState.status === 'uncertain' || initialState.status === 'disposed' || initialState.status === 'stopping') {
+          return this.batchFailure(initialState.status === 'uncertain' ? 'uncertain' : 'unavailable',
+            initialState.errorCode ?? 'PLAYBACK_BUSY')
+        }
+        if (initialState.status === 'failed') return this.batchFailure('unavailable', 'PLAYBACK_FAILED_REQUIRES_DECISION')
+        const commandRevision = this.commandRevision
+        const mutationRevision = this.sequenceMutationRevision
+        const tokens = rawText.trim().split(/[\s,]+/).filter(Boolean)
+        if (tokens.length === 0) return this.batchFailure('failed', 'EMPTY_BATCH')
+        if (tokens.length > 100) return this.batchFailure('failed', 'BATCH_LIMIT_EXCEEDED')
+
+        const normalized: Array<{ index: number; value: string; code?: string }> = tokens.map((value, index) => {
+          try { return { index: index + 1, value, code: normalizeCatalogCodeForVideoMatch(value) } }
+          catch { return { index: index + 1, value } }
+        })
+        const issues: ManualBatchEntryIssue[] = []
+        for (const item of normalized) {
+          if (!item.code) {
+            issues.push({ index: item.index, value: item.value, reason: 'INVALID_MUSIC_CODE' })
+            continue
+          }
+          try { await this.playback.validateMusicCode?.(item.code) }
+          catch (error) { issues.push({ index: item.index, value: item.value, reason: errorCode(error) }) }
+        }
+        this.ensureOpen()
+        this.playback.assertPlaybackAllowed?.()
+        if (commandRevision !== this.commandRevision || mutationRevision !== this.sequenceMutationRevision) {
+          return this.batchFailure('unavailable', commandRevision !== this.commandRevision
+            ? 'PLAYBACK_CHANGED_DURING_BATCH' : 'SEQUENCE_CHANGED_DURING_BATCH')
+        }
+        if (issues.length > 0) {
+          return {
+            outcome: 'failed', operation: 'add-batch', reason: 'BATCH_VALIDATION_FAILED',
+            state: this.getStatus(), sequence: this.getSequence(), invalidEntries: issues
+          }
+        }
+
+        const state = this.playback.getState()
+        if (state.status === 'uncertain' || state.status === 'disposed' || state.status === 'stopping') {
+          const outcome = state.status === 'uncertain' ? 'uncertain' : 'unavailable'
+          return this.batchFailure(outcome, state.errorCode ?? 'PLAYBACK_BUSY')
+        }
+        if (state.status === 'failed') return this.batchFailure('unavailable', 'PLAYBACK_FAILED_REQUIRES_DECISION')
+
+        const items = normalized.map(({ code }) => ({ id: crypto.randomUUID(), musicCode: code! }))
+        this.pendingSequence.push(...items)
+        this.legacyNavigationContext = false
+        const shouldStart = !this.automaticItemId && ['idle', 'stopped', 'completed'].includes(state.status)
+        this.notifyChanged()
+        if (!shouldStart) {
+          return { outcome: 'queued', operation: 'add-batch', state: this.getStatus(),
+            sequence: this.getSequence(), acceptedCodes: items.map(item => item.musicCode) }
+        }
+
+        const next = this.pendingSequence[0]
+        if (!next) return this.batchFailure('failed', 'BATCH_COMMIT_FAILED')
+        const started = await this.playSequenceItem('next', next)
+        if (started.outcome === 'started') {
+          return { outcome: 'started', operation: 'add-batch', state: started.state,
+            sequence: this.getSequence(), acceptedCodes: items.map(item => item.musicCode) }
+        }
+        const reason = 'reason' in started ? started.reason : started.state.errorCode ?? 'PLAYBACK_FAILED'
+        if (started.outcome === 'uncertain') return this.batchFailure('uncertain', reason)
+        return this.batchFailure('failed', reason)
+      } catch (error) {
+        const result = this.batchFailure(error instanceof PlayerPlaybackError && error.code === 'RECOVERY_PENDING'
+          ? 'unavailable' : error instanceof PlayerPlaybackError && ['COMMAND_TIMEOUT', 'HOST_TERMINATED'].includes(error.code)
+            ? 'uncertain' : 'failed', errorCode(error))
+        return result
+      }
+    })
+    this.sequenceAddTail = addition.then(() => undefined, () => undefined)
+    return addition
+  }
+
+  private batchFailure(outcome: 'failed' | 'unavailable' | 'uncertain', reason: string): ManualBatchPlaybackResult {
+    return { outcome, operation: 'add-batch', reason, state: this.getStatus(), sequence: this.getSequence() }
+  }
+
+  private trimBatchRequestCache(): void {
+    while (this.batchRequests.size > 127) {
+      const oldestSettled = [...this.batchRequests].find(([, request]) => request.settled)
+      if (!oldestSettled) return
+      this.batchRequests.delete(oldestSettled[0])
+    }
+  }
+
   removeFromSequence(itemId: unknown): ManualPlaybackResult {
     this.ensureOpen()
     if (typeof itemId !== 'string') return this.failure('remove', new PlayerPlaybackError('INVALID_STATE', 'O item da sequência é inválido.'))
-    if (itemId === this.automaticItemId) {
+    if (itemId === this.automaticItemId || itemId === this.sequenceItemStartingId) {
       return { outcome: 'unavailable', operation: 'remove', reason: 'SEQUENCE_ITEM_STARTING', state: this.getStatus() }
     }
     const index = this.pendingSequence.findIndex(item => item.id === itemId)
     if (index < 0) return { outcome: 'unavailable', operation: 'remove', reason: 'SEQUENCE_ITEM_UNAVAILABLE', state: this.getStatus() }
     this.pendingSequence.splice(index, 1)
     this.sequenceMutationRevision++
-    this.sequenceRevision++
     this.notifyChanged()
     return { outcome: 'accepted', operation: 'remove', state: this.getStatus(), itemId }
   }
 
   reorderSequence(itemIds: readonly unknown[]): ManualPlaybackResult {
     this.ensureOpen()
+    if (this.sequenceItemStartingId) {
+      return { outcome: 'unavailable', operation: 'reorder', reason: 'SEQUENCE_ITEM_STARTING', state: this.getStatus() }
+    }
     const ids = this.pendingSequence.map(item => item.id)
     if (!Array.isArray(itemIds) || itemIds.length !== ids.length ||
         itemIds.some(id => typeof id !== 'string') || new Set(itemIds).size !== ids.length ||
@@ -178,25 +314,24 @@ export class ManualPlaybackService {
     const byId = new Map(this.pendingSequence.map(item => [item.id, item]))
     this.pendingSequence = itemIds.map(id => byId.get(id as string)!)
     this.sequenceMutationRevision++
-    this.sequenceRevision++
     this.notifyChanged()
     return { outcome: 'accepted', operation: 'reorder', state: this.getStatus() }
   }
 
   clearSequence(): ManualPlaybackResult {
     this.ensureOpen()
-    if (this.automaticItemId) {
+    if (this.automaticItemId || this.sequenceItemStartingId) {
       return { outcome: 'unavailable', operation: 'clear', reason: 'SEQUENCE_ITEM_STARTING', state: this.getStatus() }
     }
     this.pendingSequence = []
     this.sequenceMutationRevision++
-    this.sequenceRevision++
     this.notifyChanged()
     return { outcome: 'accepted', operation: 'clear', state: this.getStatus() }
   }
 
   async playByMusicCode(value: unknown, validateBeforeCommit?: () => void, recoveryAttemptId?: string): Promise<ManualPlaybackResult> {
     this.ensureOpen()
+    if (this.currentRemoval) return this.unavailable('play', 'CURRENT_REMOVAL_IN_PROGRESS')
     let code: string
     try { code = normalizeCatalogCodeForVideoMatch(value) }
     catch (error) { return this.failure('play', error) }
@@ -221,6 +356,9 @@ export class ManualPlaybackService {
       const state = this.playback.getState()
       if (state.attemptId && ['loading', 'ready', 'starting', 'playing', 'paused'].includes(state.status)) {
         this.activeAttemptId = state.attemptId
+      } else if (state.status === 'completed') {
+        this.activeAttemptId = state.attemptId
+        this.reconcileNaturalEndAfterCommand(state, true)
       } else if (legacyContext && (state.attemptId !== previousState.attemptId || state.musicCode !== previousState.musicCode)) {
         this.clearSequenceState()
       }
@@ -229,23 +367,37 @@ export class ManualPlaybackService {
     return result
   }
 
-  pause(): Promise<ManualPlaybackResult> { this.ensureOpen(); return this.run('pause', () => this.playback.pause()) }
-  resume(): Promise<ManualPlaybackResult> { this.ensureOpen(); return this.run('resume', () => this.playback.resume()) }
+  pause(): Promise<ManualPlaybackResult> {
+    this.ensureOpen()
+    if (this.currentRemoval) return Promise.resolve(this.unavailable('pause', 'CURRENT_REMOVAL_IN_PROGRESS'))
+    return this.run('pause', () => this.playback.pause())
+  }
+  resume(): Promise<ManualPlaybackResult> {
+    this.ensureOpen()
+    if (this.currentRemoval) return Promise.resolve(this.unavailable('resume', 'CURRENT_REMOVAL_IN_PROGRESS'))
+    return this.run('resume', () => this.playback.resume())
+  }
 
   async restart(): Promise<ManualPlaybackResult> {
     this.ensureOpen()
+    if (this.currentRemoval) return this.unavailable('restart', 'CURRENT_REMOVAL_IN_PROGRESS')
     const revision = ++this.commandRevision
     this.activeAttemptId = undefined
     const result = await this.run('restart', () => this.playback.restart())
     if (revision === this.commandRevision && result.outcome === 'accepted') {
       this.activeAttemptId = result.state.attemptId
       this.reconcileNaturalEndAfterCommand(result.state)
+    } else if (revision === this.commandRevision && this.playback.getState().status === 'completed') {
+      const state = this.playback.getState()
+      this.activeAttemptId = state.attemptId
+      this.reconcileNaturalEndAfterCommand(state, true)
     }
     return result
   }
 
   async stop(): Promise<ManualPlaybackResult> {
     this.ensureOpen()
+    if (this.currentRemoval) return this.unavailable('stop', 'CURRENT_REMOVAL_IN_PROGRESS')
     ++this.commandRevision
     this.activeAttemptId = undefined
     return this.run('stop', () => this.playback.stop())
@@ -257,11 +409,14 @@ export class ManualPlaybackService {
     this.disposed = true
     this.activeAttemptId = undefined
     this.unsubscribePlayback?.()
+    this.batchRequests.clear()
     return this.run('stop', () => this.playback.stop())
   }
 
   next(): Promise<ManualPlaybackResult> {
     this.ensureOpen()
+    if (this.currentRemoval) return Promise.resolve(this.unavailable('next', 'CURRENT_REMOVAL_IN_PROGRESS'))
+    if (this.sequenceItemStartingId) return Promise.resolve(this.unavailable('next', 'SEQUENCE_ITEM_STARTING'))
     if (this.automaticItemId) {
       return Promise.resolve({ outcome: 'unavailable', operation: 'next', reason: 'AUTOMATIC_ADVANCE_IN_PROGRESS', state: this.getStatus() })
     }
@@ -275,6 +430,8 @@ export class ManualPlaybackService {
 
   previous(): Promise<ManualPlaybackResult> {
     this.ensureOpen()
+    if (this.currentRemoval) return Promise.resolve(this.unavailable('previous', 'CURRENT_REMOVAL_IN_PROGRESS'))
+    if (this.sequenceItemStartingId) return Promise.resolve(this.unavailable('previous', 'SEQUENCE_ITEM_STARTING'))
     if (this.automaticItemId) {
       return Promise.resolve({ outcome: 'unavailable', operation: 'previous', reason: 'AUTOMATIC_ADVANCE_IN_PROGRESS', state: this.getStatus() })
     }
@@ -287,11 +444,66 @@ export class ManualPlaybackService {
     return this.playSequenceItem('previous', previous)
   }
 
+  /** Stops and removes only the selected active item; pending items remain stopped in their existing order. */
+  async removeCurrent(itemId: unknown, attemptId: unknown): Promise<ManualPlaybackResult> {
+    this.ensureOpen()
+    if ((itemId !== null && (typeof itemId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(itemId))) ||
+        typeof attemptId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(attemptId)) {
+      return this.unavailable('remove-current', 'INVALID_CURRENT_SELECTION')
+    }
+    const current = this.currentSequenceItem
+    const state = this.playback.getState()
+    if ((current ? current.id !== itemId : itemId !== null) || state.attemptId !== attemptId ||
+        !['loading', 'ready', 'starting', 'playing', 'paused'].includes(state.status)) {
+      return this.unavailable('remove-current', 'STALE_CURRENT_SELECTION')
+    }
+    if (this.currentRemoval) return this.unavailable('remove-current', 'CURRENT_REMOVAL_IN_PROGRESS')
+    this.currentRemoval = { itemId, attemptId }
+    this.notifyChanged()
+    try {
+      const stopped = await this.run('stop', () => this.playback.stop(attemptId))
+      if (stopped.outcome !== 'accepted' || stopped.state.status !== 'stopped' || stopped.state.attemptId !== attemptId ||
+          stopped.state.containmentStatus !== 'stop-acknowledged') {
+        return { ...stopped, operation: 'remove-current' } as ManualPlaybackResult
+      }
+      if (!this.playback.clearStoppedMedia || !await this.playback.clearStoppedMedia(attemptId)) {
+        return this.unavailable('remove-current', 'MEDIA_CLEAR_UNCONFIRMED')
+      }
+      const afterClear = this.playback.getState()
+      const selectionStillCurrent = itemId === null
+        ? this.currentSequenceItem === null
+        : this.currentSequenceItem?.id === itemId
+      if (!selectionStillCurrent || afterClear.status !== 'idle') {
+        return this.unavailable('remove-current', 'STALE_CURRENT_SELECTION')
+      }
+      this.activeAttemptId = undefined
+      if (itemId !== null) this.currentSequenceItem = null
+      this.legacyNavigationContext = false
+      this.sequenceMutationRevision++
+      this.notifyChanged()
+      return { outcome: 'accepted', operation: 'remove-current', state: afterClear, ...(itemId ? { itemId } : {}) }
+    } catch (error) {
+      const result = this.failure('remove-current', error)
+      if (result.outcome === 'failed' && result.reason === 'SUPERSEDED') {
+        return this.unavailable('remove-current', 'STALE_CURRENT_SELECTION')
+      }
+      return result
+    } finally {
+      if (this.currentRemoval?.itemId === itemId && this.currentRemoval.attemptId === attemptId) {
+        this.currentRemoval = undefined
+        this.notifyChanged()
+      }
+    }
+  }
+
   dispose(): void {
     this.disposed = true
     this.activeAttemptId = undefined
     this.automaticItemId = undefined
+    this.sequenceItemStartingId = undefined
+    this.currentRemoval = undefined
     this.unsubscribePlayback?.()
+    this.batchRequests.clear()
     this.pendingSequence = []
     this.previousSequence = []
     this.currentSequenceItem = null
@@ -301,32 +513,55 @@ export class ManualPlaybackService {
 
   private async playSequenceItem(operation: 'next' | 'previous', item: ManualSequenceItem): Promise<ManualPlaybackResult> {
     const commandRevision = this.commandRevision
-    const sequenceRevision = this.sequenceRevision
+    this.sequenceItemStartingId = item.id
     this.activeAttemptId = undefined
-    const result = await this.run(operation, () => this.playback.playImmediately(item.musicCode))
-    if (commandRevision !== this.commandRevision || sequenceRevision !== this.sequenceRevision) {
-      if (commandRevision === this.commandRevision && result.outcome === 'started' && this.playback.getState().attemptId === result.state.attemptId) {
+    try {
+      const result = await this.run(operation, () => this.playback.playImmediately(item.musicCode, () => {
+        if (this.disposed || commandRevision !== this.commandRevision ||
+            this.sequenceItemStartingId !== item.id || !this.isSequenceItemAtExpectedPosition(operation, item)) {
+          throw new PlayerPlaybackError('SUPERSEDED', 'A ordem da sequência mudou antes de iniciar a música.')
+        }
+      }))
+      if (commandRevision !== this.commandRevision || this.disposed ||
+          !this.isSequenceItemAtExpectedPosition(operation, item)) {
+        if (result.outcome === 'started' && this.playback.getState().attemptId === result.state.attemptId) {
+          this.activeAttemptId = result.state.attemptId
+        }
+        this.reconcileLegacyNavigationContext(result.state)
+        return result
+      }
+      if (result.outcome === 'started') {
+        if (operation === 'next') {
+          if (this.pendingSequence[0]?.id === item.id) this.pendingSequence.shift()
+          if (this.currentSequenceItem && this.currentSequenceItem.id !== item.id) this.previousSequence.push(this.currentSequenceItem)
+        } else {
+          if (this.previousSequence.at(-1)?.id === item.id) this.previousSequence.pop()
+          if (this.currentSequenceItem && this.currentSequenceItem.id !== item.id) this.pendingSequence.unshift(this.currentSequenceItem)
+        }
+        this.currentSequenceItem = item
+        this.legacyNavigationContext = false
         this.activeAttemptId = result.state.attemptId
+        this.reconcileNaturalEndAfterCommand(result.state)
+        this.notifyChanged()
+      } else if (result.outcome === 'uncertain') this.activeAttemptId = undefined
+      else {
+        const state = this.playback.getState()
+        this.activeAttemptId = state.attemptId
+        if (state.status === 'completed') this.reconcileNaturalEndAfterCommand(state, true)
       }
-      this.reconcileLegacyNavigationContext(result.state)
       return result
-    }
-    if (result.outcome === 'started') {
-      if (operation === 'next') {
-        if (this.pendingSequence[0]?.id === item.id) this.pendingSequence.shift()
-        if (this.currentSequenceItem && this.currentSequenceItem.id !== item.id) this.previousSequence.push(this.currentSequenceItem)
-      } else {
-        if (this.previousSequence.at(-1)?.id === item.id) this.previousSequence.pop()
-        if (this.currentSequenceItem && this.currentSequenceItem.id !== item.id) this.pendingSequence.unshift(this.currentSequenceItem)
+    } finally {
+      if (this.sequenceItemStartingId === item.id) {
+        this.sequenceItemStartingId = undefined
+        this.notifyChanged()
       }
-      this.currentSequenceItem = item
-      this.legacyNavigationContext = false
-      this.activeAttemptId = result.state.attemptId
-      this.reconcileNaturalEndAfterCommand(result.state)
-      this.notifyChanged()
-    } else if (result.outcome === 'uncertain') this.activeAttemptId = undefined
-    else this.activeAttemptId = this.playback.getState().attemptId
-    return result
+    }
+  }
+
+  private isSequenceItemAtExpectedPosition(operation: 'next' | 'previous', item: ManualSequenceItem): boolean {
+    return operation === 'next'
+      ? this.pendingSequence[0]?.id === item.id
+      : this.previousSequence.at(-1)?.id === item.id
   }
 
   private handlePlaybackEvent(event: PlayerPlaybackEvent): void {
@@ -338,18 +573,29 @@ export class ManualPlaybackService {
       }
       return
     }
-    this.acceptNaturalEnd(event)
+    this.acceptNaturalEnd(event, this.currentRemoval?.attemptId === event.attemptId)
   }
 
-  private acceptNaturalEnd(event: Extract<PlayerPlaybackEvent, { type: 'natural-end-candidate' }>): void {
+  private acceptNaturalEnd(event: Extract<PlayerPlaybackEvent, { type: 'natural-end-candidate' }>, suppressAutoAdvance = false): void {
     if (this.handledNaturalEnds.has(event.attemptId)) return
     const state = this.playback.getState()
     if (state.status !== 'completed' || state.attemptId !== event.attemptId || state.musicCode !== event.musicCode) return
     this.handledNaturalEnds.add(event.attemptId)
     while (this.handledNaturalEnds.size > 128) this.handledNaturalEnds.delete(this.handledNaturalEnds.values().next().value!)
     this.activeAttemptId = undefined
+    if (this.currentSequenceItem) this.previousSequence.push(this.currentSequenceItem)
+    this.currentSequenceItem = null
+    this.legacyNavigationContext = false
+    this.notifyChanged()
     const revision = this.commandRevision
-    if (this.pendingSequence.length === 0) return
+    if (this.pendingSequence.length === 0 || suppressAutoAdvance) {
+      if (this.playback.clearCompletedMedia) {
+        // The playback service publishes a correlated surface-cleanup-failed event if
+        // clearing and bounded host termination both fail; the confirmed EOF stays intact.
+        void this.playback.clearCompletedMedia(event.attemptId).catch(() => undefined)
+      }
+      return
+    }
     const next = this.pendingSequence[0]
     this.automaticItemId = next.id
     const task = this.advanceAfterNaturalEnd(event.attemptId, next, revision)
@@ -385,12 +631,12 @@ export class ManualPlaybackService {
     }
   }
 
-  private reconcileNaturalEndAfterCommand(state: PlayerPlaybackState): void {
+  private reconcileNaturalEndAfterCommand(state: PlayerPlaybackState, suppressAutoAdvance = false): void {
     if (state.status !== 'completed' || !state.attemptId || !this.options.autoAdvanceOnNaturalEnd) return
     const candidate = this.earlyNaturalEnds.get(state.attemptId)
     if (!candidate) return
     this.earlyNaturalEnds.delete(state.attemptId)
-    this.acceptNaturalEnd(candidate)
+    this.acceptNaturalEnd(candidate, suppressAutoAdvance)
   }
 
   private reconcileLegacyNavigationContext(state: PlayerPlaybackState = this.playback.getState()): void {
@@ -431,6 +677,10 @@ export class ManualPlaybackService {
       return { outcome: 'unavailable', operation, reason, state }
     }
     return { outcome: 'failed', operation, reason, state }
+  }
+
+  private unavailable(operation: ManualPlaybackResult['operation'], reason: string): ManualPlaybackResult {
+    return { outcome: 'unavailable', operation, reason, state: this.getStatus() }
   }
 
   private ensureOpen(): void {

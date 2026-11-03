@@ -46,7 +46,11 @@ function writeMode(profile, mode) {
 function launch(profile) {
   return electron.launch({
     executablePath: electronPath,
-    args: [projectRoot, `--user-data-dir=${profile.userData}`],
+    args: [
+      ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
+      projectRoot,
+      `--user-data-dir=${profile.userData}`
+    ],
     env: profile.env,
     timeout: 30000
   })
@@ -119,27 +123,31 @@ function readOperationalState(databasePath) {
   } finally { database.close() }
 }
 
-async function forceClose(app, terminateModalProcess = false) {
+async function forceClose(app) {
   if (!app) return
-  if (terminateModalProcess) {
-    // The fatal native error dialog is synchronous and can block Main-process
-    // evaluation. This is safe only for the isolated invalid-config profile.
-    try { app.process().kill('SIGTERM') } catch {}
-    await app.close().catch(() => {})
-    return
-  }
-  try {
-    const pages = app.context().pages()
-    if (pages.length > 0) {
-      await pages[0].waitForFunction(() => !!window.__kqueue)
-      await closeLeavingSessionOpen(app)
-      return
+  // Player shutdown spans multiple asynchronous Electron quit passes. In test
+  // teardown, terminate this isolated process directly instead of asking
+  // Playwright to evaluate app.quit while those passes destroy its inspector.
+  let child
+  try { child = app.process() } catch { return }
+  if (!child) return
+  if (child.exitCode === null && child.signalCode === null) {
+    const exited = new Promise(resolve => child.once('exit', resolve))
+    if (process.platform === 'win32') {
+      const terminated = spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
+        encoding: 'utf8',
+        shell: false
+      })
+      if (terminated.status !== 0 && child.exitCode === null && child.signalCode === null) {
+        await new Promise(resolve => setImmediate(resolve))
+        if (child.exitCode === null && child.signalCode === null) {
+          throw new Error(`Could not terminate isolated Electron process tree ${child.pid}: ${terminated.stderr || terminated.stdout || terminated.status}`)
+        }
+      }
+    } else {
+      try { child.kill('SIGKILL') } catch {}
     }
-    await app.close()
-    return
-  } catch {
-    try { app.process().kill('SIGTERM') } catch {}
-    await app.close().catch(() => {})
+    await exited.catch(() => {})
   }
 }
 
@@ -149,8 +157,21 @@ async function closeLeavingSessionOpen(app) {
   })
   const page = await app.firstWindow()
   const closed = page.waitForEvent('close', { timeout: 15000 })
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())
+  await app.evaluate(({ BrowserWindow, app: electronApp }) => {
+    const window = BrowserWindow.getAllWindows()[0]
+    if (window && !window.isDestroyed()) {
+      electronApp.__kqueueOriginalQuit = electronApp.quit
+      electronApp.quit = () => undefined
+    }
+  })
+  await page.close()
   await closed
+  await app.evaluate(({ app: electronApp }) => {
+    if (electronApp.__kqueueOriginalQuit) {
+      electronApp.quit = electronApp.__kqueueOriginalQuit
+      delete electronApp.__kqueueOriginalQuit
+    }
+  })
   await app.close()
 }
 
@@ -194,12 +215,108 @@ async function runControllerDefaultAndRecovery() {
   } finally { await forceClose(app) }
 }
 
+async function runControllerSettingsModeSwitchPreservesSession() {
+  const profile = makeProfile('controller-settings-mode-switch')
+  const screenshotRoot = process.env.KQ_PLAYER_SCREENSHOT_DIR
+    ? path.resolve(process.env.KQ_PLAYER_SCREENSHOT_DIR) : profile.root
+  fs.mkdirSync(screenshotRoot, { recursive: true })
+  fs.mkdirSync(profile.userData, { recursive: true })
+  const initialized = createKaraokeDatabase(profile.userData)
+  initialized.close()
+  let app
+  try {
+    app = await launch(profile)
+    const ready = await waitForLogRecord(profile, 'APP_READY')
+    assert.equal(ready.details.mode, 'controller')
+    const page = await firstPage(app)
+    await startSession(page)
+    await addEntry(page, 'Mode switch keeps session', '73')
+
+    const databasePath = path.join(profile.userData, 'karaoke.sqlite')
+    const beforeState = readOperationalState(databasePath)
+    assert.equal(beforeState.sessions.length, 1, 'The mode-switch scenario must retain one active Controller session.')
+    assert.equal(beforeState.entries.length, 1, 'The mode-switch scenario must retain a queued presentation.')
+
+    await page.locator('#nav-settings').click()
+    await page.locator('#settings-page').waitFor({ state: 'visible' })
+    assert.match(await page.locator('.settings-mode-current').textContent(), /Controlador/,
+      'Controller settings must identify Controlador as the active mode.')
+    assert.equal(await page.locator('#settings-mode-player').isDisabled(), false,
+      'Player must be selectable from Controller settings.')
+    assert.equal(await page.locator('#settings-mode-combined').isDisabled(), true,
+      'Combined must remain unavailable until its integration phase is complete.')
+    await page.locator('#toast').waitFor({ state: 'hidden', timeout: 5000 })
+    await page.screenshot({ path: path.join(screenshotRoot, 'controller-settings-mode.png') })
+
+    await page.locator('#settings-mode-player').click()
+    assert.equal(await page.locator('#settings-mode-change').isDisabled(), false,
+      'Selecting Player must enable the explicit mode-change action.')
+    await app.evaluate(({ app: electronApp }) => {
+      electronApp.relaunch = () => undefined
+    })
+
+    const child = app.process()
+    const processExit = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })))
+    const scheduledChange = waitForLogRecord(profile, 'OPERATING_MODE_CHANGE_SCHEDULED')
+    await page.locator('#settings-mode-change').click()
+    let changeRecord
+    try {
+      changeRecord = await scheduledChange
+    } catch (error) {
+      const modeStatus = await page.locator('#settings-mode-status').textContent().catch(() => '')
+      const ipcFailure = readLogRecords(profile).filter(record => record.event === 'RENDERER_IPC_FAILED' &&
+        String(record.message ?? '').includes('settings:operating-mode:change')).at(-1)?.message ?? 'none'
+      throw new Error(`${error.message}; Controller mode UI status=${modeStatus}; IPC diagnostic=${ipcFailure}`)
+    }
+    assert.equal(changeRecord.details.from, 'controller')
+    assert.equal(changeRecord.details.to, 'player')
+    const exit = await processExit
+    assert.equal(exit.code, 0, `The controlled mode switch must exit cleanly; exit=${JSON.stringify(exit)}`)
+    await waitForLogRecord(profile, 'OPERATING_MODE_CHANGE_PRESERVED_SESSION')
+    await app.close()
+    app = undefined
+
+    const modePath = path.join(profile.userData, 'operating-mode.json')
+    assert.deepEqual(JSON.parse(fs.readFileSync(modePath, 'utf8')),
+      { version: 1, mode: 'player' }, 'The confirmed Controller-to-Player change must persist the selected mode.')
+    assert.deepEqual(readOperationalState(databasePath), beforeState,
+      'Switching modes must preserve the operational SQLite session, queue, and history state.')
+
+    app = await launch(profile)
+    const playerReady = await waitForLogRecord(profile, 'APP_READY', 15000, ready.runId)
+    assert.equal(playerReady.details.mode, 'player', 'The same isolated profile must restart in Player mode.')
+    assert.equal(playerReady.details.operationalDatabaseInitialized, false,
+      'Player startup must preserve but not open the Controller operational database.')
+    assert.deepEqual(JSON.parse(fs.readFileSync(modePath, 'utf8')),
+      { version: 1, mode: 'player' }, 'Player startup must not overwrite the persisted mode.')
+    assert.deepEqual(readOperationalState(databasePath), beforeState,
+      'Restarting in Player mode must not mutate the preserved Controller session or queue.')
+  } finally { await forceClose(app) }
+}
+
 async function runPlayerWithoutControllerState() {
   const profile = makeProfile('player-only')
   writeMode(profile, 'player')
   let app
   try {
     app = await launch(profile)
+    const playerStartupEvents = await app.evaluate(({ app: electronApp, webContents }) => {
+      const events = { renderProcessGone: [], childProcessGone: [], consoleErrors: [], destroyedContents: [] }
+      const observeContents = contents => {
+        contents.on('render-process-gone', (_event, details) => events.renderProcessGone.push({
+          id: contents.id, url: contents.getURL(), ...details
+        }))
+        contents.on('destroyed', () => events.destroyedContents.push({ id: contents.id, url: contents.getURL() }))
+        contents.on('console-message', (_event, details) => {
+          if (details.level >= 2) events.consoleErrors.push({ id: contents.id, url: contents.getURL(), ...details })
+        })
+      }
+      for (const contents of webContents.getAllWebContents()) observeContents(contents)
+      electronApp.on('web-contents-created', (_event, contents) => observeContents(contents))
+      electronApp.on('child-process-gone', (_event, details) => events.childProcessGone.push(details))
+      electronApp.__playerStartupEvents = events
+      return events
+    })
     const ready = await waitForLogRecord(profile, 'APP_READY')
     assert.equal(ready.details.mode, 'player')
     assert.equal(ready.details.controllerServicesInitialized, false)
@@ -218,14 +335,80 @@ async function runPlayerWithoutControllerState() {
       'Player-only startup must not show the independent video window before an explicit operator action')
     assert.equal(playerWindows.length, 1, 'A clean Player-only launch must show only its control window.')
     const playerPage = await app.firstWindow()
-    await playerPage.waitForFunction(() => !!window.karaokePlayer?.getSnapshot)
-    await playerPage.waitForFunction(async () => {
-      const state = await window.karaokePlayer.getSnapshot()
-      return state.videoWindow.location === 'inline' && state.videoWindow.ready
+    const playerRendererMessages = []
+    const playerWindowSnapshots = []
+    playerPage.on('pageerror', error => playerRendererMessages.push({ type: 'pageerror', message: error.message }))
+    playerPage.on('console', message => {
+      if (message.type() === 'error') playerRendererMessages.push({ type: 'console', message: message.text() })
     })
+    await playerPage.waitForFunction(() => !!window.karaokePlayer?.getSnapshot)
+    await playerPage.evaluate(async () => {
+      window.__playerWindowSnapshots = []
+      const observe = state => window.__playerWindowSnapshots.push({
+          open: state.videoWindow.open,
+          ready: state.videoWindow.ready,
+          location: state.videoWindow.location,
+          layoutRevision: state.videoWindow.inlineLayoutRevision,
+          playbackStatus: state.playback.status
+        })
+      window.__stopPlayerSnapshotTracking = window.karaokePlayer.onSnapshot(observe)
+      observe(await window.karaokePlayer.getSnapshot())
+    })
+    await playerPage.waitForFunction(() => window.__playerWindowSnapshots.some(state =>
+      state.location === 'inline' && state.ready))
+    const observedReadySnapshot = await playerPage.evaluate(() =>
+      window.__playerWindowSnapshots.find(state => state.location === 'inline' && state.ready))
+    const observedWindowSnapshots = await playerPage.evaluate(() => window.__playerWindowSnapshots)
+    await playerPage.evaluate(() => window.__stopPlayerSnapshotTracking?.())
     const initialPlayerSnapshot = await playerPage.evaluate(() => window.karaokePlayer.getSnapshot())
-    assert.equal(initialPlayerSnapshot.videoWindow.open, true,
-      'Player-only startup must initialize the embedded playback surface.')
+    if (!initialPlayerSnapshot.videoWindow.open) {
+      const rendererDiagnostics = await playerPage.evaluate(() => ({
+        activeView: document.body.dataset.playerView,
+        toast: document.querySelector('#player-toast')?.textContent,
+        videoViewHidden: document.querySelector('#player-video-view')?.hidden,
+        videoStageBounds: document.querySelector('#player-inline-stage')?.getBoundingClientRect().toJSON(),
+        snapshots: window.__playerWindowSnapshots
+      }))
+      const diagnostics = await app.evaluate(({ app: electronApp, BrowserWindow, webContents }, details) => ({
+        platform: process.platform,
+        versions: process.versions,
+        observedReadySnapshot: details.readySnapshot,
+        currentSnapshot: details.currentSnapshot,
+        playerRendererMessages: details.rendererMessages,
+        rendererDiagnostics: details.rendererDiagnostics,
+        playerStartupEvents: electronApp.__playerStartupEvents,
+        windows: BrowserWindow.getAllWindows().map(window => ({
+          id: window.id,
+          title: window.getTitle(),
+          url: window.webContents.getURL(),
+          destroyed: window.isDestroyed(),
+          crashed: window.webContents.isCrashed(),
+          children: window.contentView.children.map(child => ({
+            url: child.webContents?.getURL(),
+            destroyed: child.webContents?.isDestroyed(),
+            crashed: child.webContents?.isCrashed(),
+            visible: child.getVisible(),
+            bounds: child.getBounds()
+          }))
+        })),
+        allWebContents: webContents.getAllWebContents().map(contents => ({
+          id: contents.id,
+          type: contents.getType(),
+          url: contents.getURL(),
+          destroyed: contents.isDestroyed(),
+          crashed: contents.isCrashed(),
+          loading: contents.isLoadingMainFrame()
+        }))
+      }), {
+        readySnapshot: observedReadySnapshot,
+        currentSnapshot: initialPlayerSnapshot,
+        rendererMessages: playerRendererMessages,
+        rendererDiagnostics
+      })
+      await playerPage.screenshot({ path: path.join(profile.root, 'player-startup-failure.png') }).catch(() => undefined)
+      assert.equal(initialPlayerSnapshot.videoWindow.open, true,
+        `Player-only startup must initialize the embedded playback surface. Ready snapshot: ${JSON.stringify(observedReadySnapshot)}; Current snapshot: ${JSON.stringify(initialPlayerSnapshot)}; Renderer messages: ${JSON.stringify(playerRendererMessages)}; Diagnostics: ${JSON.stringify(diagnostics)}`)
+    }
     assert.equal(initialPlayerSnapshot.videoWindow.location, 'inline',
       'Player-only startup must keep playback embedded instead of opening a detached window.')
     assert.equal(initialPlayerSnapshot.playback.status, 'idle', 'Player startup must not start or resume a song.')
@@ -335,18 +518,29 @@ async function runInvalidConfigurationPreservesDatabase() {
 }
 
 async function run() {
+  let testError
   try {
     await runControllerDefaultAndRecovery()
     process.stdout.write('OPERATING_MODE PASS Controller default and SQLite session recovery\n')
+    await runControllerSettingsModeSwitchPreservesSession()
+    process.stdout.write('OPERATING_MODE PASS Controller settings switch to Player preserves the active session and queue\n')
     await runPlayerWithoutControllerState()
     process.stdout.write('OPERATING_MODE PASS Player-only embedded startup without Controller persistence\n')
     await runCombinedOneControllerDatabaseAndRestart()
     process.stdout.write('OPERATING_MODE PASS Combined lifecycle, single Controller database and restart persistence\n')
     await runInvalidConfigurationPreservesDatabase()
     process.stdout.write('OPERATING_MODE PASS invalid configuration preserves existing SQLite data\n')
+  } catch (error) {
+    testError = error
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true })
+    try {
+      fs.rmSync(tempRoot, { recursive: true, force: true })
+    } catch (cleanupError) {
+      if (!testError) testError = cleanupError
+      else testError.message += `; isolated test profile cleanup also failed: ${cleanupError.message}`
+    }
   }
+  if (testError) throw testError
 }
 
 run().catch(error => {

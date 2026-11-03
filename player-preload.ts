@@ -28,6 +28,14 @@ const api = Object.freeze({
   async exitFullScreen(): Promise<boolean> {
     return await ipcRenderer.invoke('player-video:set-fullscreen', 'exit') as boolean
   },
+  async dismissWindowTip(permanentlyDismissed: boolean): Promise<boolean> {
+    return await ipcRenderer.invoke('player-video:window-tip-dismissed', permanentlyDismissed) as boolean
+  },
+  onWindowTipState(listener: (visible: boolean) => void): void {
+    ipcRenderer.on('player-playback:window-tip', (_event, visible: unknown) => {
+      if (typeof visible === 'boolean') listener(visible)
+    })
+  },
   onDisplayStatus(listener: (status: 'idle' | 'loading' | 'playing' | 'paused' | 'failed' | 'uncertain') => void): void {
     ipcRenderer.on('player-playback:display-status', (_event, status: unknown) => {
       if (['idle', 'loading', 'playing', 'paused', 'failed', 'uncertain'].includes(String(status))) {
@@ -38,6 +46,11 @@ const api = Object.freeze({
   onDisplayLocation(listener: (location: 'inline' | 'window') => void): void {
     ipcRenderer.on('player-playback:display-location', (_event, location: unknown) => {
       if (location === 'inline' || location === 'window') listener(location)
+    })
+  },
+  onFullscreenChange(listener: (fullScreen: boolean) => void): void {
+    ipcRenderer.on('player-playback:fullscreen', (_event, fullScreen: unknown) => {
+      if (typeof fullScreen === 'boolean') listener(fullScreen)
     })
   }
 })

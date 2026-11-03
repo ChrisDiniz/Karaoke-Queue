@@ -14,6 +14,7 @@ const {
   normalizePath,
   generatedBuildPaths,
   prepareFreshBuild,
+  powershellCancellation,
   powershellLauncher,
   requiresWindowFocus,
   selectWindowsTestSuites,
@@ -69,6 +70,46 @@ test('focused playback recovery harness does not require unrelated window-focus 
   assert.equal(requiresWindowFocus('--player-control'), false)
   assert.equal(requiresWindowFocus('--playback-chromium-final'), false)
   assert.equal(requiresWindowFocus(null), true)
+})
+
+test('runner cancellation scopes cleanup to the owned run and recovers orphan Electron profiles safely', () => {
+  const runId = '1d1c3a83-3396-46b6-8bab-10acdaaeb462'
+  const cancellation = powershellCancellation(runId)
+  const recovery = powershellCancellation(runId, true)
+
+  assert.match(cancellation, /\$lockInfo = \$info/,
+    'the runner retains the lock identity even when its worker has already exited')
+  assert.match(cancellation, /\$report\.profileName -ne \$expectedProfileName/,
+    'temporary profile cleanup is bound to the report and runId')
+  assert.match(cancellation, /\$process\.Name -eq "electron\.exe"/,
+    'orphan Electron processes are found by executable and isolated profile')
+  assert.match(cancellation, /\$process\.CommandLine\.IndexOf\(\$profilePath/,
+    'process termination is limited to the exact temporary profile')
+  assert.match(cancellation, /Add-Member -NotePropertyName buildRecovery/,
+    'the cancellation report supports missing recovery fields')
+  assert.match(recovery, /\$recoveryOnly = \$true/,
+    'resume recovery is an explicit runner operation')
+  assert.match(recovery, /CANCELLED_RECOVERY_REQUIRED/,
+    'resume recovery accepts a prior recovery-required report')
+  assert.match(recovery, /\$validReportStatuses = @\("RUNNING"\)/,
+    'ordinary cancellation starts from a running report')
+  assert.match(recovery, /\$validReportStatuses \+= "CANCELLED_RECOVERY_REQUIRED"/,
+    'only explicit recovery accepts a prior recovery-required report')
+  assert.match(recovery, /matching worker is still active/,
+    'resume recovery refuses to interfere with a live worker')
+  assert.match(recovery, /\$report\.stage -eq "TEST"/,
+    'an unrecorded profile is rejected after the test stage could have created it')
+  assert.match(recovery, /unrecorded test profile exists/,
+    'an early-stage cancellation preserves an unexpected unrecorded profile')
+  assert.match(cancellation, /ParentProcessId/,
+    'orphan Electron descendants are included in targeted process cleanup')
+  assert.match(cancellation, /CreationDate/,
+    'cleanup verifies original process identities rather than reused PIDs')
+  assert.match(cancellation, /taskkill\.exe \/PID .*\/T \/F/,
+    'cleanup terminates the confirmed isolated Electron tree')
+  assert.doesNotMatch(cancellation, /taskkill\.exe \/IM electron\.exe/i,
+    'the runner never kills unrelated Electron processes by image name')
+  assert.throws(() => powershellCancellation('invalid;taskkill'), /runId inválido/)
 })
 
 test('focused Windows Player recovery mode runs recovery unit coverage before real Electron recovery', () => {

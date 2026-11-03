@@ -1135,15 +1135,21 @@ function powershellLauncher(stagePath, runId, playbackEvaluation = false, playba
   ].join('\n')
 }
 
-function powershellCancellation(runId) {
+function powershellCancellation(runId, recoveryOnly = false) {
+  if (typeof runId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
+    fail('runId inválido para recuperação de cancelamento.')
+  }
+  if (typeof recoveryOnly !== 'boolean') fail('Modo de recuperação do runner inválido.')
   return [
     "$ErrorActionPreference = 'Stop'",
     "$runId = '" + runId + "'",
+    '$recoveryOnly = $' + String(recoveryOnly).toLowerCase(),
     '$checkout = $env:KARAOKE_QUEUE_WIN_CHECKOUT',
     "if ([string]::IsNullOrWhiteSpace($checkout)) { $checkout = Join-Path $env:USERPROFILE 'source\\karaoke-queue-win' }",
     '$checkout = [IO.Path]::GetFullPath($checkout)',
     '$gitDir = Join-Path $checkout ".git"',
     '$lock = Join-Path $gitDir "' + LOCK + '"',
+    '$reportPath = Join-Path $gitDir "' + REPORT + '"',
     '$deadline = (Get-Date).AddSeconds(5)',
     '$worker = $null',
     '$lockInfo = $null',
@@ -1158,8 +1164,9 @@ function powershellCancellation(runId) {
     '      try {',
     '        $info = Get-Content -Raw -LiteralPath $lock | ConvertFrom-Json',
     '        if ($info.runId -eq $runId) {',
+    '          $lockInfo = $info',
     '          $candidate = Get-CimInstance Win32_Process -Filter ("ProcessId = " + [int]$info.pid) -ErrorAction Stop',
-    '          if ($candidate -and $candidate.Name -eq "node.exe" -and $candidate.CommandLine -and $candidate.CommandLine.Contains($runId) -and $candidate.CommandLine.Contains("--windows-worker") -and $candidate.CommandLine.Contains("run-windows-native-tests.cjs")) { $worker = $candidate; $lockInfo = $info }',
+    '          if ($candidate -and $candidate.Name -eq "node.exe" -and $candidate.CommandLine -and $candidate.CommandLine.Contains($runId) -and $candidate.CommandLine.Contains("--windows-worker") -and $candidate.CommandLine.Contains("run-windows-native-tests.cjs")) { $worker = $candidate }',
     '        }',
     '      } catch { }',
     '    }',
@@ -1168,38 +1175,76 @@ function powershellCancellation(runId) {
     '    }',
     '    if (-not $worker) { Start-Sleep -Milliseconds 100 }',
     '  }',
-    '  if (-not $worker) { Write-Output "CANCEL NOT VERIFIED: worker runId not found; process state is unknown."; exit 2 }',
-    '  $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
-    '  $treeIds = New-Object \'System.Collections.Generic.HashSet[int]\'',
-    '  [void]$treeIds.Add([int]$worker.ProcessId)',
-    '  $changed = $true',
-    '  while ($changed) {',
-    '    $changed = $false',
-    '    foreach ($process in $processes) { if ($treeIds.Contains([int]$process.ParentProcessId) -and $treeIds.Add([int]$process.ProcessId)) { $changed = $true } }',
-    '  }',
-    '  $original = @{}',
-    '  foreach ($process in $processes) { if ($treeIds.Contains([int]$process.ProcessId)) { $original[[int]$process.ProcessId] = [string]$process.CreationDate } }',
-    '  Write-Output ("CANCEL TARGETED pid=" + $worker.ProcessId + " runId=" + $runId + " tree=" + $treeIds.Count)',
-    '  & taskkill.exe /PID ([int]$worker.ProcessId) /T /F | Out-Null',
-    '  if ($LASTEXITCODE -ne 0) { Write-Output "CANCEL NOT VERIFIED: taskkill did not confirm termination."; exit 4 }',
-    '  $stopDeadline = (Get-Date).AddSeconds(8)',
-    '  do {',
-    '    $current = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
-    '    $liveIds = New-Object \'System.Collections.Generic.HashSet[int]\'',
-    '    foreach ($process in $current) { if ($original.ContainsKey([int]$process.ProcessId) -and [string]$process.CreationDate -eq $original[[int]$process.ProcessId]) { [void]$liveIds.Add([int]$process.ProcessId) } }',
+    '  if (-not $lockInfo) { Write-Output "CANCEL NOT VERIFIED: owned run lock was not found."; exit 2 }',
+    '  if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { Write-Output "CANCEL NOT VERIFIED: owned report is missing."; exit 8 }',
+    '  $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json',
+    '  $validReportStatuses = @("RUNNING")',
+    '  if ($recoveryOnly) { $validReportStatuses += "CANCELLED_RECOVERY_REQUIRED" }',
+    '  if ($report.owner -ne "' + REPORT_OWNER + '" -or $report.runId -ne $runId -or $report.status -notin $validReportStatuses) { Write-Output "CANCEL NOT VERIFIED: report owner/runId/status mismatch."; exit 8 }',
+    '  if ($recoveryOnly -and $worker) { Write-Output "CANCEL NOT VERIFIED: the matching worker is still active; use the normal runner cancellation path."; exit 3 }',
+    '  if ($worker) {',
+    '    $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
+    '    $treeIds = New-Object \'System.Collections.Generic.HashSet[int]\'',
+    '    [void]$treeIds.Add([int]$worker.ProcessId)',
     '    $changed = $true',
     '    while ($changed) {',
     '      $changed = $false',
-    '      foreach ($process in $current) { if ($liveIds.Contains([int]$process.ParentProcessId) -and $liveIds.Add([int]$process.ProcessId)) { $changed = $true } }',
+    '      foreach ($process in $processes) { if ($treeIds.Contains([int]$process.ParentProcessId) -and $treeIds.Add([int]$process.ProcessId)) { $changed = $true } }',
     '    }',
-    '    $live = @($current | Where-Object { $liveIds.Contains([int]$_.ProcessId) })',
-    '    if ($live.Count -and (Get-Date) -lt $stopDeadline) { Start-Sleep -Milliseconds 100 }',
-    '  } while ($live.Count -and (Get-Date) -lt $stopDeadline)',
-    '  if ($live.Count) { Write-Output ("CANCEL NOT VERIFIED: process IDs still alive=" + (($live | ForEach-Object { $_.ProcessId }) -join ",")); exit 6 }',
-    '  $reportPath = Join-Path $gitDir "' + REPORT + '"',
-    '  if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { Write-Output "CANCEL NOT VERIFIED: owned report is missing."; exit 8 }',
-    '  $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json',
-    '  if ($report.owner -ne "' + REPORT_OWNER + '" -or $report.runId -ne $runId) { Write-Output "CANCEL NOT VERIFIED: report owner/runId mismatch."; exit 8 }',
+    '    $original = @{}',
+    '    foreach ($process in $processes) { if ($treeIds.Contains([int]$process.ProcessId)) { $original[[int]$process.ProcessId] = [string]$process.CreationDate } }',
+    '    Write-Output ("CANCEL TARGETED WORKER pid=" + $worker.ProcessId + " runId=" + $runId + " tree=" + $treeIds.Count)',
+    '    & taskkill.exe /PID ([int]$worker.ProcessId) /T /F | Out-Null',
+    '    $stopDeadline = (Get-Date).AddSeconds(8)',
+    '    do {',
+    '      $current = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
+    '      $liveIds = New-Object \'System.Collections.Generic.HashSet[int]\'',
+    '      foreach ($process in $current) { if ($original.ContainsKey([int]$process.ProcessId) -and [string]$process.CreationDate -eq $original[[int]$process.ProcessId]) { [void]$liveIds.Add([int]$process.ProcessId) } }',
+    '      $changed = $true',
+    '      while ($changed) {',
+    '        $changed = $false',
+    '        foreach ($process in $current) { if ($liveIds.Contains([int]$process.ParentProcessId) -and $liveIds.Add([int]$process.ProcessId)) { $changed = $true } }',
+    '      }',
+    '      $live = @($current | Where-Object { $liveIds.Contains([int]$_.ProcessId) })',
+    '      if ($live.Count -and (Get-Date) -lt $stopDeadline) { Start-Sleep -Milliseconds 100 }',
+    '    } while ($live.Count -and (Get-Date) -lt $stopDeadline)',
+    '    if ($live.Count) { Write-Output ("CANCEL NOT VERIFIED: worker process IDs still alive=" + (($live | ForEach-Object { $_.ProcessId }) -join ",")); exit 6 }',
+    '  } elseif (-not $recoveryOnly) { Write-Output "CANCEL RESUMING: matching worker already exited; validating its isolated profile and lock." }',
+    '  $expectedProfileName = "karaoke-queue-windows-e2e-" + $runId',
+    '  if ($report.profileName -and [string]$report.profileName -ne $expectedProfileName) { Write-Output "CANCEL NOT VERIFIED: profile name does not match the runId."; exit 8 }',
+    '  if (-not $report.profileName -and [string]$report.stage -eq "TEST") { Write-Output "CANCEL NOT VERIFIED: TEST started without a recorded temporary profile identity."; exit 8 }',
+    '  $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)',
+    '  $profilePath = [IO.Path]::GetFullPath((Join-Path $tempRoot $expectedProfileName))',
+    '  if (-not $profilePath.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Profile path escaped the Windows temp directory." }',
+    '  $electronPath = [IO.Path]::GetFullPath((Join-Path $checkout "node_modules\\electron\\dist\\electron.exe"))',
+    '  $matchesProfile = { param($process) $process.Name -eq "electron.exe" -and $process.CommandLine -and $process.CommandLine.IndexOf($profilePath, [StringComparison]::OrdinalIgnoreCase) -ge 0 }',
+    '  if (-not $report.profileName -and (Test-Path -LiteralPath $profilePath)) { throw "An unrecorded test profile exists; preserving it for manual inspection." }',
+    '  $allProfileCheckProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
+    '  $profileProcesses = @($allProfileCheckProcesses | Where-Object { & $matchesProfile $_ })',
+    '  foreach ($process in $profileProcesses) { if ($process.CommandLine.IndexOf($electronPath, [StringComparison]::OrdinalIgnoreCase) -lt 0) { throw "A process referenced the isolated profile but did not match the expected Electron binary." } }',
+    '  if ($profileProcesses.Count) {',
+    '    Write-Output ("CANCEL TARGETED ELECTRON profile=" + $expectedProfileName + " processes=" + $profileProcesses.Count)',
+    '    $electronTreeIds = New-Object \'System.Collections.Generic.HashSet[int]\'',
+    '    foreach ($process in $profileProcesses) { [void]$electronTreeIds.Add([int]$process.ProcessId) }',
+    '    $electronTreeChanged = $true',
+    '    while ($electronTreeChanged) {',
+    '      $electronTreeChanged = $false',
+    '      foreach ($process in $allProfileCheckProcesses) { if ($electronTreeIds.Contains([int]$process.ParentProcessId) -and $electronTreeIds.Add([int]$process.ProcessId)) { $electronTreeChanged = $true } }',
+    '    }',
+    '    $electronTreeOriginal = @{}',
+    '    foreach ($process in $allProfileCheckProcesses) { if ($electronTreeIds.Contains([int]$process.ProcessId)) { $electronTreeOriginal[[int]$process.ProcessId] = [string]$process.CreationDate } }',
+    '    foreach ($process in $profileProcesses | Where-Object { $_.CommandLine -notmatch "--type=" }) { & taskkill.exe /PID ([int]$process.ProcessId) /T /F | Out-Null }',
+    '    $electronStopDeadline = (Get-Date).AddSeconds(8)',
+    '    do {',
+    '      $currentProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
+    '      $profileProcesses = @($currentProcesses | Where-Object { & $matchesProfile $_ })',
+    '      $liveTree = @($currentProcesses | Where-Object { $electronTreeOriginal.ContainsKey([int]$_.ProcessId) -and [string]$_.CreationDate -eq $electronTreeOriginal[[int]$_.ProcessId] })',
+    '      foreach ($process in $profileProcesses) { & taskkill.exe /PID ([int]$process.ProcessId) /T /F | Out-Null }',
+    '      foreach ($process in $liveTree) { & taskkill.exe /PID ([int]$process.ProcessId) /F | Out-Null }',
+    '      if (($profileProcesses.Count -or $liveTree.Count) -and (Get-Date) -lt $electronStopDeadline) { Start-Sleep -Milliseconds 100 }',
+    '    } while (($profileProcesses.Count -or $liveTree.Count) -and (Get-Date) -lt $electronStopDeadline)',
+    '    if ($profileProcesses.Count -or $liveTree.Count) { Write-Output ("CANCEL NOT VERIFIED: isolated Electron process tree remains; PIDs=" + ((@($profileProcesses) + @($liveTree) | ForEach-Object { $_.ProcessId } | Sort-Object -Unique) -join ",")); exit 6 }',
+    '  }',
     '  $buildPath = Join-Path $checkout "build"',
     '  $backupPath = Join-Path $gitDir ("karaoke-queue-build-backup-" + $runId)',
     '  $cancelledBuildPath = Join-Path $gitDir ("karaoke-queue-build-cancelled-" + $runId)',
@@ -1207,15 +1252,10 @@ function powershellCancellation(runId) {
     '    if (Test-Path -LiteralPath $cancelledBuildPath) { Write-Output "CANCEL NOT VERIFIED: cancellation build path already exists."; exit 9 }',
     '    if (Test-Path -LiteralPath $buildPath) { Move-Item -LiteralPath $buildPath -Destination $cancelledBuildPath }',
     '    Move-Item -LiteralPath $backupPath -Destination $buildPath',
-    '    $report.buildRecovery = "Original build restored; interrupted build preserved under .git/karaoke-queue-build-cancelled-<runId>."',
-    '  } else { $report.buildRecovery = "No pre-run build backup required restoration." }',
+    '    $report | Add-Member -NotePropertyName buildRecovery -NotePropertyValue "Original build restored; interrupted build preserved under .git/karaoke-queue-build-cancelled-<runId>." -Force',
+    '  } else { $report | Add-Member -NotePropertyName buildRecovery -NotePropertyValue "No pre-run build backup required restoration." -Force }',
     '  $profileClean = $true',
     '  if ($report.profileName) {',
-    '    $expectedProfileName = "karaoke-queue-windows-e2e-" + $runId',
-    '    if ([string]$report.profileName -ne $expectedProfileName) { throw "Profile name does not match the runId." }',
-    '    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)',
-    '    $profilePath = [IO.Path]::GetFullPath((Join-Path $tempRoot $expectedProfileName))',
-    '    if (-not $profilePath.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Profile path escaped the Windows temp directory." }',
     '    if (Test-Path -LiteralPath $profilePath) {',
     '      $profileItem = Get-Item -LiteralPath $profilePath -Force',
     '      if (-not $profileItem.PSIsContainer -or ($profileItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Profile root is not a plain directory." }',
@@ -1234,12 +1274,14 @@ function powershellCancellation(runId) {
     '    $ownedLock = ($currentLock.runId -eq $lockInfo.runId -and [int]$currentLock.pid -eq [int]$lockInfo.pid -and $currentLock.token -eq $lockInfo.token)',
     '  }',
     '  $canRelease = $ownedLock -and -not $syncRecoveryRequired -and $profileClean',
-    '  $report.status = if ($canRelease) { "CANCELLED" } else { "CANCELLED_RECOVERY_REQUIRED" }',
-    '  $report.reason = if ($syncRecoveryRequired) { "Interrupted sync requires checkout recovery." } elseif (-not $profileClean) { "Temporary profile requires review." } elseif (-not $ownedLock) { "Runner lock ownership could not be confirmed." } else { "Runner process tree stopped and owned temporary data cleaned." }',
-    '  $report.cancelledAt = (Get-Date).ToUniversalTime().ToString("o")',
-    '  $report.lockRelease = if ($canRelease) { "attempted after PID/runId/token and process-tree verification" } else { "retained for manual recovery" }',
+    '  $finalStatus = if ($canRelease) { "CANCELLED" } else { "CANCELLED_RECOVERY_REQUIRED" }',
+    '  $finalReason = if ($syncRecoveryRequired) { "Interrupted sync requires checkout recovery." } elseif (-not $profileClean) { "Temporary profile requires review." } elseif (-not $ownedLock) { "Runner lock ownership could not be confirmed." } else { "Owned worker and Electron profile processes stopped; temporary data cleaned." }',
+    '  $report | Add-Member -NotePropertyName status -NotePropertyValue $finalStatus -Force',
+    '  $report | Add-Member -NotePropertyName reason -NotePropertyValue $finalReason -Force',
+    '  $report | Add-Member -NotePropertyName cancelledAt -NotePropertyValue ((Get-Date).ToUniversalTime().ToString("o")) -Force',
+    '  $report | Add-Member -NotePropertyName lockRelease -NotePropertyValue $(if ($canRelease) { "attempted after PID/runId/token and process-tree verification" } else { "retained for manual recovery" }) -Force',
     '  Save-CancelReport $reportPath $report',
-    '  if (-not $canRelease) { Write-Output ("CANCEL NOT VERIFIED: " + $report.reason); exit 10 }',
+    '  if (-not $canRelease) { Write-Output ("CANCEL NOT VERIFIED: " + $finalReason); exit 10 }',
     '  Remove-Item -LiteralPath $lock -Force',
     '  if (Test-Path -LiteralPath $lock) { throw "Verified runner lock could not be removed." }',
     '  Write-Output "CANCEL PASS: worker tree stopped, temporary data recovered, owned lock released."',
@@ -1248,12 +1290,22 @@ function powershellCancellation(runId) {
     '  $cancelError = $_.Exception.Message',
     '  try {',
     '    $reportPath = Join-Path (Join-Path $checkout ".git") "' + REPORT + '"',
-    '    if (Test-Path -LiteralPath $reportPath) { $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json; if ($report.owner -eq "' + REPORT_OWNER + '" -and $report.runId -eq $runId) { $report.status = "CANCELLED_RECOVERY_REQUIRED"; $report.reason = $cancelError; $report.cancelledAt = (Get-Date).ToUniversalTime().ToString("o"); Save-CancelReport $reportPath $report } }',
+    '    if (Test-Path -LiteralPath $reportPath) { $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json; if ($report.owner -eq "' + REPORT_OWNER + '" -and $report.runId -eq $runId) { $report | Add-Member -NotePropertyName status -NotePropertyValue "CANCELLED_RECOVERY_REQUIRED" -Force; $report | Add-Member -NotePropertyName reason -NotePropertyValue $cancelError -Force; $report | Add-Member -NotePropertyName cancelledAt -NotePropertyValue ((Get-Date).ToUniversalTime().ToString("o")) -Force; Save-CancelReport $reportPath $report } }',
     '  } catch { }',
     '  Write-Output ("CANCEL NOT VERIFIED: " + $cancelError)',
     '  exit 7',
     '}'
   ].join('\n')
+}
+
+function recoverWindowsCancellation(runId) {
+  const script = Buffer.from(powershellCancellation(runId, true), 'utf16le').toString('base64')
+  const result = spawnSync('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', script
+  ], { encoding: 'utf8', shell: false })
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  if (result.status !== 0) fail('A recuperação do cancelamento Windows não foi confirmada.', result.status || 1)
 }
 function sourceRoot() {
   const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', shell: false })
@@ -1480,6 +1532,12 @@ async function divergenceSelfTest() {
 }
 
 async function main() {
+  const recoveryIndex = process.argv.indexOf('--recover-windows-cancel')
+  if (recoveryIndex >= 0) {
+    const args = process.argv.slice(recoveryIndex)
+    if (recoveryIndex !== 2 || args.length !== 2) fail('Uso: --recover-windows-cancel <runId>.')
+    return recoverWindowsCancellation(args[1])
+  }
   const worker = process.argv.indexOf('--windows-worker')
   if (worker >= 0) {
     const root = process.argv[worker + 1]
@@ -1515,6 +1573,7 @@ module.exports = {
   makeFingerprint,
   normalizePath,
   prepareFreshBuild,
+  powershellCancellation,
   powershellLauncher,
   requiresWindowFocus,
   selectWindowsTestSuites,

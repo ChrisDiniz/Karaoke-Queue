@@ -1,5 +1,7 @@
 # Catálogo musical CSV
 
+> **Transição:** este documento registra os serviços e a integração de catálogo já existentes, inclusive a UI do Player legado. Parser, normalização e persistência são candidatos à reutilização; este texto não define as opções nem a interface da nova V1 Standalone. Consulte a [especificação V1](standalone-one-screen-player.md) e o [roadmap](standalone-player-roadmap.md).
+
 ## Status
 
 - **IMPLEMENTED:** parser CSV, validação, persistência Controller e Player-only isolada, substituição atômica, busca interna e associação pathless com inventário local em Combined/Player.

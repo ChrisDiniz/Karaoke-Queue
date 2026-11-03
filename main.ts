@@ -54,6 +54,8 @@ let shutdownStarted = false
 let playerQuitAllowed = false
 let shutdownApprovedAttemptId: string | undefined
 let libraryOperationInProgress = false
+let operatingModeChangeScheduled = false
+let playerOperationsInProgress = 0
 
 function activateMainWindow(): void {
   const win = mainWindow
@@ -383,6 +385,14 @@ function createWindow() {
         uncompletedCount: number
         sessionId: string | null
       }
+      if (operatingModeChangeScheduled) {
+        await win.webContents.executeJavaScript('window.__kqueue.flushState()')
+        logger.info('main', 'OPERATING_MODE_CHANGE_PRESERVED_SESSION', 'O modo mudou sem encerrar a sessão nem alterar a fila ou o histórico.', {
+          sessionId: closeSummary.sessionId, sessionRemainsOpen: closeSummary.sessionActive
+        })
+        closeAfterPersisting()
+        return
+      }
       if (!licenseService?.isOperationallyAllowed()) {
         await win.webContents.executeJavaScript('window.__kqueue.flushState()')
         logger.info('main', 'APP_CLOSE_DECISION', 'O aplicativo expirado foi fechado sem encerrar nem modificar a sessão.', {
@@ -474,6 +484,50 @@ function requirePlayerIpcSender(event: Electron.IpcMainInvokeEvent): void {
   }
 }
 
+function requireControllerIpcSender(event: Electron.IpcMainInvokeEvent): void {
+  const ownerWindow = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+  const senderFrame = event.senderFrame
+  if (!modeCapabilities?.controller || !ownerWindow || event.sender !== ownerWindow.webContents ||
+      !senderFrame || senderFrame !== event.sender.mainFrame ||
+      senderFrame.url !== pathToFileURL(path.join(__dirname, 'src', 'index.html')).href) {
+    throw new Error('CONTROLLER_IPC_FORBIDDEN')
+  }
+}
+
+function registerControllerModeChangeIpcHandler(): void {
+  ipcMain.handle('settings:operating-mode:change', async (event, requestedMode: unknown) => {
+    requireControllerIpcSender(event)
+    if (operatingModeChangeScheduled) throw new Error('MODE_CHANGE_IN_PROGRESS')
+    if (operatingMode !== 'controller' || requestedMode !== 'player') {
+      if (requestedMode === 'combined') throw new Error('MODE_NOT_AVAILABLE')
+      throw new Error('INVALID_OPERATING_MODE')
+    }
+    if (!startupInitializationComplete || !licenseService?.isOperationallyAllowed()) {
+      throw new Error('MODE_CHANGE_UNAVAILABLE')
+    }
+    const win = mainWindow
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) throw new Error('MODE_CHANGE_UNAVAILABLE')
+    operatingModeChangeScheduled = true
+    try {
+      const prepared = await win.webContents.executeJavaScript('window.__kqueue.prepareToClose()')
+      if (prepared !== undefined) throw new Error('MODE_CHANGE_OPERATION_IN_PROGRESS')
+      const flushed = await win.webContents.executeJavaScript('window.__kqueue.flushState()')
+      if (flushed !== true) throw new Error('MODE_CHANGE_OPERATION_IN_PROGRESS')
+      writeOperatingModeConfiguration(userDataDirectory, 'player')
+    } catch (error) {
+      operatingModeChangeScheduled = false
+      await win.webContents.executeJavaScript('window.__kqueue?.cancelClose()').catch(() => undefined)
+      throw error
+    }
+    logger.info('main', 'OPERATING_MODE_CHANGE_SCHEDULED', 'A troca para Reprodutor foi salva após confirmar a persistência do estado operacional.', {
+      from: operatingMode, to: 'player'
+    })
+    app.relaunch()
+    app.quit()
+    return { outcome: 'restarting' as const, mode: 'player' as const }
+  })
+}
+
 function createPlayerControlWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1120,
@@ -554,7 +608,9 @@ function getPlayerUiSnapshot(): PlayerUiSnapshot {
     catalog: { status: catalogMetadata.revision ? 'available' : 'not-configured', metadata: catalogMetadata },
     recovery: recovery.getState(),
     recoveryDiagnostic: recovery.getDiagnosticSummary(),
-    videoWindow: playerVideoWindow?.getSnapshot() ?? { open: false, fullScreen: false, ready: false, location: 'hidden', returnToInlineRevision: 0 }
+    videoWindow: playerVideoWindow?.getSnapshot() ?? {
+      open: false, fullScreen: false, ready: false, location: 'hidden', inlineLayoutRevision: 0, returnToInlineRevision: 0
+    }
   }
 }
 
@@ -577,6 +633,18 @@ function playerDisplayStatus(): 'idle' | 'loading' | 'playing' | 'paused' | 'fai
 
 function assertPlayerNotChangingLibrary(): void {
   if (libraryOperationInProgress) throw new Error('VIDEO_LIBRARY_BUSY')
+  if (operatingModeChangeScheduled) throw new Error('MODE_CHANGE_IN_PROGRESS')
+}
+
+function runPlayerOperation<T>(operation: () => Promise<T> | T): Promise<T> {
+  assertPlayerNotChangingLibrary()
+  playerOperationsInProgress++
+  try {
+    return Promise.resolve(operation()).finally(() => { playerOperationsInProgress-- })
+  } catch (error) {
+    playerOperationsInProgress--
+    return Promise.reject(error)
+  }
 }
 
 function assertLibraryCanChange(): void {
@@ -615,47 +683,101 @@ function registerPlayerIpcHandlers(): void {
   ipcMain.handle('player:play-now', async (event, code: unknown) => {
     requirePlayerIpcSender(event)
     if (operatingMode !== 'player') throw new Error('MANUAL_CODE_PLAY_UNAVAILABLE_IN_COMBINED_MODE')
-    assertPlayerNotChangingLibrary()
-    return requirePlayerServices().manual.playByMusicCode(code)
+    return runPlayerOperation(() => requirePlayerServices().manual.playByMusicCode(code))
   })
   ipcMain.handle('player:sequence:add', async (event, code: unknown) => {
+    requirePlayerIpcSender(event); requirePlayerSequenceMode()
+    return runPlayerOperation(() => requirePlayerServices().manual.addToSequence(code))
+  })
+  ipcMain.handle('player:sequence:add-batch', async (event, rawText: unknown, requestId: unknown) => {
     requirePlayerIpcSender(event); requirePlayerSequenceMode(); assertPlayerNotChangingLibrary()
-    return requirePlayerServices().manual.addToSequence(code)
+    if (typeof rawText !== 'string' || rawText.length > 4096 || typeof requestId !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,80}$/.test(requestId)) throw new Error('INVALID_BATCH_INPUT')
+    return runPlayerOperation(async () => {
+      const services = requirePlayerServices()
+      const recovery = services.recovery.getState()
+      if (recovery.status === 'pending') throw new Error('RECOVERY_PENDING')
+      if (recovery.status === 'unreadable' || recovery.status === 'unavailable') throw new Error('RECOVERY_UNAVAILABLE')
+      const playbackWindow = playerVideoWindow
+      if (!playbackWindow) throw new Error('HOST_UNAVAILABLE')
+      await playbackWindow.preparePlaybackHost()
+      assertPlayerNotChangingLibrary()
+      return services.manual.addBatchToSequence(rawText, requestId)
+    })
   })
   ipcMain.handle('player:sequence:remove', (event, itemId: unknown) => {
-    requirePlayerIpcSender(event); requirePlayerSequenceMode(); assertPlayerNotChangingLibrary()
-    return requirePlayerServices().manual.removeFromSequence(itemId)
+    requirePlayerIpcSender(event); requirePlayerSequenceMode()
+    return runPlayerOperation(() => requirePlayerServices().manual.removeFromSequence(itemId))
+  })
+  ipcMain.handle('player:sequence:remove-current', (event, itemId: unknown, attemptId: unknown) => {
+    requirePlayerIpcSender(event); requirePlayerSequenceMode()
+    return runPlayerOperation(() => requirePlayerServices().manual.removeCurrent(itemId, attemptId))
   })
   ipcMain.handle('player:sequence:reorder', (event, itemIds: unknown) => {
-    requirePlayerIpcSender(event); requirePlayerSequenceMode(); assertPlayerNotChangingLibrary()
-    return requirePlayerServices().manual.reorderSequence(Array.isArray(itemIds) ? itemIds : [])
+    requirePlayerIpcSender(event); requirePlayerSequenceMode()
+    return runPlayerOperation(() => requirePlayerServices().manual.reorderSequence(Array.isArray(itemIds) ? itemIds : []))
   })
   ipcMain.handle('player:sequence:clear', event => {
-    requirePlayerIpcSender(event); requirePlayerSequenceMode(); assertPlayerNotChangingLibrary()
-    return requirePlayerServices().manual.clearSequence()
+    requirePlayerIpcSender(event); requirePlayerSequenceMode()
+    return runPlayerOperation(() => requirePlayerServices().manual.clearSequence())
   })
-  ipcMain.handle('player:pause', event => { requirePlayerIpcSender(event); assertPlayerNotChangingLibrary(); return requirePlayerServices().manual.pause() })
-  ipcMain.handle('player:resume', event => { requirePlayerIpcSender(event); assertPlayerNotChangingLibrary(); return requirePlayerServices().manual.resume() })
-  ipcMain.handle('player:restart', event => { requirePlayerIpcSender(event); assertPlayerNotChangingLibrary(); return requirePlayerServices().manual.restart() })
-  ipcMain.handle('player:stop', event => { requirePlayerIpcSender(event); assertPlayerNotChangingLibrary(); return requirePlayerServices().manual.stop() })
-  ipcMain.handle('player:next', event => { requirePlayerIpcSender(event); requirePlayerSequenceMode(); assertPlayerNotChangingLibrary(); return requirePlayerServices().manual.next() })
-  ipcMain.handle('player:previous', event => { requirePlayerIpcSender(event); requirePlayerSequenceMode(); assertPlayerNotChangingLibrary(); return requirePlayerServices().manual.previous() })
+  ipcMain.handle('player:mode:change', (event, requestedMode: unknown) => {
+    requirePlayerIpcSender(event)
+    if (operatingModeChangeScheduled) throw new Error('MODE_CHANGE_IN_PROGRESS')
+    if (operatingMode !== 'player' || !modeCapabilities?.player) throw new Error('MODE_CHANGE_UNAVAILABLE')
+    const targetMode: OperatingMode = 'controller'
+    if (requestedMode === 'combined') throw new Error('MODE_NOT_AVAILABLE')
+    if (requestedMode !== targetMode) throw new Error('INVALID_OPERATING_MODE')
+    if (playerOperationsInProgress > 0 || libraryOperationInProgress) throw new Error('MODE_CHANGE_OPERATION_IN_PROGRESS')
+    const services = requirePlayerServices()
+    const playback = services.playback.getState()
+    if (['loading', 'starting', 'ready', 'playing', 'paused', 'stopping'].includes(playback.status)) {
+      throw new Error('MODE_CHANGE_PLAYER_ACTIVE')
+    }
+    if (playback.status === 'uncertain') throw new Error('RECOVERY_PENDING')
+    if (services.manual.getSequence().pending.length > 0) throw new Error('MODE_CHANGE_PENDING_SEQUENCE')
+    const recovery = services.recovery.getState()
+    if (recovery.status === 'pending') throw new Error('RECOVERY_PENDING')
+    if (recovery.status === 'unreadable' || recovery.status === 'unavailable') throw new Error('RECOVERY_UNAVAILABLE')
+    operatingModeChangeScheduled = true
+    try {
+      writeOperatingModeConfiguration(userDataDirectory, targetMode)
+    } catch (error) {
+      operatingModeChangeScheduled = false
+      throw error
+    }
+    logger.info('main', 'OPERATING_MODE_CHANGE_SCHEDULED', 'A troca para Controlador foi salva e o aplicativo será reiniciado com segurança.', {
+      from: operatingMode, to: targetMode
+    })
+    app.relaunch()
+    app.quit()
+    return { outcome: 'restarting' as const, mode: targetMode }
+  })
+  ipcMain.handle('player:pause', event => { requirePlayerIpcSender(event); return runPlayerOperation(() => requirePlayerServices().manual.pause()) })
+  ipcMain.handle('player:resume', event => { requirePlayerIpcSender(event); return runPlayerOperation(() => requirePlayerServices().manual.resume()) })
+  ipcMain.handle('player:restart', event => { requirePlayerIpcSender(event); return runPlayerOperation(() => requirePlayerServices().manual.restart()) })
+  ipcMain.handle('player:stop', event => { requirePlayerIpcSender(event); return runPlayerOperation(() => requirePlayerServices().manual.stop()) })
+  ipcMain.handle('player:next', event => { requirePlayerIpcSender(event); requirePlayerSequenceMode(); return runPlayerOperation(() => requirePlayerServices().manual.next()) })
+  ipcMain.handle('player:previous', event => { requirePlayerIpcSender(event); requirePlayerSequenceMode(); return runPlayerOperation(() => requirePlayerServices().manual.previous()) })
   ipcMain.handle('player:catalog:import', async event => {
     requirePlayerIpcSender(event)
-    if (!musicCatalogService) throw new Error('PLAYER_CATALOG_UNAVAILABLE')
-    const options: Electron.OpenDialogOptions = { title: 'Importar catálogo de músicas', properties: ['openFile'],
-      filters: [{ name: 'Catálogo CSV', extensions: ['csv'] }] }
-    const owner = BrowserWindow.fromWebContents(event.sender)
-    const selection = owner && !owner.isDestroyed()
-      ? await dialog.showOpenDialog(owner, options)
-      : await dialog.showOpenDialog(options)
-    if (selection.canceled || selection.filePaths.length !== 1) return { cancelled: true as const }
-    const result = await musicCatalogService.importFile(selection.filePaths[0])
-    publishPlayerSnapshot()
-    return result
+    return runPlayerOperation(async () => {
+      if (!musicCatalogService) throw new Error('PLAYER_CATALOG_UNAVAILABLE')
+      const options: Electron.OpenDialogOptions = { title: 'Importar catálogo de músicas', properties: ['openFile'],
+        filters: [{ name: 'Catálogo CSV', extensions: ['csv'] }] }
+      const owner = BrowserWindow.fromWebContents(event.sender)
+      const selection = owner && !owner.isDestroyed()
+        ? await dialog.showOpenDialog(owner, options)
+        : await dialog.showOpenDialog(options)
+      if (selection.canceled || selection.filePaths.length !== 1) return { cancelled: true as const }
+      const result = await musicCatalogService.importFile(selection.filePaths[0])
+      publishPlayerSnapshot()
+      return result
+    })
   })
   ipcMain.handle('player:library:select-folder', async event => {
     requirePlayerIpcSender(event)
+    assertPlayerNotChangingLibrary()
     const { library } = requirePlayerServices()
     if (libraryOperationInProgress) throw new Error('VIDEO_LIBRARY_BUSY')
     assertLibraryCanChange()
@@ -683,6 +805,7 @@ function registerPlayerIpcHandlers(): void {
   })
   ipcMain.handle('player:library:refresh', async event => {
     requirePlayerIpcSender(event)
+    assertPlayerNotChangingLibrary()
     const { library } = requirePlayerServices()
     if (libraryOperationInProgress) throw new Error('VIDEO_LIBRARY_BUSY')
     assertLibraryCanChange()
@@ -695,16 +818,36 @@ function registerPlayerIpcHandlers(): void {
     } finally { libraryOperationInProgress = false; publishPlayerSnapshot() }
   })
   ipcMain.handle('player:video:show', async event => { requirePlayerIpcSender(event); return showPlayerVideoWindow() })
+  ipcMain.handle('player:video:window-tip', (event, visible: unknown) => {
+    requirePlayerIpcSender(event)
+    if (typeof visible !== 'boolean') throw new Error('INVALID_PLAYER_WINDOW_TIP_STATE')
+    return playerVideoWindow?.setWindowTipVisible(visible) ?? false
+  })
+  ipcMain.handle('player-video:window-tip-dismissed', (event, permanentlyDismissed: unknown) => {
+    const senderFrame = event.senderFrame
+    const expectedDocumentUrl = pathToFileURL(path.join(__dirname, 'src', 'player-playback.html')).href
+    if (typeof permanentlyDismissed !== 'boolean' || !senderFrame || senderFrame !== event.sender.mainFrame ||
+        senderFrame.url !== expectedDocumentUrl || !playerVideoWindow?.dismissWindowTip(event.sender)) {
+      throw new Error('PLAYER_IPC_FORBIDDEN')
+    }
+    const ownerWindow = mainWindow
+    if (ownerWindow && !ownerWindow.isDestroyed() && !ownerWindow.webContents.isDestroyed()) {
+      ownerWindow.webContents.send('player:window-tip-dismissed', { permanentlyDismissed })
+    }
+    return true
+  })
   ipcMain.handle('player:video:inline', async (event, bounds: unknown) => {
     requirePlayerIpcSender(event)
     if (!bounds || typeof bounds !== 'object') throw new Error('INVALID_PLAYER_VIEW_BOUNDS')
     return playerVideoWindow!.showInline(bounds as PlayerVideoBounds)
   })
-  ipcMain.handle('player:video:inline-bounds', async (event, bounds: unknown) => {
+  ipcMain.handle('player:video:inline-bounds', async (event, bounds: unknown, layoutRevision: unknown) => {
     requirePlayerIpcSender(event)
     if (!bounds || typeof bounds !== 'object') throw new Error('INVALID_PLAYER_VIEW_BOUNDS')
-    await playerVideoWindow?.setInlineBounds(bounds as PlayerVideoBounds)
-    return true
+    if (typeof layoutRevision !== 'number' || !Number.isSafeInteger(layoutRevision) || layoutRevision < 0) {
+      throw new Error('INVALID_PLAYER_LAYOUT_REVISION')
+    }
+    return playerVideoWindow?.setInlineBounds(bounds as PlayerVideoBounds, layoutRevision) ?? false
   })
   ipcMain.handle('player:video:inline-visibility', (event, visible: unknown) => {
     requirePlayerIpcSender(event)
@@ -719,6 +862,11 @@ function registerPlayerIpcHandlers(): void {
   })
   ipcMain.handle('player-video:set-fullscreen', (event, action: unknown) => {
     if (!playerVideoWindow) return false
+    const senderFrame = event.senderFrame
+    const expectedDocumentUrl = pathToFileURL(path.join(__dirname, 'src', 'player-playback.html')).href
+    if (!senderFrame || senderFrame !== event.sender.mainFrame || senderFrame.url !== expectedDocumentUrl) {
+      throw new Error('PLAYER_IPC_FORBIDDEN')
+    }
     return playerVideoWindow.setFullScreen(event.sender, action)
   })
   ipcMain.handle('player:video:fullscreen-toggle', event => {
@@ -941,6 +1089,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         if (typeof value.event === 'string') reportSessionEvent(value.event,
           value.sessionId, typeof value.result === 'string' ? value.result : undefined)
       })
+      if (operatingMode === 'controller') registerControllerModeChangeIpcHandler()
       createWindow()
     }
 

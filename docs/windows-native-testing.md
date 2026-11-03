@@ -124,6 +124,12 @@ Os testes são automatizados e não pedem interação manual. Se não houver Exp
 
 Após o E2E, o worker verifica a remoção do perfil temporário e consulta processos Electron associados ao caminho exclusivo daquela execução via `Get-CimInstance Win32_Process`. Se a consulta falhar ou não puder confirmar o resultado, a verificação falha; isso não é interpretado como ausência de processos. O worker não encerra processos indiscriminadamente. Ao receber cancelamento, o runner confirma a identidade do worker pelo PID, `runId` e token do lock, encerra a árvore identificada e verifica que os processos observados terminaram. Depois recupera o build anterior, preservando o build interrompido em `.git/`, limpa apenas o perfil temporário exclusivo do run e confirma que não há pendência nem backup de sincronização. Só então remove o lock pertencente à execução. Se alguma verificação ou recuperação falhar, o relatório fica `CANCELLED_RECOVERY_REQUIRED` e o lock é mantido para revisão manual. Processos residuais ou uma consulta inconclusiva impedem o status geral PASS.
 
+Se o processo worker já tiver terminado e a primeira recuperação tiver parado em `CANCELLED_RECOVERY_REQUIRED`, o runner permite retomar somente pelo `runId` correspondente e após confirmar que o worker não está ativo. Use o entry point central, preservando `KARAOKE_QUEUE_WIN_CHECKOUT` via `WSLENV`:
+
+    npm run test:e2e:multi-instance:windows -- --recover-windows-cancel <runId>
+
+Essa retomada valida novamente o proprietário e a identidade do relatório/lock, recusa perfis sem identidade segura, encerra apenas processos Electron que apontem para o perfil exclusivo do run (e verifica descendants pelo PID e horário de criação), valida a limpeza do perfil e do build e só então libera o lock. Se não puder confirmar algum desses itens, mantém o lock e os dados para inspeção; não remova-os manualmente.
+
 ## Interpretar o resultado
 
 - PASS: sincronização, equivalência de hashes, validação e limpeza dos backups, build Windows, E2E, limpeza de perfil, ausência de processo residual e liberação do lock foram confirmados. Nos testes que verificam foco, ele também precisa estar observado; em modos focados de playback, `WINDOW_FOCUS NOT APPLICABLE` é esperado. A saída inclui branch, HEAD e fingerprint.

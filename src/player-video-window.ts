@@ -18,6 +18,8 @@ export interface PlayerVideoWindowSnapshot {
   readonly fullScreen: boolean
   readonly ready: boolean
   readonly location: PlayerVideoLocation
+  /** Changes on each inline owner-window fullscreen transition. */
+  readonly inlineLayoutRevision: number
   /** Monotonic signal for output-window X closing and returning this surface inline. */
   readonly returnToInlineRevision: number
 }
@@ -46,7 +48,12 @@ export class PlayerVideoWindow {
   private ready = false
   private disposed = false
   private inlineBounds: PlayerVideoBounds | undefined
+  private inlineBoundsRevision = -1
+  private inlineLayoutRevision = 0
+  private focusAfterInlineLayoutRevision: number | undefined
   private inlineVisible = false
+  private windowTipRequested = false
+  private windowTipDismissedForRun = false
   private locationRevision = 0
   private returnToInlineRevision = 0
   private readonly observedWindows = new WeakSet<BrowserWindow>()
@@ -62,13 +69,17 @@ export class PlayerVideoWindow {
       fullScreen: Boolean(window && !window.isDestroyed() && window.isFullScreen()),
       ready: this.ready && alive,
       location: alive ? this.mode : 'hidden',
+      inlineLayoutRevision: this.inlineLayoutRevision,
       returnToInlineRevision: this.returnToInlineRevision
     }
   }
 
   async showInline(bounds?: PlayerVideoBounds, focus = true): Promise<PlayerVideoWindowSnapshot> {
     const revision = ++this.locationRevision
-    if (bounds) this.inlineBounds = normalizeBounds(bounds)
+    if (bounds) {
+      this.inlineBounds = normalizeBounds(bounds)
+      this.inlineBoundsRevision = this.inlineLayoutRevision
+    }
     const view = await this.ensureView()
     this.ensureNotDisposed()
     if (revision !== this.locationRevision) return this.getSnapshot()
@@ -79,6 +90,7 @@ export class PlayerVideoWindow {
     this.moveViewTo(controlWindow)
     this.applyInlineBounds()
     this.publishDisplayLocation('inline')
+    this.publishFullscreenState(controlWindow.isFullScreen())
     if (focus) {
       if (controlWindow.isMinimized()) controlWindow.restore()
       controlWindow.show()
@@ -88,13 +100,27 @@ export class PlayerVideoWindow {
     this.ensureNotDisposed()
     if (revision !== this.locationRevision) return this.getSnapshot()
     if (view.webContents.isDestroyed()) throw new Error('HOST_TERMINATED')
+    this.publishWindowTipState()
     this.options.onChange?.()
     return this.getSnapshot()
   }
 
-  async setInlineBounds(bounds: PlayerVideoBounds): Promise<void> {
+  async setInlineBounds(bounds: PlayerVideoBounds, layoutRevision: number): Promise<boolean> {
+    if (!Number.isSafeInteger(layoutRevision) || layoutRevision < 0 || layoutRevision !== this.inlineLayoutRevision) return false
     this.inlineBounds = normalizeBounds(bounds)
+    this.inlineBoundsRevision = layoutRevision
     if (this.mode === 'inline') this.applyInlineBounds()
+    if (this.mode === 'inline' && this.focusAfterInlineLayoutRevision === layoutRevision) {
+      const owner = this.ownerWindow
+      const view = this.view
+      if (owner && !owner.isDestroyed() && view && !view.webContents.isDestroyed() && this.inlineVisible) {
+        if (owner.isMinimized()) owner.restore()
+        owner.focus()
+        view.webContents.focus()
+      }
+      this.focusAfterInlineLayoutRevision = undefined
+    }
+    return true
   }
 
   /** Detaches the exact same media WebContents so playback is neither duplicated nor restarted. */
@@ -114,6 +140,8 @@ export class PlayerVideoWindow {
     this.moveViewTo(window)
     this.fitOutputWindow()
     this.publishDisplayLocation('window')
+    this.publishFullscreenState(window.isFullScreen())
+    this.publishWindowTipState()
     if (window.isMinimized()) window.restore()
     if (!window.isVisible()) {
       if (focus) window.show()
@@ -122,6 +150,14 @@ export class PlayerVideoWindow {
     if (focus) window.focus()
     this.options.onChange?.()
     return this.getSnapshot()
+  }
+
+  /** Prepares the trusted media WebContents without showing a video window or changing navigation. */
+  async preparePlaybackHost(): Promise<void> {
+    const view = await this.ensureView()
+    await this.host?.ready
+    this.ensureNotDisposed()
+    if (view.webContents.isDestroyed() || this.view !== view) throw new Error('HOST_TERMINATED')
   }
 
   /** Hides only an idle inline view; active media must remain visible in some window. */
@@ -162,6 +198,7 @@ export class PlayerVideoWindow {
     const owner = this.ownerWindow
     if (!owner || owner.isDestroyed()) return false
     owner.setFullScreen(!owner.isFullScreen())
+    this.publishWindowTipState()
     this.options.onChange?.()
     return owner.isFullScreen()
   }
@@ -170,6 +207,7 @@ export class PlayerVideoWindow {
     const owner = this.ownerWindow
     if (!owner || owner.isDestroyed()) return false
     owner.setFullScreen(false)
+    this.publishWindowTipState()
     this.options.onChange?.()
     return !owner.isFullScreen()
   }
@@ -180,6 +218,34 @@ export class PlayerVideoWindow {
     const view = this.view
     if (!view || view.webContents.isDestroyed()) return
     view.webContents.send('player-playback:display-status', status)
+  }
+
+  setWindowTipVisible(visible: boolean): boolean {
+    this.windowTipRequested = visible && !this.windowTipDismissedForRun
+    this.publishWindowTipState()
+    return true
+  }
+
+  dismissWindowTip(sender: WebContents): boolean {
+    if (!this.view || this.view.webContents.isDestroyed() || sender !== this.view.webContents) return false
+    this.windowTipRequested = false
+    this.windowTipDismissedForRun = true
+    this.publishWindowTipState()
+    return true
+  }
+
+  private publishFullscreenState(fullScreen: boolean): void {
+    const view = this.view
+    if (view && !view.webContents.isDestroyed()) view.webContents.send('player-playback:fullscreen', fullScreen)
+  }
+
+  private publishWindowTipState(): void {
+    const view = this.view
+    if (!view || view.webContents.isDestroyed()) return
+    const owner = this.ownerWindow
+    const visible = this.windowTipRequested && this.mode === 'inline' &&
+      Boolean(owner && !owner.isDestroyed() && !owner.isFullScreen())
+    view.webContents.send('player-playback:window-tip', visible)
   }
 
   private publishDisplayLocation(location: Exclude<PlayerVideoLocation, 'hidden'>): void {
@@ -392,6 +458,7 @@ export class PlayerVideoWindow {
       controlWindow.show()
       controlWindow.focus()
       this.publishDisplayLocation('inline')
+      this.publishWindowTipState()
       this.options.onChange?.()
       window.destroy()
     } finally {
@@ -430,11 +497,25 @@ export class PlayerVideoWindow {
       else if (this.mode === 'window') this.fitOutputWindow()
       this.options.onChange?.()
     }
+    const updateFullscreenOwner = (): void => {
+      if (this.ownerWindow !== window || window.isDestroyed()) return
+      this.publishFullscreenState(window.isFullScreen())
+      this.publishWindowTipState()
+      if (this.mode === 'inline') {
+        this.inlineLayoutRevision++
+        this.inlineBoundsRevision = -1
+        this.focusAfterInlineLayoutRevision = this.inlineLayoutRevision
+        this.view?.setVisible(false)
+      } else if (this.mode === 'window') {
+        this.fitOutputWindow()
+      }
+      this.options.onChange?.()
+    }
     window.on('resize', updateOwner)
     window.on('maximize', updateOwner)
     window.on('unmaximize', updateOwner)
-    window.on('enter-full-screen', updateOwner)
-    window.on('leave-full-screen', updateOwner)
+    window.on('enter-full-screen', updateFullscreenOwner)
+    window.on('leave-full-screen', updateFullscreenOwner)
   }
 
   private applyInlineBounds(): void {
@@ -442,7 +523,7 @@ export class PlayerVideoWindow {
     const owner = this.ownerWindow
     if (!view || !owner || owner.isDestroyed() || this.mode !== 'inline') return
     const bounds = this.inlineBounds
-    if (!bounds || bounds.width < 1 || bounds.height < 1) {
+    if (!bounds || this.inlineBoundsRevision !== this.inlineLayoutRevision || bounds.width < 1 || bounds.height < 1) {
       view.setVisible(false)
       return
     }

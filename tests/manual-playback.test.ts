@@ -19,10 +19,13 @@ class PlaybackEngineDouble implements ManualPlaybackEngine {
   state: PlayerPlaybackState = { status: 'idle' }
   readonly playedCodes: string[] = []
   readonly calls: string[] = []
+  readonly clearedMediaAttempts: string[] = []
+  readonly clearedStoppedMediaAttempts: string[] = []
   readonly listeners = new Set<(event: import('../src/player-playback-contracts').PlayerPlaybackEvent) => void>()
   playResult: ((code: string) => Promise<PlayerPlaybackState>) | undefined
   playGate: ReturnType<typeof deferred<void>> | undefined
   validateResult: ((code: string) => Promise<void>) | undefined
+  beforeStop: ((attemptId?: string) => void) | undefined
   readonly validatedCodes: string[] = []
 
   getState(): PlayerPlaybackState { return { ...this.state } }
@@ -41,6 +44,16 @@ class PlaybackEngineDouble implements ManualPlaybackEngine {
     this.validatedCodes.push(code)
     await this.validateResult?.(code)
   }
+  async clearCompletedMedia(attemptId: string): Promise<boolean> {
+    this.clearedMediaAttempts.push(attemptId)
+    return true
+  }
+  async clearStoppedMedia(attemptId: string): Promise<boolean> {
+    this.clearedStoppedMediaAttempts.push(attemptId)
+    if (this.state.status !== 'stopped' || this.state.attemptId !== attemptId) return false
+    this.state = { status: 'idle' }
+    return true
+  }
   subscribe(listener: (event: import('../src/player-playback-contracts').PlayerPlaybackEvent) => void): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
@@ -54,7 +67,15 @@ class PlaybackEngineDouble implements ManualPlaybackEngine {
   async pause(): Promise<PlayerPlaybackState> { this.calls.push('pause'); this.state = { ...this.state, status: 'paused' }; return this.getState() }
   async resume(): Promise<PlayerPlaybackState> { this.calls.push('resume'); this.state = { ...this.state, status: 'playing' }; return this.getState() }
   async restart(): Promise<PlayerPlaybackState> { this.calls.push('restart'); this.state = { ...this.state, status: 'playing', attemptId: `restart-${this.calls.length}` }; return this.getState() }
-  async stop(): Promise<PlayerPlaybackState> { this.calls.push('stop'); this.state = { ...this.state, status: 'stopped' }; return this.getState() }
+  async stop(expectedAttemptId?: string): Promise<PlayerPlaybackState> {
+    this.calls.push(expectedAttemptId ? `stop:${expectedAttemptId}` : 'stop')
+    this.beforeStop?.(expectedAttemptId)
+    if (expectedAttemptId && (this.state.attemptId !== expectedAttemptId || this.state.status === 'completed')) {
+      throw new PlayerPlaybackError('SUPERSEDED', 'The playback attempt changed before Stop was confirmed.')
+    }
+    this.state = { ...this.state, status: 'stopped', containmentStatus: 'stop-acknowledged' }
+    return this.getState()
+  }
 }
 
 function makeService(engine = new PlaybackEngineDouble()) {
@@ -92,6 +113,95 @@ test('local sequence adds normalized indexed selections, reorders and removes ex
   assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['01001'])
 })
 
+test('removing the current item confirms Stop and preserves pending songs without auto-advancing', async () => {
+  const { engine, service } = makeService()
+  const batch = await service.addBatchToSequence('1001 23242', 'remove-current-keeps-pending')
+  assert.equal(batch.outcome, 'started')
+  const before = service.getSequence()
+  const current = before.current
+  assert.ok(current)
+  const activeAttemptId = engine.getState().attemptId
+  assert.ok(activeAttemptId)
+
+  const result = await service.removeCurrent(current.id, activeAttemptId)
+
+  assert.equal(result.outcome, 'accepted')
+  assert.equal(result.state.status, 'idle', 'confirmed Stop and media clearing return the UI to the idle state')
+  assert.deepEqual(engine.calls.filter(call => call.startsWith('stop:')), [`stop:${activeAttemptId}`],
+    'the removal must stop only the attempt it was opened for')
+  assert.deepEqual(engine.clearedStoppedMediaAttempts, [activeAttemptId],
+    'the stopped media may be cleared only after Stop ACK for the expected attempt')
+  assert.equal(service.getSequence().current, null)
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['23242'],
+    'pending songs remain queued and are not started as a side effect of manual removal')
+  assert.deepEqual(engine.playedCodes, ['01001'])
+})
+
+test('removing a manually started song confirms Stop without mutating pending items', async () => {
+  const { engine, service } = makeService()
+  const started = await service.playByMusicCode('1001')
+  assert.equal(started.outcome, 'started')
+  const queued = await service.addToSequence('23242')
+  assert.equal(queued.outcome, 'queued')
+  const attemptId = engine.getState().attemptId
+  assert.ok(attemptId)
+  const pendingBefore = service.getSequence().pending.map(item => ({ ...item }))
+
+  const result = await service.removeCurrent(null, attemptId)
+
+  assert.equal(result.outcome, 'accepted')
+  assert.equal(result.state.status, 'idle', 'the manually started video is cleared after Stop ACK')
+  assert.equal(service.getSequence().current, null, 'a standalone song does not become a sequence item when removed')
+  assert.deepEqual(service.getSequence().pending, pendingBefore, 'removal preserves the explicit pending items')
+  assert.deepEqual(engine.calls.filter(call => call.startsWith('stop:')), [`stop:${attemptId}`],
+    'standalone removal must stop only its correlated active attempt')
+  assert.deepEqual(engine.clearedStoppedMediaAttempts, [attemptId])
+  assert.deepEqual(engine.playedCodes, ['01001'], 'manual removal must not auto-start a pending item')
+})
+
+test('a natural EOF racing with current-item removal never auto-advances the pending sequence', async () => {
+  const engine = new PlaybackEngineDouble()
+  const service = new ManualPlaybackService(engine, { autoAdvanceOnNaturalEnd: true })
+  const batch = await service.addBatchToSequence('1001 23242', 'remove-current-eof-race')
+  assert.equal(batch.outcome, 'started')
+  const current = service.getSequence().current
+  assert.ok(current)
+  const attemptId = engine.getState().attemptId
+  assert.ok(attemptId)
+
+  engine.beforeStop = selectedAttemptId => engine.naturalEnd(selectedAttemptId, '01001')
+  const result = await service.removeCurrent(current.id, attemptId)
+
+  assert.notEqual(result.outcome, 'accepted', 'the removal cannot claim Stop after a natural EOF already won the race')
+  assert.equal(service.getStatus().status, 'completed', 'the confirmed natural ending remains a completion outcome')
+  assert.equal(service.getSequence().current, null, 'the naturally ended item is cleared from the current position')
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['23242'],
+    'the next item remains pending until an explicit action after the removal race')
+  assert.deepEqual(engine.playedCodes, ['01001'], 'the removal race must not start the pending item')
+  assert.deepEqual(engine.clearedMediaAttempts, [attemptId], 'the naturally ended media is cleared for the matching attempt')
+})
+
+test('stale current-item removal cannot stop or remove a newer playback attempt', async () => {
+  const { engine, service } = makeService()
+  const batch = await service.addBatchToSequence('1001 23242', 'remove-current-stale-attempt')
+  assert.equal(batch.outcome, 'started')
+  const oldCurrent = service.getSequence().current
+  assert.ok(oldCurrent)
+  const oldAttemptId = engine.getState().attemptId
+  assert.ok(oldAttemptId)
+
+  engine.state = { status: 'playing', attemptId: 'newer-attempt', musicCode: '33333' }
+  const result = await service.removeCurrent(oldCurrent.id, oldAttemptId)
+
+  assert.notEqual(result.outcome, 'accepted', 'a confirmation for an obsolete attempt must be rejected')
+  assert.equal(engine.calls.includes('stop:newer-attempt'), false,
+    'stale confirmation must not send Stop to the newer attempt')
+  assert.equal(engine.getState().attemptId, 'newer-attempt')
+  assert.equal(service.getSequence().current?.id, oldCurrent.id,
+    'a rejected stale operation must not mutate sequence ownership')
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['23242'])
+})
+
 test('concurrent sequence additions preserve invocation order when validation has different latency', async () => {
   const { engine, service } = makeService()
   const firstValidation = deferred<void>()
@@ -118,6 +228,36 @@ test('local Player starts the next explicit sequence item only after one valid n
   assert.deepEqual(engine.playedCodes, ['01001', '23242'], 'duplicate EOF must not start the same pending item twice')
   assert.deepEqual(service.getSequence().pending, [])
   assert.equal(service.getStatus().musicCode, '23242')
+  assert.deepEqual(engine.clearedMediaAttempts, [], 'EOF with a next item replaces the media instead of clearing the active surface')
+})
+
+test('a valid EOF during a manual Next whose replacement fails is still finalized exactly once', async () => {
+  const { engine } = makeService()
+  const service = new ManualPlaybackService(engine, { autoAdvanceOnNaturalEnd: true })
+  const batch = await service.addBatchToSequence('1001 23242', 'eof-during-failed-next')
+  assert.equal(batch.outcome, 'started')
+  const endedAttempt = engine.getState().attemptId
+  assert.ok(endedAttempt)
+
+  engine.playGate = deferred<void>()
+  engine.playResult = async () => {
+    throw new PlayerPlaybackError('MEDIA_UNAVAILABLE', 'The next indexed video became unavailable.')
+  }
+  const next = service.next()
+  engine.naturalEnd(endedAttempt, '01001')
+  engine.playGate.resolve()
+  const nextResult = await next
+
+  assert.notEqual(nextResult.outcome, 'started', 'a failed replacement must not claim that the next song started')
+  assert.equal(service.getStatus().status, 'completed', 'the valid ended attempt remains naturally completed')
+  assert.equal(service.getStatus().attemptId, endedAttempt)
+  assert.equal(service.getSequence().current, null, 'the ended item must not remain shown as the current song')
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['23242'],
+    'a failed next item remains explicitly pending and is not silently skipped')
+  assert.deepEqual(engine.clearedMediaAttempts, [endedAttempt],
+    'the valid EOF is finalized and the stale last frame is cleared exactly once')
+  assert.deepEqual(engine.playedCodes, ['01001', '23242'],
+    'the explicit Next is attempted once, and the valid EOF must not trigger a duplicate automatic retry')
 })
 
 test('automatic transition protects its starting item while allowing later sequence edits', async () => {
@@ -149,6 +289,40 @@ test('automatic transition protects its starting item while allowing later seque
   await new Promise(resolve => setImmediate(resolve))
   assert.deepEqual(engine.playedCodes, ['01001', '23242'])
   assert.equal(service.getSequence().current?.musicCode, '23242')
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['33333'])
+})
+
+test('a batch appended while Next is starting a reserved item remains after that item', async () => {
+  const { engine } = makeService()
+  const service = new ManualPlaybackService(engine)
+  await service.playByMusicCode('1001')
+  await service.addToSequence('23242')
+
+  const reserved = service.getSequence().pending[0]
+  assert.ok(reserved)
+  engine.playGate = deferred<void>()
+  const next = service.next()
+
+  assert.deepEqual(engine.calls.filter(call => call === 'play:23242'), ['play:23242'])
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['23242'])
+
+  const batch = await service.addBatchToSequence('33333', 'batch-while-next-starts')
+  assert.equal(batch.outcome, 'queued')
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['23242', '33333'])
+
+  const removal = service.removeFromSequence(reserved.id)
+  assert.equal(removal.outcome, 'unavailable')
+  if (removal.outcome === 'unavailable') assert.equal(removal.reason, 'SEQUENCE_ITEM_STARTING')
+  const reorder = service.reorderSequence([service.getSequence().pending[1].id, reserved.id])
+  assert.equal(reorder.outcome, 'unavailable')
+  if (reorder.outcome === 'unavailable') assert.equal(reorder.reason, 'SEQUENCE_ITEM_STARTING')
+
+  engine.playGate.resolve()
+  const started = await next
+
+  assert.equal(started.outcome, 'started')
+  assert.deepEqual(engine.playedCodes, ['01001', '23242'], 'the reserved item starts exactly once')
+  assert.equal(service.getSequence().current?.id, reserved.id)
   assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['33333'])
 })
 
@@ -370,7 +544,7 @@ test('failed pending Next clears a replacement sequence anchored to the previous
   assert.deepEqual(engine.playedCodes, ['01001', '23242'])
 })
 
-test('sequence position changes only after the target playback is confirmed started', async () => {
+test('concurrent Next commands do not start the same sequence item more than once', async () => {
   const { engine, service } = makeService()
   await service.playByMusicCode('1001')
   service.setNavigationSequence(['1001', '23242', '11'], 0)
@@ -385,15 +559,42 @@ test('sequence position changes only after the target playback is confirmed star
   const pendingNext = service.next()
   assert.deepEqual(engine.playedCodes, ['01001', '23242'])
   const repeatedNext = service.next()
-  assert.deepEqual(engine.playedCodes, ['01001', '23242', '23242'],
-    'while the start is unconfirmed, navigation must still target the same explicit next position')
+  const repeatedResult = await repeatedNext
+  assert.equal(repeatedResult.outcome, 'unavailable')
+  if (repeatedResult.outcome === 'unavailable') assert.equal(repeatedResult.reason, 'SEQUENCE_ITEM_STARTING')
+  assert.deepEqual(engine.playedCodes, ['01001', '23242'],
+    'while the start is unconfirmed, a repeated Next must not restart the same explicit item')
 
   firstStart.resolve({ status: 'playing', attemptId: 'attempt-first', musicCode: '23242' })
   assert.equal((await pendingNext).outcome, 'started')
   deferStart = false
-  assert.equal((await repeatedNext).outcome, 'started')
   assert.equal((await service.next()).outcome, 'started')
-  assert.deepEqual(engine.playedCodes, ['01001', '23242', '23242', '00011'])
+  assert.deepEqual(engine.playedCodes, ['01001', '23242', '00011'])
+})
+
+test('concurrent Previous commands do not start the same sequence item more than once', async () => {
+  const { engine, service } = makeService()
+  await service.playByMusicCode('23242')
+  service.setNavigationSequence(['1001', '23242', '11'], 1)
+  const firstStart = deferred<PlayerPlaybackState>()
+  engine.playResult = async code => {
+    if (code === '01001') return firstStart.promise
+    engine.state = { status: 'playing', attemptId: `attempt-${engine.calls.length}`, musicCode: code }
+    return engine.getState()
+  }
+
+  const pendingPrevious = service.previous()
+  assert.deepEqual(engine.playedCodes, ['23242', '01001'])
+  const repeatedPrevious = await service.previous()
+  assert.equal(repeatedPrevious.outcome, 'unavailable')
+  if (repeatedPrevious.outcome === 'unavailable') assert.equal(repeatedPrevious.reason, 'SEQUENCE_ITEM_STARTING')
+  assert.deepEqual(engine.playedCodes, ['23242', '01001'],
+    'while a previous item is starting, repeated navigation must not restart that item')
+
+  firstStart.resolve({ status: 'playing', attemptId: 'attempt-previous', musicCode: '01001' })
+  assert.equal((await pendingPrevious).outcome, 'started')
+  assert.equal((await service.previous()).outcome, 'boundary')
+  assert.deepEqual(engine.playedCodes, ['23242', '01001'])
 })
 
 test('manual controls delegate to the single playback engine', async () => {
@@ -420,4 +621,206 @@ test('disposed manual service rejects future commands', async () => {
   service.dispose()
   await assert.rejects(service.playByMusicCode('1001'), PlayerPlaybackError)
   assert.deepEqual(engine.calls, [])
+})
+
+test('a valid batch preserves code order and starts only its first item when idle', async () => {
+  const { engine, service } = makeService()
+
+  const result = await service.addBatchToSequence('1001, 23242\n33333 44444', 'batch-ordered')
+
+  assert.equal(result.outcome, 'started')
+  assert.deepEqual(result.acceptedCodes, ['01001', '23242', '33333', '44444'])
+  assert.deepEqual(engine.validatedCodes, ['01001', '23242', '33333', '44444'])
+  assert.deepEqual(engine.calls, ['play:01001'])
+  assert.deepEqual(service.getSequence().current?.musicCode, '01001')
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['23242', '33333', '44444'])
+})
+
+test('a batch validates atomically and reports invalid entries without changing an existing sequence', async () => {
+  const { engine, service } = makeService()
+  await service.addToSequence('55555')
+  const before = service.getSequence()
+  engine.validateResult = async code => {
+    if (code === '23242') throw new PlayerPlaybackError('MEDIA_UNKNOWN', 'indexed video not found')
+  }
+
+  const result = await service.addBatchToSequence('1001, invalid, 23242', 'batch-invalid')
+
+  assert.equal(result.outcome, 'failed')
+  assert.deepEqual(result.invalidEntries?.map(entry => entry.value), ['invalid', '23242'])
+  assert.deepEqual(service.getSequence(), before, 'no valid prefix may be committed when any item fails validation')
+  assert.deepEqual(engine.calls, [])
+})
+
+test('the same batch request id is idempotent, while distinct submissions can intentionally repeat a code', async () => {
+  const { engine, service } = makeService()
+  const first = await service.addBatchToSequence('1001, 23242', 'batch-idempotency')
+  const stateAfterFirst = service.getSequence()
+  const callCountAfterFirst = engine.calls.length
+
+  const retry = await service.addBatchToSequence('1001, 23242', 'batch-idempotency')
+  assert.deepEqual(retry, first, 'retrying a logical request returns the cached result')
+  assert.deepEqual(service.getSequence(), stateAfterFirst)
+  assert.equal(engine.calls.length, callCountAfterFirst)
+
+  const conflictingRetry = await service.addBatchToSequence('33333', 'batch-idempotency')
+  assert.equal(conflictingRetry.outcome, 'failed')
+  assert.equal(conflictingRetry.reason, 'REQUEST_ID_CONFLICT')
+  assert.deepEqual(service.getSequence(), stateAfterFirst)
+
+  const intentionalDuplicate = await service.addBatchToSequence('1001', 'batch-distinct-repeat')
+  assert.equal(intentionalDuplicate.outcome, 'queued')
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['23242', '01001'])
+  assert.equal(engine.calls.filter(call => call.startsWith('play:')).length, 1)
+})
+
+test('concurrent retries of the same batch request share one validation and one playback effect', async () => {
+  const { engine, service } = makeService()
+  const validation = deferred<void>()
+  engine.validateResult = () => validation.promise
+
+  const original = service.addBatchToSequence('1001 23242', 'batch-in-flight')
+  const retry = service.addBatchToSequence('1001 23242', 'batch-in-flight')
+  await Promise.resolve()
+  assert.deepEqual(engine.calls, [], 'no playback side effect may occur before batch validation completes')
+
+  validation.resolve()
+  const [firstResult, retryResult] = await Promise.all([original, retry])
+
+  assert.deepEqual(retryResult, firstResult)
+  assert.deepEqual(engine.validatedCodes, ['01001', '23242'], 'same request retry must not repeat batch validation')
+  assert.equal(engine.calls.filter(call => call === 'play:01001').length, 1)
+  assert.deepEqual(service.getSequence().current?.musicCode, '01001')
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['23242'])
+})
+
+test('batch additions during playback or pause append without interrupting or starting another item', async t => {
+  for (const paused of [false, true]) {
+    await t.test(paused ? 'paused' : 'playing', async () => {
+      const { engine, service } = makeService()
+      await service.playByMusicCode('55555')
+      if (paused) await service.pause()
+      const callsBefore = [...engine.calls]
+      const stateBefore = engine.getState()
+
+      const result = await service.addBatchToSequence('1001 23242', `batch-active-${paused}`)
+
+      assert.equal(result.outcome, 'queued')
+      assert.deepEqual(engine.calls, callsBefore, 'adding to the sequence cannot stop or replace active playback')
+      assert.deepEqual(engine.getState(), stateBefore, 'the current state and attempt are preserved')
+      assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['01001', '23242'])
+    })
+  }
+})
+
+test('a batch during media preparation queues without being treated as idle', async () => {
+  const engine = new PlaybackEngineDouble()
+  engine.state = { status: 'loading', attemptId: 'preparing-attempt', musicCode: '05555' }
+  const service = new ManualPlaybackService(engine)
+
+  const result = await service.addBatchToSequence('1001 23242', 'batch-preparing')
+
+  assert.equal(result.outcome, 'queued')
+  assert.deepEqual(engine.calls, [], 'preparing playback must not be replaced by an add action')
+  assert.deepEqual(engine.getState(), { status: 'loading', attemptId: 'preparing-attempt', musicCode: '05555' })
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['01001', '23242'])
+})
+
+test('a batch cannot start playback while recovery outcome is uncertain', async () => {
+  const engine = new PlaybackEngineDouble()
+  engine.state = { status: 'uncertain', errorCode: 'RECOVERY_PENDING', containmentStatus: 'unconfirmed' }
+  const service = new ManualPlaybackService(engine)
+
+  const result = await service.addBatchToSequence('1001', 'batch-recovery-blocked')
+
+  assert.ok(result.outcome === 'unavailable' || result.outcome === 'uncertain')
+  assert.notEqual(result.outcome, 'started')
+  assert.notEqual(result.outcome, 'queued')
+  assert.deepEqual(service.getSequence().pending, [])
+  assert.deepEqual(engine.validatedCodes, [])
+  assert.deepEqual(engine.calls, [])
+})
+
+test('a batch still starts explicitly when its validation completes after a natural EOF', async () => {
+  const { engine } = makeService()
+  const service = new ManualPlaybackService(engine, { autoAdvanceOnNaturalEnd: true })
+  await service.playByMusicCode('1001')
+  const validation = deferred<void>()
+  engine.validateResult = code => code === '23242' ? validation.promise : Promise.resolve()
+
+  const batch = service.addBatchToSequence('23242', 'batch-racing-final-eof')
+  await Promise.resolve()
+  assert.deepEqual(engine.validatedCodes, ['23242'])
+  const endedAttempt = engine.state.attemptId
+  engine.naturalEnd(endedAttempt, '01001')
+  assert.equal(service.getSequence().current, null)
+
+  validation.resolve()
+  const result = await batch
+  assert.equal(result.outcome, 'started')
+  assert.deepEqual(engine.playedCodes, ['01001', '23242'])
+  assert.equal(service.getSequence().current?.musicCode, '23242')
+  assert.deepEqual(service.getSequence().pending, [])
+})
+
+test('a batch validated during pending EOF auto-advance appends after the reserved item without starting it twice', async () => {
+  const { engine } = makeService()
+  const service = new ManualPlaybackService(engine, { autoAdvanceOnNaturalEnd: true })
+  await service.playByMusicCode('1001')
+  await service.addToSequence('23242')
+
+  const autoAdvanceStart = deferred<void>()
+  engine.playGate = autoAdvanceStart
+  const endedAttempt = engine.state.attemptId
+  engine.naturalEnd(endedAttempt, '01001')
+
+  assert.equal(engine.getState().status, 'completed', 'the next-item start remains unacknowledged behind the controlled gate')
+  assert.deepEqual(engine.calls.filter(call => call === 'play:23242'), ['play:23242'])
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['23242'])
+
+  const batchValidation = deferred<void>()
+  engine.validateResult = code => code === '33333' ? batchValidation.promise : Promise.resolve()
+  const batch = service.addBatchToSequence('33333', 'batch-during-auto-advance')
+  await Promise.resolve()
+  assert.equal(engine.validatedCodes.at(-1), '33333')
+  assert.equal(engine.getState().status, 'completed')
+
+  batchValidation.resolve()
+  const result = await batch
+  assert.equal(result.outcome, 'queued')
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['23242', '33333'])
+  assert.deepEqual(engine.calls.filter(call => call === 'play:23242'), ['play:23242'],
+    'the batch must not issue a second start for the item already reserved by EOF auto-advance')
+
+  autoAdvanceStart.resolve()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(engine.playedCodes, ['01001', '23242'])
+  assert.equal(service.getSequence().current?.musicCode, '23242')
+  assert.deepEqual(service.getSequence().pending.map(item => item.musicCode), ['33333'])
+})
+
+test('final natural EOF clears the selected song once and a stale EOF cannot clear a newer selection', async () => {
+  const { engine } = makeService()
+  const service = new ManualPlaybackService(engine, { autoAdvanceOnNaturalEnd: true })
+
+  const firstBatch = await service.addBatchToSequence('1001', 'batch-final-eof-first')
+  assert.equal(firstBatch.outcome, 'started')
+  const firstAttempt = engine.state.attemptId
+  engine.naturalEnd(firstAttempt, '01001')
+  assert.equal(service.getSequence().current, null)
+  assert.deepEqual(service.getSequence().pending, [])
+  assert.equal(service.getStatus().status, 'completed', 'natural completion remains distinct from Stop')
+  assert.deepEqual(engine.clearedMediaAttempts, [firstAttempt])
+
+  const secondBatch = await service.addBatchToSequence('23242', 'batch-final-eof-second')
+  assert.equal(secondBatch.outcome, 'started')
+  const secondCurrent = service.getSequence().current
+  assert.equal(secondCurrent?.musicCode, '23242')
+
+  engine.naturalEnd(firstAttempt, '01001')
+  assert.equal(service.getSequence().current?.id, secondCurrent?.id,
+    'a duplicate event for the completed attempt cannot clear the newer current item')
+  assert.deepEqual(engine.clearedMediaAttempts, [firstAttempt], 'the old attempt is asked to clear its media only once')
+  assert.equal(service.getStatus().attemptId, engine.state.attemptId)
+  assert.equal(service.getStatus().status, 'playing')
 })

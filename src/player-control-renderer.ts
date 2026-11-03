@@ -1,4 +1,4 @@
-import { isNewPlayerOutputReturn, isStalePlayerUiRevision, type KaraokePlayerBridge, type PlayerMusicMetadata, type PlayerUiSnapshot } from './player-ui-contracts'
+import { isCurrentPlayerShutdownDialogRequest, isCurrentRemovalOperationPending, isNewPlayerOutputReturn, isStalePlayerUiRevision, playerCurrentTrackCode, playerPlaybackEventNotice, type KaraokePlayerBridge, type PlayerMusicMetadata, type PlayerUiSnapshot } from './player-ui-contracts'
 import type { ManualSequenceItem } from './manual-playback-service'
 import type { PlayerPlaybackStatus } from './player-playback-contracts'
 
@@ -19,14 +19,18 @@ let metadataGeneration = 0
 let busy = false
 let recoverySelectionAttemptId: string | undefined
 let pendingShutdownAttemptId: string | undefined
+let shutdownDialogGeneration = 0
 let dismissedErrorKey: string | undefined
 let toastTimer: ReturnType<typeof setTimeout> | undefined
 let draggingSequenceId: string | undefined
-let activeView: 'manual' | 'settings' | 'video' = 'video'
+let activeView: 'manual' | 'settings' | 'mode' | 'video' = 'video'
+let inlineHiddenForShutdownDialog = false
 let lastInlineFullScreen: boolean | undefined
 let inlineBoundsFrameScheduled = false
 let returnToInlineRevision: number | undefined
 let inlineVisibilityQueue: Promise<void> = Promise.resolve()
+let requestedOperatingMode: 'controller' | 'player' | 'combined' = 'player'
+let pendingCurrentRemoval: { readonly itemId: string | null; readonly attemptId: string } | undefined
 
 function requireBridge(): KaraokePlayerBridge {
   if (!bridge) throw new Error('A interface segura do Reprodutor não foi carregada.')
@@ -60,9 +64,26 @@ function displayError(error: unknown): string {
     COMMAND_TIMEOUT: 'O Player não confirmou o comando dentro do prazo. O resultado permanece incerto.',
     PLAYER_ACTIVE: 'Pare a reprodução atual antes de alterar a biblioteca de vídeos.',
     PLAYBACK_FAILED: 'O vídeo não pôde ser reproduzido. A sequência não avançou.',
+    BATCH_VALIDATION_FAILED: 'Nenhuma música foi adicionada. Corrija os códigos destacados e tente novamente.',
+    EMPTY_BATCH: 'Digite um ou mais códigos de música.',
+    BATCH_LIMIT_EXCEEDED: 'Adicione no máximo 100 músicas por vez.',
+    INVALID_BATCH_INPUT: 'A lista de códigos é inválida.',
+    REQUEST_ID_CONFLICT: 'A lista mudou enquanto o envio anterior estava sendo confirmado. Envie novamente.',
+    PLAYBACK_FAILED_REQUIRES_DECISION: 'Resolva a falha da música atual antes de adicionar uma nova sequência.',
+    STALE_CURRENT_SELECTION: 'A música atual mudou. Atualize a tela antes de tentar removê-la.',
+    CURRENT_REMOVAL_IN_PROGRESS: 'A remoção da música atual já está sendo confirmada.',
+    MEDIA_CLEAR_UNCONFIRMED: 'A parada foi confirmada, mas o Player não confirmou a limpeza da mídia.',
+    MODE_NOT_AVAILABLE: 'O modo Tudo em um ainda não está disponível.',
+    MODE_CHANGE_PLAYER_ACTIVE: 'Interrompa a reprodução com segurança antes de alterar o modo.',
+    MODE_CHANGE_PENDING_SEQUENCE: 'Esvazie a sequência local antes de alterar o modo.',
+    MODE_CHANGE_IN_PROGRESS: 'A troca de modo já está em andamento.',
+    MODE_CHANGE_OPERATION_IN_PROGRESS: 'Aguarde a conclusão da operação atual antes de alterar o modo.',
+    MODE_CHANGE_UNAVAILABLE: 'A troca de modo não está disponível nesta execução.',
+    INVALID_OPERATING_MODE: 'O modo selecionado não está disponível.',
     VIDEO_LIBRARY_BUSY: 'A biblioteca está sendo atualizada. Aguarde e tente novamente.'
   }
-  const code = Object.keys(messages).find(candidate => raw.includes(candidate))
+  const code = Object.keys(messages).sort((left, right) => right.length - left.length)
+    .find(candidate => raw.includes(candidate))
   if (code) return messages[code]
   if (raw.includes('INVALID_RECOVERY')) return 'A decisão de recuperação ficou desatualizada. Atualize o estado e tente novamente.'
   if (raw.includes('CANCELED') || raw.includes('cancelled')) return 'A operação foi cancelada.'
@@ -107,7 +128,9 @@ function headerStatus(snapshot: PlayerUiSnapshot): { label: string; state: strin
     case 'stopping': return { label: 'Parando', state: 'warning' }
     case 'failed': return { label: 'Falha na reprodução', state: 'error' }
     case 'uncertain': case 'disposed': return { label: 'Resultado incerto', state: 'warning' }
-    case 'stopped': case 'completed': return { label: 'Parada', state: 'neutral' }
+    case 'stopped': return { label: 'Parada', state: 'neutral' }
+    case 'completed': return snapshot.sequence.current
+      ? { label: 'Término normal', state: 'neutral' } : { label: 'Sem música', state: 'neutral' }
     default: return { label: 'Sem música', state: 'neutral' }
   }
 }
@@ -143,7 +166,7 @@ function requestMetadata(codes: string[]): void {
 
 function requestVisibleMetadata(): void {
   if (!snapshot) return
-  const activeCode = snapshot.playback.musicCode ?? snapshot.sequence.current?.musicCode ?? ''
+  const activeCode = snapshot.sequence.current?.musicCode ?? (snapshot.playback.status === 'completed' ? '' : snapshot.playback.musicCode ?? '')
   const recoveryCode = snapshot.recovery.status === 'pending' ? snapshot.recovery.musicCode : ''
   requestMetadata([activeCode, recoveryCode, ...snapshot.sequence.pending.map(item => item.musicCode)])
 }
@@ -310,18 +333,19 @@ async function moveSequenceItem(index: number, direction: -1 | 1): Promise<void>
   await runCommand(() => requireBridge().reorderSequence(ids))
 }
 
-function setView(view: 'manual' | 'settings' | 'video'): void {
+function setView(view: 'manual' | 'settings' | 'mode' | 'video'): void {
   activeView = view
+  document.body.dataset.playerView = view
   byId('player-manual-view').hidden = view !== 'manual'
   byId('player-settings-view').hidden = view !== 'settings'
+  byId('player-mode-view').hidden = view !== 'mode'
   byId('player-video-view').hidden = view !== 'video'
-  byId<HTMLButtonElement>('player-nav-video').hidden = view === 'settings'
-  byId<HTMLButtonElement>('player-nav-manual').hidden = view === 'settings'
   byId<HTMLButtonElement>('player-nav-video').setAttribute('aria-current', String(view === 'video' ? 'page' : 'false'))
   byId<HTMLButtonElement>('player-nav-manual').setAttribute('aria-current', String(view === 'manual' ? 'page' : 'false'))
-  byId('player-header-status').hidden = view === 'settings'
-  byId<HTMLButtonElement>('player-nav-settings').hidden = view === 'settings'
-  byId<HTMLButtonElement>('player-nav-back').hidden = view !== 'settings'
+  const libraryNotReady = snapshot?.library.status === 'not-configured' || snapshot?.library.status === 'empty'
+  byId('player-header-status').hidden = libraryNotReady && view !== 'settings' && view !== 'mode'
+  byId<HTMLButtonElement>('player-nav-settings').hidden = view === 'settings' || view === 'mode'
+  byId<HTMLButtonElement>('player-nav-back').hidden = view !== 'settings' && view !== 'mode'
   document.body.dataset.playerFullscreen = String(view === 'video' && snapshot?.videoWindow.location === 'inline' && snapshot.videoWindow.fullScreen)
   if (view === 'video') {
     if (snapshot?.videoWindow.location === 'inline') scheduleInlineBoundsUpdate()
@@ -347,7 +371,9 @@ function scheduleInlineBoundsUpdate(): void {
   requestAnimationFrame(() => {
     inlineBoundsFrameScheduled = false
     if (activeView !== 'video' || snapshot?.videoWindow.location !== 'inline') return
-    void requireBridge().updatePlayerInlineBounds(currentInlineBounds()).catch(() => undefined)
+    const revision = snapshot?.videoWindow.inlineLayoutRevision
+    if (revision === undefined) return
+    void requireBridge().updatePlayerInlineBounds(currentInlineBounds(), revision).catch(() => undefined)
   })
 }
 
@@ -381,7 +407,7 @@ async function detachPlayerToWindow(): Promise<void> {
 function render(): void {
   if (!snapshot) return
   const { playback, library, sequence, progress, recovery } = snapshot
-  const activeCode = playback.musicCode ?? sequence.current?.musicCode ?? ''
+  const activeCode = playerCurrentTrackCode(sequence.current?.musicCode, playback) ?? ''
   const status = statusLabel(playback.status)
   const header = headerStatus(snapshot)
   const headerStatusNode = byId('player-header-status')
@@ -409,7 +435,13 @@ function render(): void {
   byId('player-current-artist').textContent = activeInfo?.artist ?? ''
   byId('player-current-artist').hidden = !activeInfo?.artist
   byId('player-current-content').dataset.hasCurrent = String(hasSelectedMusic)
-  byId('player-track-actions').hidden = !hasSelectedMusic
+  byId('player-track-actions').hidden = !hasSelectedMusic && sequence.previous.length === 0 && sequence.pending.length === 0
+  const hasSequenceCurrent = Boolean(sequence.current && sequence.current.musicCode === activeCode)
+  const hasNavigableAttempt = Boolean(playback.attemptId) && ['playing', 'paused'].includes(playback.status)
+  const sequencePosition = byId('player-sequence-position')
+  sequencePosition.hidden = !hasSequenceCurrent
+  sequencePosition.textContent = hasSequenceCurrent
+    ? `${sequence.previous.length + 1} de ${sequence.previous.length + 1 + sequence.pending.length}` : ''
   const currentNote = byId('player-current-note')
   currentNote.hidden = playback.status !== 'stopped'
   currentNote.textContent = playback.status === 'stopped'
@@ -432,9 +464,31 @@ function render(): void {
     : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 12 7-12 7z"/></svg>'
   byId<HTMLButtonElement>('player-restart').disabled = !canCommand || !hasAttempt || playback.status === 'stopped'
   byId<HTMLButtonElement>('player-stop').disabled = !canCommand || !hasAttempt || playback.status === 'stopped'
-  byId<HTMLButtonElement>('player-add-sequence').disabled = busy || recovery.status === 'pending' || recovery.status === 'unreadable' || recovery.status === 'unavailable' || library.status !== 'available'
-  byId<HTMLButtonElement>('player-play-now').disabled = busy || recovery.status === 'unreadable' || recovery.status === 'unavailable' || library.status !== 'available'
-  byId<HTMLInputElement>('player-code').disabled = busy || recovery.status === 'unreadable' || recovery.status === 'unavailable'
+  byId<HTMLButtonElement>('player-previous').disabled = !canCommand || sequence.previous.length === 0
+  byId<HTMLButtonElement>('player-next').disabled = !canCommand || sequence.pending.length === 0
+  const videoTrack = byId('player-video-current')
+  videoTrack.hidden = !activeCode
+  byId('player-video-current-code').textContent = activeCode ? displayCode(activeCode) : ''
+  const videoTitle = byId('player-video-current-title')
+  videoTitle.textContent = activeInfo?.metadataAvailable ? activeInfo.title ?? '' : ''
+  videoTitle.hidden = !activeCode || !activeInfo?.metadataAvailable || !activeInfo.title
+  const videoArtist = byId('player-video-current-artist')
+  videoArtist.textContent = activeInfo?.metadataAvailable ? activeInfo.artist ?? '' : ''
+  videoArtist.hidden = !activeCode || !activeInfo?.metadataAvailable || !activeInfo.artist
+  byId('player-video-current-metadata-missing').hidden = !activeCode || Boolean(activeInfo?.metadataAvailable)
+  byId<HTMLButtonElement>('player-video-previous').disabled = !canCommand || sequence.previous.length === 0
+  byId<HTMLButtonElement>('player-video-next').disabled = !canCommand || sequence.pending.length === 0
+  byId<HTMLButtonElement>('player-video-stop').disabled = !canCommand || !hasAttempt || playback.status === 'stopped'
+  const videoToggle = byId<HTMLButtonElement>('player-video-toggle')
+  videoToggle.disabled = !canCommand || !activeCode || (!canToggle && !canReplayStopped)
+  videoToggle.title = toggle.title
+  videoToggle.setAttribute('aria-label', toggle.getAttribute('aria-label') ?? 'Reproduzir')
+  videoToggle.innerHTML = toggle.innerHTML
+  const currentMenu = byId<HTMLButtonElement>('player-current-menu')
+  currentMenu.disabled = !canCommand || !hasNavigableAttempt
+  byId<HTMLButtonElement>('player-current-remove').disabled = !canCommand || !hasNavigableAttempt
+  byId<HTMLButtonElement>('player-add-sequence').disabled = busy || (recovery.status === 'pending' && !recoverySelectionAttemptId) || recovery.status === 'unreadable' || recovery.status === 'unavailable' || library.status !== 'available'
+  byId<HTMLTextAreaElement>('player-code').disabled = busy || recovery.status === 'unreadable' || recovery.status === 'unavailable'
 
   const sequenceNode = byId('player-sequence')
   sequenceNode.replaceChildren(...sequence.pending.map((item, index) => renderSequenceItem(item, index, sequence.pending.length)))
@@ -457,7 +511,7 @@ function render(): void {
   lastInlineFullScreen = inlineFullscreen
 
   const libraryNotReady = library.status === 'not-configured' || library.status === 'empty'
-  byId('player-header-status').hidden = activeView === 'settings' || libraryNotReady
+  byId('player-header-status').hidden = libraryNotReady && activeView !== 'settings'
   byId('player-manual-view').dataset.libraryEmpty = String(libraryNotReady)
   byId('player-library-empty-view').hidden = !libraryNotReady
   byId('player-manual-content').hidden = libraryNotReady
@@ -478,9 +532,11 @@ function render(): void {
   byId<HTMLButtonElement>('player-library-configure-warning').hidden = library.status === 'indexing'
   byId<HTMLButtonElement>('player-library-configure-warning').textContent = library.configuredFolders.length ? 'Alterar pasta' : 'Configurar'
   byId<HTMLButtonElement>('player-library-configure-warning').disabled = busy
-  byId<HTMLButtonElement>('player-nav-settings').hidden = activeView === 'settings'
+  byId<HTMLButtonElement>('player-nav-settings').hidden = activeView === 'settings' || activeView === 'mode'
 
   renderSettings()
+  renderModeSettings()
+  syncCurrentRemovalDialog()
   requestVisibleMetadata()
   updateRecoveryDialogs()
   updateErrorDialog()
@@ -518,6 +574,23 @@ function renderSettings(): void {
   importButton.disabled = busy
 }
 
+function renderModeSettings(): void {
+  if (!snapshot) return
+  const modeLabels = { controller: 'Controlador', player: 'Reprodutor', combined: 'Tudo em um' } as const
+  byId('player-mode-current').textContent = modeLabels[snapshot.mode]
+  const modeButtons = [
+    ['controller', 'player-mode-controller'], ['player', 'player-mode-player'], ['combined', 'player-mode-combined']
+  ] as const
+  for (const [mode, id] of modeButtons) {
+    const button = byId<HTMLButtonElement>(id)
+    const selected = requestedOperatingMode === mode
+    button.setAttribute('aria-checked', String(selected))
+    button.classList.toggle('is-selected', selected)
+    button.classList.toggle('is-current', snapshot.mode === mode)
+  }
+  byId<HTMLButtonElement>('player-mode-change').disabled = busy || requestedOperatingMode === snapshot.mode || requestedOperatingMode === 'combined'
+}
+
 function updateRecoveryDialogs(): void {
   if (!snapshot) return
   const recovery = snapshot.recovery
@@ -540,7 +613,7 @@ function updateRecoveryDialogs(): void {
     byId('invalid-recovery-message').querySelector('span')!.textContent = summary?.message ?? 'A reprodução permanece bloqueada até uma decisão segura.'
     if (!invalidDialog.open) invalidDialog.showModal()
   } else if (invalidDialog.open) invalidDialog.close()
-  for (const selector of ['player-code', 'player-add-sequence', 'player-play-now', 'player-toggle', 'player-restart', 'player-stop']) {
+  for (const selector of ['player-code', 'player-add-sequence', 'player-toggle', 'player-restart', 'player-stop']) {
     byId(selector).toggleAttribute('aria-disabled', invalid)
   }
 }
@@ -586,8 +659,83 @@ async function runCommand(command: () => Promise<unknown>): Promise<boolean> {
   return succeeded
 }
 
+function closeCurrentMenu(): void {
+  const menu = byId('player-current-menu-popover')
+  menu.hidden = true
+  byId<HTMLButtonElement>('player-current-menu').setAttribute('aria-expanded', 'false')
+}
+
+function openCurrentRemovalDialog(): void {
+  const current = snapshot?.sequence.current
+  const playback = snapshot?.playback
+  const musicCode = current?.musicCode ?? playback?.musicCode
+  if (!musicCode || !playback?.attemptId || !['playing', 'paused'].includes(playback.status)) return
+  pendingCurrentRemoval = { itemId: current?.id ?? null, attemptId: playback.attemptId }
+  const info = titleAndArtist(musicCode)
+  byId('player-remove-current-code').textContent = displayCode(musicCode)
+  byId('player-remove-current-title-song').textContent = info.metadataAvailable && info.title ? ` — ${info.title}` : ''
+  byId('player-remove-current-artist').textContent = info.artist ?? ''
+  byId('player-remove-current-artist').hidden = !info.artist
+  const badge = byId('player-remove-current-status')
+  badge.dataset.state = playback.status
+  badge.querySelector('span')!.textContent = playback.status === 'playing' ? `Em reprodução · ${formatTime(snapshot?.progress?.currentTime)}` : 'Pausada'
+  const others = snapshot!.sequence.previous.length + snapshot!.sequence.pending.length
+  byId('player-remove-current-pending').textContent = others === 0
+    ? 'Não há outras músicas na sequência.'
+    : others === 1 ? 'A outra música permanece na sequência.' : `As outras ${others} músicas permanecem na sequência.`
+  closeCurrentMenu()
+  byId<HTMLDialogElement>('player-remove-current-modal').showModal()
+}
+
+function syncCurrentRemovalDialog(): void {
+  if (!pendingCurrentRemoval) return
+  const current = snapshot?.sequence.current
+  const playback = snapshot?.playback
+  const sameSelection = pendingCurrentRemoval.itemId === null
+    ? current === null
+    : current?.id === pendingCurrentRemoval.itemId
+  const stillActive = playback?.attemptId === pendingCurrentRemoval.attemptId &&
+    ['loading', 'ready', 'starting', 'playing', 'paused'].includes(playback.status)
+  const removalPending = isCurrentRemovalOperationPending(busy, pendingCurrentRemoval.attemptId, playback?.attemptId)
+  if ((sameSelection && stillActive) || removalPending) return
+  const dialog = byId<HTMLDialogElement>('player-remove-current-modal')
+  if (dialog.open) dialog.close()
+  pendingCurrentRemoval = undefined
+}
+
+async function confirmRemoveCurrent(): Promise<void> {
+  if (busy || !pendingCurrentRemoval) return
+  const target = pendingCurrentRemoval
+  const dialog = byId<HTMLDialogElement>('player-remove-current-modal')
+  const confirm = byId<HTMLButtonElement>('player-remove-current-confirm')
+  busy = true
+  confirm.disabled = true
+  confirm.innerHTML = '<span>Parando…</span>'
+  render()
+  try {
+    const result = await requireBridge().removeCurrent(target.itemId, target.attemptId)
+    if (result.outcome === 'accepted') {
+      if (dialog.open) dialog.close()
+      pendingCurrentRemoval = undefined
+    } else {
+      showToast(displayError('reason' in result ? result.reason : result.outcome))
+      if (dialog.open) dialog.close()
+      pendingCurrentRemoval = undefined
+    }
+  } catch (error) {
+    showToast(displayError(error))
+    if (dialog.open) dialog.close()
+    pendingCurrentRemoval = undefined
+  } finally {
+    busy = false
+    confirm.disabled = false
+    confirm.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16m-10 4v7m4-7v7M6 7l1 14h10l1-14M9 7V4h6v3"/></svg>Parar e remover'
+    await refreshSnapshot()
+  }
+}
+
 async function playNow(): Promise<boolean> {
-  const code = byId<HTMLInputElement>('player-code').value.trim()
+  const code = byId<HTMLTextAreaElement>('player-code').value.trim()
   if (!code) { showToast('Digite o código da música.'); byId('player-code').focus(); return false }
   try {
     if (snapshot?.videoWindow.location !== 'window' &&
@@ -600,6 +748,73 @@ async function playNow(): Promise<boolean> {
     return succeeded
   }
   return runCommand(() => requireBridge().playNow(code))
+}
+
+function formatBatchIssues(issues: readonly { readonly index: number; readonly value: string; readonly reason: string }[]): string {
+  const reasons: Record<string, string> = {
+    INVALID_MUSIC_CODE: 'código inválido', MEDIA_UNAVAILABLE: 'vídeo indisponível',
+    MEDIA_AMBIGUOUS: 'vídeo ambíguo', MEDIA_UNKNOWN: 'disponibilidade não confirmada'
+  }
+  return issues.map(issue => `${issue.index}. ${issue.value.slice(0, 32)} — ${reasons[issue.reason] ?? 'não disponível'}`).join(' · ')
+}
+
+async function addCodesToSequence(): Promise<void> {
+  if (busy) return
+  const input = byId<HTMLTextAreaElement>('player-code')
+  const rawText = input.value
+  if (!rawText.trim()) { showToast('Digite um ou mais códigos de música.'); input.focus(); return }
+  byId('player-batch-errors').hidden = true
+  busy = true
+  render()
+  let succeeded = false
+  try {
+    if (recoverySelectionAttemptId) {
+      const codes = rawText.trim().split(/[\s,]+/).filter(Boolean)
+      if (codes.length !== 1) {
+        showToast('Escolha apenas um código para resolver a reprodução interrompida.')
+        return
+      }
+      const attemptId = recoverySelectionAttemptId
+      const result = await requireBridge().chooseAnotherRecovery(attemptId, codes[0])
+      if (result.outcome === 'started') {
+        recoverySelectionAttemptId = undefined
+        succeeded = true
+      } else showToast(displayError('reason' in result ? result.reason : result.outcome))
+    } else {
+      const result = await requireBridge().addBatchToSequence(rawText, crypto.randomUUID())
+      if (result.outcome === 'started' || result.outcome === 'queued') succeeded = true
+      else if (result.outcome === 'failed' && result.invalidEntries?.length) {
+        const errors = byId('player-batch-errors')
+        errors.textContent = formatBatchIssues(result.invalidEntries)
+        errors.hidden = false
+        showToast('Nenhuma música foi adicionada. Revise os códigos destacados.')
+      } else showToast(displayError('reason' in result ? result.reason : result.outcome))
+    }
+  } catch (error) { showToast(displayError(error)) }
+  finally {
+    busy = false
+    if (succeeded) input.value = ''
+    await refreshSnapshot()
+  }
+}
+
+async function requestOperatingModeChange(): Promise<void> {
+  if (busy || requestedOperatingMode !== 'controller') return
+  busy = true
+  const error = byId('player-mode-error')
+  error.hidden = true
+  render()
+  try {
+    await requireBridge().changeOperatingMode('controller')
+    error.textContent = 'O aplicativo será reiniciado para aplicar o modo Controlador.'
+    error.hidden = false
+  } catch (reason) {
+    error.textContent = displayError(reason)
+    error.hidden = false
+  } finally {
+    busy = false
+    render()
+  }
 }
 
 async function selectLibraryFolder(): Promise<void> {
@@ -625,10 +840,23 @@ async function refreshLibrary(): Promise<void> {
 function bind(): void {
   window.addEventListener('resize', scheduleInlineBoundsUpdate)
   setView('video')
+  let windowTipDismissed = false
+  try {
+    windowTipDismissed = window.localStorage.getItem('player-window-tip-dismissed') === 'true'
+  } catch { /* A failed local preference read must not block playback controls. */ }
+  void requireBridge().setWindowTipVisible(!windowTipDismissed).catch(() => undefined)
+  requireBridge().onWindowTipDismissed(permanentlyDismissed => {
+    if (!permanentlyDismissed) return
+    try { window.localStorage.setItem('player-window-tip-dismissed', 'true') } catch { /* The tip stays dismissed for this run. */ }
+  })
   byId('player-nav-settings').addEventListener('click', () => setView('settings'))
+  byId('player-open-mode-settings').addEventListener('click', () => setView('mode'))
   byId('player-nav-video').addEventListener('click', () => { void showPlayerInline().catch(error => showToast(displayError(error))) })
   byId('player-nav-manual').addEventListener('click', () => { void navigateToManual().catch(error => showToast(displayError(error))) })
-  byId('player-nav-back').addEventListener('click', () => { void navigateToManual().catch(error => showToast(displayError(error))) })
+  byId('player-nav-back').addEventListener('click', () => {
+    if (activeView === 'mode') { setView('settings'); return }
+    void navigateToManual().catch(error => showToast(displayError(error)))
+  })
   byId('player-detach-video').addEventListener('click', () => { void detachPlayerToWindow() })
   byId('player-inline-fullscreen').addEventListener('click', () => { void requireBridge().toggleVideoFullScreen().catch(error => showToast(displayError(error))) })
   byId('player-library-configure').addEventListener('click', () => { setView('settings'); void selectLibraryFolder() })
@@ -645,27 +873,58 @@ function bind(): void {
     finally { busy = false; await refreshSnapshot() }
   })
 
-  const input = byId<HTMLInputElement>('player-code')
-  input.addEventListener('input', () => { input.value = input.value.replace(/\D/g, '').slice(0, 5) })
+  const input = byId<HTMLTextAreaElement>('player-code')
+  input.addEventListener('input', () => {
+    const errors = byId('player-batch-errors')
+    errors.hidden = true
+    errors.textContent = ''
+  })
   input.addEventListener('keydown', event => {
-    if (event.key === 'Enter') void playNow().then(succeeded => { if (succeeded) input.value = '' })
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault()
+      void addCodesToSequence()
+    }
   })
-  byId('player-add-sequence').addEventListener('click', () => {
-    const value = input.value.trim()
-    if (!value) { showToast('Digite o código da música.'); input.focus(); return }
-    void runCommand(() => requireBridge().addToSequence(value)).then(succeeded => { if (succeeded) input.value = '' })
-  })
-  byId('player-play-now').addEventListener('click', () => { void playNow().then(succeeded => { if (succeeded) input.value = '' }) })
-  byId('player-toggle').addEventListener('click', () => {
+  byId('player-add-sequence').addEventListener('click', () => { void addCodesToSequence() })
+  byId('player-mode-controller').addEventListener('click', () => { requestedOperatingMode = 'controller'; renderModeSettings() })
+  byId('player-mode-player').addEventListener('click', () => { requestedOperatingMode = 'player'; renderModeSettings() })
+  byId('player-mode-change').addEventListener('click', () => { void requestOperatingModeChange() })
+  const togglePlayback = () => {
     if (!snapshot) return
     if (snapshot.playback.status === 'playing') { void runCommand(() => requireBridge().pause()); return }
     if (snapshot.playback.status === 'paused') { void runCommand(() => requireBridge().resume()); return }
     if (snapshot.playback.status === 'stopped' || snapshot.playback.status === 'completed') {
       void runCommand(() => requireBridge().restart())
     }
-  })
+  }
+  byId('player-toggle').addEventListener('click', togglePlayback)
+  byId('player-video-toggle').addEventListener('click', togglePlayback)
   byId('player-restart').addEventListener('click', () => { void runCommand(() => requireBridge().restart()) })
   byId('player-stop').addEventListener('click', () => { void runCommand(() => requireBridge().stop()) })
+  const navigatePrevious = () => { void runCommand(() => requireBridge().previous()) }
+  const navigateNext = () => { void runCommand(() => requireBridge().next()) }
+  byId('player-previous').addEventListener('click', navigatePrevious)
+  byId('player-video-previous').addEventListener('click', navigatePrevious)
+  byId('player-next').addEventListener('click', navigateNext)
+  byId('player-video-next').addEventListener('click', navigateNext)
+  byId('player-video-stop').addEventListener('click', () => { void runCommand(() => requireBridge().stop()) })
+  const currentMenuButton = byId<HTMLButtonElement>('player-current-menu')
+  currentMenuButton.addEventListener('click', () => {
+    const menu = byId('player-current-menu-popover')
+    menu.hidden = !menu.hidden
+    currentMenuButton.setAttribute('aria-expanded', String(!menu.hidden))
+  })
+  byId('player-current-remove').addEventListener('click', openCurrentRemovalDialog)
+  byId('player-remove-current-cancel').addEventListener('click', () => {
+    byId<HTMLDialogElement>('player-remove-current-modal').close()
+    pendingCurrentRemoval = undefined
+  })
+  byId('player-remove-current-confirm').addEventListener('click', () => { void confirmRemoveCurrent() })
+  byId<HTMLDialogElement>('player-remove-current-modal').addEventListener('cancel', () => { pendingCurrentRemoval = undefined })
+  document.addEventListener('click', event => {
+    if (!(event.target instanceof Element) || !event.target.closest('#player-current-menu-popover, #player-current-menu')) closeCurrentMenu()
+  })
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') closeCurrentMenu() })
   byId('player-sequence-clear').addEventListener('click', () => { void runCommand(() => requireBridge().clearSequence()) })
 
   byId('recovery-replay').addEventListener('click', () => {
@@ -728,11 +987,23 @@ function bind(): void {
   })
 
   byId('player-close-cancel').addEventListener('click', async () => {
-    if (!pendingShutdownAttemptId) return
+    const attemptId = pendingShutdownAttemptId
+    if (!attemptId) return
+    const cancelGeneration = shutdownDialogGeneration
     try {
-      await requireBridge().cancelShutdown(pendingShutdownAttemptId)
+      await requireBridge().cancelShutdown(attemptId)
+      if (!isCurrentPlayerShutdownDialogRequest(cancelGeneration, shutdownDialogGeneration,
+        attemptId, pendingShutdownAttemptId)) return
+      shutdownDialogGeneration++
       pendingShutdownAttemptId = undefined
       byId<HTMLDialogElement>('player-close-confirm').close()
+      if (inlineHiddenForShutdownDialog && activeView === 'video' && snapshot?.videoWindow.location === 'inline') {
+        await enqueueInlineVisibility(async () => {
+          const restored = await requireBridge().setPlayerInlineVisible(true)
+          if (!restored) throw new Error('PLAYER_INLINE_SURFACE_UNAVAILABLE')
+          inlineHiddenForShutdownDialog = false
+        })
+      }
     } catch (error) { showToast(displayError(error)); await refreshSnapshot() }
   })
   byId('player-close-stop').addEventListener('click', async () => {
@@ -759,14 +1030,32 @@ function bind(): void {
   }
 
   requireBridge().onSnapshot(applySnapshot)
-  requireBridge().onPlaybackEvent(() => { void refreshSnapshot() })
+  requireBridge().onPlaybackEvent(event => {
+    const notice = playerPlaybackEventNotice(event)
+    if (notice) showToast(notice)
+    void refreshSnapshot()
+  })
   requireBridge().onShutdownRequest(request => {
+    const requestGeneration = ++shutdownDialogGeneration
     pendingShutdownAttemptId = request.attemptId
     byId('shutdown-code').textContent = request.musicCode ? displayCode(request.musicCode) : '—'
     const details = request.musicCode ? titleAndArtist(request.musicCode) : undefined
     byId('shutdown-song').textContent = details?.metadataAvailable ? ` — ${details.title}${details.artist ? ` · ${details.artist}` : ''}` : ''
     byId('shutdown-song').hidden = !details?.metadataAvailable
-    byId<HTMLDialogElement>('player-close-confirm').showModal()
+    void (async () => {
+      if (activeView === 'video' && snapshot?.videoWindow.location === 'inline') {
+        try {
+          await enqueueInlineVisibility(async () => {
+            inlineHiddenForShutdownDialog = await requireBridge().setPlayerInlineVisible(false)
+            if (!inlineHiddenForShutdownDialog) throw new Error('PLAYER_INLINE_SURFACE_UNAVAILABLE')
+          })
+        } catch (error) { showToast(displayError(error)) }
+      }
+      if (!isCurrentPlayerShutdownDialogRequest(requestGeneration, shutdownDialogGeneration,
+        request.attemptId, pendingShutdownAttemptId)) return
+      const dialog = byId<HTMLDialogElement>('player-close-confirm')
+      if (!dialog.open) dialog.showModal()
+    })()
     if (request.musicCode) requestMetadata([request.musicCode])
   })
   void refreshSnapshot().then(() => {

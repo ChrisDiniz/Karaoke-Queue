@@ -16,6 +16,7 @@ class ControlledHost implements PlayerPlaybackHost {
   nextPlayAcknowledgement: Promise<void> | undefined
   nextPauseAcknowledgement: Promise<void> | undefined
   nextStopAcknowledgement: Promise<void> | undefined
+  nextClearError: Error | undefined
   terminateCalls = 0
   terminationConfirmed = true
   emitTerminationOnTerminate = true
@@ -34,6 +35,7 @@ class ControlledHost implements PlayerPlaybackHost {
     if (command.type === 'play' && this.nextPlayAcknowledgement) await this.nextPlayAcknowledgement
     if (command.type === 'pause' && this.nextPauseAcknowledgement) await this.nextPauseAcknowledgement
     if (command.type === 'stop' && this.nextStopAcknowledgement) await this.nextStopAcknowledgement
+    if (command.type === 'clear' && this.nextClearError) throw this.nextClearError
   }
 
   whenCommand(type: PlayerPlaybackHostCommand['type']): Promise<PlayerPlaybackHostCommand> {
@@ -424,6 +426,87 @@ test('a valid natural end is emitted once; duplicate terminal events are ignored
 
     assert.equal(context.service.getState().status, 'completed')
     assert.equal(context.events.filter(event => event.type === 'natural-end-candidate').length, 1)
+  } finally { await context.cleanup() }
+})
+
+test('confirmed final EOF clears only the matching media attempt and resets in-memory progress', async () => {
+  const context = await setup()
+  try {
+    await context.service.load('01001')
+    const attemptId = context.service.getState().attemptId!
+    context.host.media(attemptId, 1, { type: 'loadedmetadata', duration: 20 })
+    await settleEvents()
+    await context.service.play()
+    context.host.media(attemptId, 2, { type: 'playing', currentTime: 1, duration: 20 })
+    context.host.media(attemptId, 3, { type: 'timeupdate', currentTime: 12, duration: 20 })
+    await settleEvents()
+    context.host.media(attemptId, 4, { type: 'ended', currentTime: 20, duration: 20 })
+    await settleEvents()
+
+    assert.equal(context.service.getState().status, 'completed')
+    assert.equal(context.service.getProgress(), null, 'confirmed natural completion must not expose stale elapsed time')
+    assert.equal(await context.service.clearCompletedMedia('old-attempt'), false,
+      'a stale completion identity cannot clear a selected media source')
+    assert.equal(context.host.commands.some(command => command.type === 'clear'), false)
+
+    assert.equal(await context.service.clearCompletedMedia(attemptId), true)
+    const clear = context.host.commands.at(-1)
+    assert.equal(clear?.type, 'clear')
+    assert.equal(clear?.attemptId, attemptId)
+    assert.equal(context.service.getState().status, 'idle', 'confirmed media cleanup returns the visual service to idle')
+    assert.equal(context.service.getState().musicCode, undefined)
+    assert.equal(context.service.getProgress(), null)
+    assert.equal(await context.service.clearCompletedMedia(attemptId), false, 'duplicate cleanup is idempotent')
+  } finally { await context.cleanup() }
+})
+
+test('a failed final-frame clear destroys only the playback host when termination is confirmed', async () => {
+  const context = await setup()
+  try {
+    await context.service.load('01001')
+    const attemptId = context.service.getState().attemptId!
+    context.host.media(attemptId, 1, { type: 'loadedmetadata', duration: 20 })
+    await settleEvents()
+    await context.service.play()
+    context.host.media(attemptId, 2, { type: 'playing', currentTime: 0, duration: 20 })
+    await settleEvents()
+    context.host.media(attemptId, 3, { type: 'ended', currentTime: 20, duration: 20 })
+    await settleEvents()
+    context.host.nextClearError = new PlayerPlaybackError('COMMAND_TIMEOUT', 'clear acknowledgement timed out')
+
+    assert.equal(await context.service.clearCompletedMedia(attemptId), true)
+    assert.equal(context.host.terminateCalls, 1)
+    assert.equal(context.host.disposed, true)
+    assert.equal(context.service.getState().status, 'completed',
+      'Removing the surface must preserve the already-confirmed natural completion.')
+    assert.equal(context.service.getState().attemptId, attemptId)
+  } finally { await context.cleanup() }
+})
+
+test('an unconfirmed final-frame clear remains an explicit containment failure', async () => {
+  const context = await setup()
+  try {
+    await context.service.load('01001')
+    const attemptId = context.service.getState().attemptId!
+    context.host.media(attemptId, 1, { type: 'loadedmetadata', duration: 20 })
+    await settleEvents()
+    await context.service.play()
+    context.host.media(attemptId, 2, { type: 'playing', currentTime: 0, duration: 20 })
+    await settleEvents()
+    context.host.media(attemptId, 3, { type: 'ended', currentTime: 20, duration: 20 })
+    await settleEvents()
+    context.host.nextClearError = new PlayerPlaybackError('COMMAND_TIMEOUT', 'clear acknowledgement timed out')
+    context.host.terminationConfirmed = false
+    context.host.emitTerminationOnTerminate = false
+
+    await assert.rejects(context.service.clearCompletedMedia(attemptId), { code: 'HOST_CONTAINMENT_FAILED' })
+    assert.ok(context.events.some(event => event.type === 'surface-cleanup-failed' &&
+      event.attemptId === attemptId && event.musicCode === '01001' && event.errorCode === 'HOST_CONTAINMENT_FAILED'),
+    'unconfirmed cleanup must publish a correlated UI event without changing the confirmed EOF state')
+    assert.equal(context.host.disposed, false)
+    assert.equal(context.service.getState().status, 'completed',
+      'A failed visual cleanup must not rewrite the confirmed playback outcome.')
+    assert.equal(context.service.getState().attemptId, attemptId)
   } finally { await context.cleanup() }
 })
 

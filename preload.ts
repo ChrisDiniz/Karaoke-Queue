@@ -55,7 +55,9 @@ contextBridge.exposeInMainWorld('karaokeUiScale', {
 contextBridge.exposeInMainWorld('karaokePreferences', {
   getSidebarDisplayName: () => invokeLogged<string>('ui-preferences:sidebar-name:get'),
   setSidebarDisplayName: (name: string) =>
-    invokeLogged<string>('ui-preferences:sidebar-name:set', name)
+    invokeLogged<string>('ui-preferences:sidebar-name:set', name),
+  changeOperatingMode: (mode: 'player') =>
+    invokeLogged<{ outcome: 'restarting'; mode: 'player' }>('settings:operating-mode:change', mode)
 })
 
 contextBridge.exposeInMainWorld('karaokeDiagnostics', {
@@ -72,6 +74,7 @@ contextBridge.exposeInMainWorld('karaokePlayer', {
   playNow: (code: string) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:play-now', code),
   addToSequence: (code: string) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:sequence:add', code),
   removeFromSequence: (itemId: string) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:sequence:remove', itemId),
+  removeCurrent: (itemId: string, attemptId: string) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:sequence:remove-current', itemId, attemptId),
   reorderSequence: (itemIds: string[]) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:sequence:reorder', itemIds),
   clearSequence: () => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:sequence:clear'),
   pause: () => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:pause'),

@@ -71,6 +71,24 @@ function launch(profile) {
   })
 }
 
+async function waitForEmbeddedPlayer(page) {
+  return page.evaluate(() => new Promise((resolve, reject) => {
+    const bridge = window.karaokePlayer
+    if (!bridge) { reject(new Error('Player bridge is unavailable.')); return }
+    const isReady = snapshot => snapshot.videoWindow.open && snapshot.videoWindow.location === 'inline' && snapshot.videoWindow.ready
+    let unsubscribe = () => {}
+    const timeout = window.setTimeout(() => finish(new Error('Embedded Player surface did not become ready.')), 15000)
+    const finish = (error, snapshot) => {
+      window.clearTimeout(timeout)
+      unsubscribe()
+      if (error) reject(error)
+      else resolve(snapshot)
+    }
+    unsubscribe = bridge.onSnapshot(snapshot => { if (isReady(snapshot)) finish(undefined, snapshot) })
+    void bridge.getSnapshot().then(snapshot => { if (isReady(snapshot)) finish(undefined, snapshot) }, finish)
+  }))
+}
+
 function readLogRecords(profile) {
   const logPath = path.join(profile.userData, 'logs', 'app.log')
   if (!fs.existsSync(logPath)) return []
@@ -189,9 +207,10 @@ async function runPlayerUsesIsolatedCatalogDatabase() {
     assert.equal(playerWindowUrls.some(url => url.includes('player-control.html')), true)
     assert.equal(playerWindowUrls.some(url => url.includes('player-playback.html')), false,
       'The video window must remain closed until an explicit operator action')
-    const snapshot = await controlPage.evaluate(() => window.karaokePlayer.getSnapshot())
+    const snapshot = await waitForEmbeddedPlayer(controlPage)
     assert.equal(snapshot.playback.status, 'idle', 'Player-only startup must not autoplay')
-    assert.equal(snapshot.videoWindow.open, false, 'Player-only startup must not expose video output')
+    assert.equal(snapshot.videoWindow.open, true, 'Player-only startup must make the embedded video surface available')
+    assert.equal(snapshot.videoWindow.location, 'inline', 'Player-only startup must keep video embedded')
   } finally { await app?.close().catch(() => {}) }
 }
 

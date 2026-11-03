@@ -69,6 +69,7 @@ export class PlayerPlaybackService {
   private lastSelectedCode: string | undefined
   private latestRequestedCode: string | undefined
   private stopOperation: Promise<PlayerPlaybackState> | undefined
+  private stopOperationAttemptId: string | undefined
   private progress: PlayerPlaybackProgress | undefined
 
   constructor(
@@ -97,9 +98,58 @@ export class PlayerPlaybackService {
     return { ...this.state }
   }
 
+  assertPlaybackAllowed(): void {
+    this.persistence?.assertPlaybackAllowed?.()
+    if (this.state.status === 'uncertain' || this.state.status === 'disposed') {
+      throw new PlayerPlaybackError(this.state.errorCode === 'RECOVERY_PERSISTENCE_FAILED'
+        ? 'RECOVERY_PERSISTENCE_FAILED' : 'RECOVERY_PENDING',
+      'A reprodução está bloqueada até que o estado anterior seja resolvido.')
+    }
+  }
+
   getProgress(): PlayerPlaybackProgress | null {
     if (!this.progress || this.progress.attemptId !== this.state.attemptId) return null
     return { ...this.progress }
+  }
+
+  /** Clears only the media element associated with a durably confirmed natural EOF. */
+  async clearCompletedMedia(expectedAttemptId: string): Promise<boolean> {
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(expectedAttemptId)) return false
+    return this.enqueue(async () => {
+      this.ensureNotDisposed()
+      if (this.active || this.state.status !== 'completed' || this.state.attemptId !== expectedAttemptId) return false
+      const host = this.host
+      if (!host) return false
+      try {
+        await host.send({ type: 'clear', commandId: crypto.randomUUID(), attemptId: expectedAttemptId })
+      } catch (error) {
+        // EOF remains durably confirmed. If the Renderer cannot acknowledge
+        // clearing its last frame, destroy only this owned surface so a frozen
+        // image cannot remain on screen or be mistaken for active playback.
+        if (this.host !== host) return true
+        let terminated = false
+        try { terminated = await host.terminate() } catch { /* An unconfirmed host termination is a containment failure. */ }
+        if (terminated) {
+          if (this.host === host && this.state.status === 'completed' && this.state.attemptId === expectedAttemptId) {
+            this.detachHost('host-terminated')
+          }
+          return true
+        }
+        if (this.host === host && this.state.status === 'completed' && this.state.attemptId === expectedAttemptId) {
+          this.emit({ type: 'surface-cleanup-failed', attemptId: expectedAttemptId,
+            musicCode: this.state.musicCode!, errorCode: 'HOST_CONTAINMENT_FAILED' })
+        }
+        throw new PlayerPlaybackError('HOST_CONTAINMENT_FAILED',
+          error instanceof Error ? `The completed video could not be cleared or its host closed: ${error.message}`
+            : 'The completed video could not be cleared or its host closed.')
+      }
+      if (this.active || this.state.status !== 'completed' || this.state.attemptId !== expectedAttemptId || this.host !== host) return false
+      this.progress = undefined
+      this.latestRequestedCode = undefined
+      this.lastSelectedCode = undefined
+      this.setState({ status: 'idle' })
+      return true
+    })
   }
 
   /** Revalidates indexed local availability without selecting or starting media. */
@@ -326,16 +376,46 @@ export class PlayerPlaybackService {
     }
   }
 
-  stop(): Promise<PlayerPlaybackState> {
-    if (this.stopOperation) return this.stopOperation
+  stop(expectedAttemptId?: string): Promise<PlayerPlaybackState> {
+    if (this.stopOperation) {
+      if (expectedAttemptId && this.stopOperationAttemptId !== expectedAttemptId) {
+        return Promise.reject(new PlayerPlaybackError('SUPERSEDED', 'A reprodução mudou antes da confirmação de parada.'))
+      }
+      return this.stopOperation
+    }
     this.commandGeneration++
-    const operation = this.performStop()
+    const operation = this.performStop(expectedAttemptId)
     this.stopOperation = operation
+    this.stopOperationAttemptId = expectedAttemptId ?? this.active?.attemptId
     void operation.then(
-      () => { if (this.stopOperation === operation) this.stopOperation = undefined },
-      () => { if (this.stopOperation === operation) this.stopOperation = undefined }
+      () => { if (this.stopOperation === operation) { this.stopOperation = undefined; this.stopOperationAttemptId = undefined } },
+      () => { if (this.stopOperation === operation) { this.stopOperation = undefined; this.stopOperationAttemptId = undefined } }
     )
     return operation
+  }
+
+  /** Clears a manually removed song only after its Stop ACK has been recorded. */
+  async clearStoppedMedia(expectedAttemptId: string): Promise<boolean> {
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(expectedAttemptId)) return false
+    return this.enqueue(async () => {
+      this.ensureNotDisposed()
+      if (this.active || this.state.status !== 'stopped' || this.state.attemptId !== expectedAttemptId ||
+          this.state.containmentStatus !== 'stop-acknowledged') return false
+      const host = this.host
+      if (host) {
+        try {
+          await host.send({ type: 'clear', commandId: crypto.randomUUID(), attemptId: expectedAttemptId })
+        } catch {
+          if (this.host === host) return false
+        }
+      }
+      if (this.active || this.state.status !== 'stopped' || this.state.attemptId !== expectedAttemptId) return false
+      this.progress = undefined
+      this.latestRequestedCode = undefined
+      this.lastSelectedCode = undefined
+      this.setState({ status: 'idle' })
+      return true
+    })
   }
 
   /** Resolves an explicitly dismissed prior attempt without treating it as completion. */
@@ -359,10 +439,15 @@ export class PlayerPlaybackService {
     })
   }
 
-  private async performStop(): Promise<PlayerPlaybackState> {
+  private async performStop(expectedAttemptId?: string): Promise<PlayerPlaybackState> {
     const command = await this.enqueue(() => {
       this.ensureNotDisposed()
       const attempt = this.active
+      if (expectedAttemptId && (!attempt || attempt.attemptId !== expectedAttemptId ||
+          this.state.attemptId !== expectedAttemptId ||
+          !['loading', 'ready', 'starting', 'playing', 'paused'].includes(this.state.status))) {
+        throw new PlayerPlaybackError('SUPERSEDED', 'A reprodução mudou desde que a confirmação foi aberta.')
+      }
       if (!attempt) {
         if (!['completed', 'failed', 'uncertain', 'disposed'].includes(this.state.status) && this.state.status !== 'stopped') {
           this.setState({ status: 'stopped', musicCode: this.state.musicCode, attemptId: this.state.attemptId })
@@ -411,6 +496,7 @@ export class PlayerPlaybackService {
     }
     return this.getState()
   }
+
 
   dispose(): Promise<void> {
     if (this.disposePromise) return this.disposePromise
@@ -804,7 +890,10 @@ export class PlayerPlaybackService {
         reason: 'invalid-ended-evidence' })
       return
     }
-    this.setDurableState({ status: 'completed', attemptId: attempt.attemptId, musicCode: attempt.musicCode }, 'natural-end-confirmed')
+    const completed = { status: 'completed' as const, attemptId: attempt.attemptId, musicCode: attempt.musicCode }
+    this.persistTransition('natural-end-confirmed', completed)
+    this.progress = undefined
+    this.setState(completed)
     attempt.terminal = true
     this.active = undefined
     attempt.mediaGrant?.revoke()

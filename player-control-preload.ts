@@ -11,7 +11,10 @@ const bridge: KaraokePlayerBridge = {
   lookupMusicCode: code => ipcRenderer.invoke('player:lookup-code', code),
   playNow: code => ipcRenderer.invoke('player:play-now', code),
   addToSequence: code => ipcRenderer.invoke('player:sequence:add', code),
+  addBatchToSequence: (rawText, requestId) => ipcRenderer.invoke('player:sequence:add-batch', rawText, requestId),
+  changeOperatingMode: mode => ipcRenderer.invoke('player:mode:change', mode),
   removeFromSequence: itemId => ipcRenderer.invoke('player:sequence:remove', itemId),
+  removeCurrent: (itemId, attemptId) => ipcRenderer.invoke('player:sequence:remove-current', itemId, attemptId),
   reorderSequence: itemIds => ipcRenderer.invoke('player:sequence:reorder', itemIds),
   clearSequence: () => ipcRenderer.invoke('player:sequence:clear'),
   pause: () => ipcRenderer.invoke('player:pause'),
@@ -24,8 +27,19 @@ const bridge: KaraokePlayerBridge = {
   selectLibraryFolder: () => ipcRenderer.invoke('player:library:select-folder'),
   refreshLibrary: () => ipcRenderer.invoke('player:library:refresh'),
   showVideoWindow: () => ipcRenderer.invoke('player:video:show'),
+  setWindowTipVisible: visible => ipcRenderer.invoke('player:video:window-tip', visible),
+  onWindowTipDismissed(callback) {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (value && typeof value === 'object' && 'permanentlyDismissed' in value &&
+          typeof value.permanentlyDismissed === 'boolean') {
+        callback(value.permanentlyDismissed)
+      }
+    }
+    ipcRenderer.on('player:window-tip-dismissed', listener)
+    return () => ipcRenderer.removeListener('player:window-tip-dismissed', listener)
+  },
   showPlayerInline: bounds => ipcRenderer.invoke('player:video:inline', bounds),
-  updatePlayerInlineBounds: bounds => ipcRenderer.invoke('player:video:inline-bounds', bounds),
+  updatePlayerInlineBounds: (bounds, layoutRevision) => ipcRenderer.invoke('player:video:inline-bounds', bounds, layoutRevision),
   setPlayerInlineVisible: visible => ipcRenderer.invoke('player:video:inline-visibility', visible),
   hidePlayerInline: () => ipcRenderer.invoke('player:video:inline-hide'),
   toggleVideoFullScreen: () => ipcRenderer.invoke('player:video:fullscreen-toggle'),

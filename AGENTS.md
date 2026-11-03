@@ -42,6 +42,43 @@ Before implementing or modifying any feature:
 The repository's actual implementation is the source of truth
 for the current development state.
 
+## Direção atual do produto — Migração Standalone/Combined
+
+### Modos finais e estado transitório
+
+- A arquitetura-alvo possui somente **Player Only — Standalone** e **Tudo em um — Combined** como modos selecionáveis.
+- O modo Controlador independente será descontinuado como opção. Mesas, cantores, fila operacional, sessões, histórico e regras atuais devem ser preservados e integrados ao Combined.
+- O código de transição ainda contém os modos `controller`, `player` e `combined`, além da implementação antiga do Player Only. Isso descreve o estado atual do repositório, não o produto final.
+- Não altere a seleção de modos nem remova recursos Controller durante a Fase A1. Mudanças posteriores dependem da subetapa autorizada e devem preservar os dados existentes.
+
+### Especificação e interface Standalone
+
+- A fonte funcional canônica da V1 é `docs/standalone-one-screen-player.md`. Não altere, formate, reorganize ou complemente esse documento sem solicitação explícita do proprietário.
+- Implemente somente comportamento descrito nessa especificação. Não antecipe opções ou funcionalidades que ainda não foram especificadas.
+- O design da nova interface será criado separadamente no Doop. Não implemente tela, placeholder ou layout Standalone sem referência visual aprovada; não altere frames Doop sem autorização.
+- A base funcional sem interface visual pode avançar enquanto o proprietário prepara o Doop, desde que não invente ou substitua os comportamentos da V1.
+
+### Infraestrutura compartilhada e orquestração isolada
+
+- Reutilize, quando apropriado, a engine Chromium, a biblioteca de vídeos, a resolução de códigos, o catálogo opcional, os serviços técnicos de playback, recovery, IPC e gerenciamento de recursos/janelas.
+- Mantenha a orquestração Standalone isolada da fila, das sessões, do histórico e das regras Round Robin do Combined. Reutilizar infraestrutura não obriga reutilizar a UI nem a semântica da sequência antiga.
+- No Combined, preserve a autoridade operacional existente do Controller. Reprodução local/remota e seus contratos devem integrar-se a essa autoridade sem criar uma segunda fila operacional ou writer.
+- Não duplique engine ou serviços técnicos sem necessidade demonstrada; não force componentes visuais antigos a uma interface nova apenas para reduzir o trabalho.
+
+### Migração do Player legado e integração remota
+
+- Preserve a implementação antiga do Player, seus testes e serviços até que o novo Standalone tenha aprovação funcional, visual e audiovisual do proprietário.
+- Antes de remover qualquer parte, classifique-a como UI exclusiva do legado, regra obsoleta, teste exclusivo ou serviço técnico reutilizável. Remova somente código comprovadamente obsoleto e preserve consumidores compartilhados.
+- Depois de concluir e aprovar o Standalone, a prioridade de produto será a comunicação segura HTTPS/WSS em LAN entre Combined e Player Only. Autenticação, pareamento, autoridade, sincronização, reconexão e falhas exigem planejamento próprio.
+- Não implemente Combined novo, comunicação remota, HTTPS/WSS ou Player Connected antes da fase correspondente do roadmap.
+
+### Roadmap, testes e colaboração
+
+- Use `docs/standalone-player-roadmap.md` para fases, dependências e critérios de conclusão. As fases principais são sequenciais nos critérios de aprovação; preparação independente pode ocorrer em paralelo quando não gerar escrita concorrente.
+- Divida fases grandes em subetapas pequenas e verificáveis. Use os subagentes existentes conforme complexidade e risco; não convoque todos por padrão.
+- Escolha testes pelo impacto: cubra código alterado, dependências diretas e comportamentos sujeitos a regressão. Amplie a integração em mudanças de serviços compartilhados, contratos, IPC, persistência ou composição entre modos; use suítes amplas em checkpoints relevantes.
+- Registre os testes executados e omitidos e o motivo. Uma cobertura focada não deve ser descrita como validação integral do projeto.
+
 ## 2. Communication and Working Style
 
 - Communicate with the user in Brazilian Portuguese.

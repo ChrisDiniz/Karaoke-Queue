@@ -2,9 +2,9 @@
 
 **Version 0.5.0 · Pre-1.0 development**
 
-Karaoke Queue is a desktop application for managing karaoke presentation queues. It helps operators organize singers, distribute opportunities across tables, and control the running order while keeping session and presentation data locally persisted.
+> **AVISO DE TRANSIÇÃO** — O produto está migrando para dois modos: **Player Only (Standalone)** e **Tudo em um (Combined)**. A implementação antiga do Player Only e o modo Controlador independente ainda podem aparecer no código e na seleção atual. Os recursos operacionais do Controlador serão preservados no Combined. A especificação funcional oficial da nova V1 está em [docs/standalone-one-screen-player.md](docs/standalone-one-screen-player.md); o estado e as fases estão em [docs/standalone-player-roadmap.md](docs/standalone-player-roadmap.md). A UI Standalone será criada separadamente no Doop.
 
-The project focuses on queue operations and session history. It is not a karaoke player.
+Karaoke Queue is a desktop application for karaoke operators. Its Controller organizes singers, tables, sessions, and presentation queues; its isolated Player mode plays local videos from a manually managed sequence.
 
 ## Features
 
@@ -46,6 +46,24 @@ Automation assists the operator; it does not remove the ability to intervene.
 - Desktop layout with a collapsible sidebar and queue cards with context menus.
 - Appearance controls for theme, interface scale, and the name shown in the sidebar.
 - Session navigation for the current session and previous sessions.
+
+### Legacy local Player currently in the repository
+
+- Play local videos by numeric code from an indexed folder.
+- Add one or more codes to an explicit local sequence; valid natural EOF advances to the next queued item.
+- Import an optional CSV catalog for song titles and artists.
+- Use playback controls in the embedded view or explicitly move the same video surface to a separate window.
+- Recover interrupted playback without automatic resume.
+
+These bullets describe the existing multi-view Player implementation. They are not the functional/UI specification for the new Standalone V1.
+
+### Current implementation and target modes
+
+- **Current code:** still recognizes `controller`, `player`, and `combined`. The first-launch selector offers all three; the old Player is a separate multi-view interface. Combined currently initializes Controller operations and some local Player services, but has no completed Standalone-style playback UI integration.
+- **Target:** **Player Only (Standalone)** is the independent one-screen local Player in the V1 specification. **Tudo em um (Combined)** preserves the current Controller's operational features and adds local or, in a later phase, remote playback.
+- **Controlador:** the independent mode will be discontinued as a product option; its tables, singers, queue, sessions, history, and scheduling rules are being preserved for Combined.
+
+The mode selector and existing lifecycle are transitional and are not changed during architecture preparation. LAN playback is planned after the Standalone is complete; it is not implemented.
 
 ## How the smart queue works
 
@@ -108,6 +126,10 @@ npm run test:e2e:sessions:headless
 npm run test:e2e:session-close:headless
 npm run test:e2e:licensing:headless
 npm run test:e2e:queue-menu:headless
+npm run test:e2e:player-control:headless
+npm run test:e2e:player-playback:headless
+npm run test:e2e:player-recovery:headless
+npm run test:e2e:operating-modes:headless
 ```
 
 `test:e2e:headless` runs the main Electron smoke suite. The full Linux E2E matrix is available as:
@@ -160,7 +182,7 @@ This is a lightweight local licensing check, not protection against reverse engi
 
 Karaoke Queue is in active **pre-1.0 development**. Version 0.5.0 is a development release; 1.0.0 is reserved for when the main product scope is complete.
 
-The current scope is queue and session management. Playback integration, automatic song-end detection, a functional local music library, YouTube playback, and remote licensing are not implemented. The interface includes preparatory or disabled navigation for some playback options; those controls do not indicate a working integration.
+The repository contains Controller operations and the legacy local Player described above. The target product direction is Standalone plus Combined; see the transition notice and roadmap. YouTube playback, LAN pairing, and remote Player control are not implemented. The V1 Standalone behavior is defined only by `docs/standalone-one-screen-player.md`.
 
 ## Additional documentation
 
@@ -170,5 +192,11 @@ The current scope is queue and session management. Playback integration, automat
 - [Legacy session compatibility](docs/legacy-session-compatibility.md)
 - [Drag-and-drop E2E reliability](docs/drag-e2e-reliability.md)
 - [Windows build and release process](docs/windows-release-process.md)
+- [Local Player playback](docs/player-playback.md)
+- [Standalone V1 specification](docs/standalone-one-screen-player.md)
+- [Standalone/Combined migration roadmap](docs/standalone-player-roadmap.md)
+- [Local video library](docs/video-library.md)
+- [Music catalog](docs/music-catalog.md)
+- [Remote Player architecture and phase boundaries](docs/remote-player-architecture.md)
 
 The repository does not currently declare a project license.

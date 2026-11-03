@@ -2,6 +2,8 @@
 
 **Status:** configuração e indexação local **IMPLEMENTED** na Fase 3; seleção da pasta, atualização do scan e consulta do estado pela UI Player-only **IMPLEMENTED** na Phase 5F-B. Indexação e lifecycle foram **VERIFIED** no Windows nativo. Reprodução de amostras MP4 H.264/AAC está registrada em [Player Playback](player-playback.md); outras mídias não são consideradas compatíveis apenas por extensão e permanecem **NOT VERIFIED**.
 
+> **Transição:** este documento descreve serviços e integrações existentes do Player legado. Biblioteca, resolução e validação continuam candidatas à infraestrutura compartilhada; as referências a UI/opções Player-only não especificam a nova interface Standalone. Consulte a [especificação V1](standalone-one-screen-player.md) e o [roadmap](standalone-player-roadmap.md).
+
 Este documento descreve o que existe em `src/video-library.ts`, `src/video-library-configuration.ts`, `src/video-library-service.ts` e sua inicialização em `main.ts`. O serviço identifica candidatos pelo nome do arquivo; não comprova que o arquivo contenha vídeo/áudio decodificável nem que esteja sincronizado com letras.
 
 ## Propriedade e inicialização
