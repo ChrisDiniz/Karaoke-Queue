@@ -21,6 +21,13 @@ export interface PlayerPlaybackState {
   containmentStatus?: 'pending' | 'stop-acknowledged' | 'host-terminated' | 'unavailable' | 'unconfirmed'
 }
 
+/** Minimal recovery target implemented by the shared PlayerPlaybackService. */
+export interface PlayerPlaybackRecoveryTarget {
+  getState(): PlayerPlaybackState
+  resolveRecoveryAsStopped(expectedAttemptId: string, musicCode: string): Promise<PlayerPlaybackState>
+  dispose(): Promise<void>
+}
+
 export interface PlayerPlaybackProgress {
   readonly attemptId: string
   readonly currentTime: number

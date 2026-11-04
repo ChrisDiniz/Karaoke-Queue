@@ -11,6 +11,13 @@
     "start": "npm run compile && electron .",
     "build": "npm run compile && electron-builder --win nsis --x64 --publish never",
     "test:unit": "npm run compile && node build/tests/queue-rules.test.js && node build/tests/debut-cadence-rules.test.js && node build/tests/round-robin-rules.test.js && node build/tests/fixed-turn-rules.test.js && node build/tests/frozen-queue-rules.test.js && node build/tests/application.test.js && node build/tests/persistence.test.js && node build/tests/app-state-validation.test.js && node build/tests/round-robin-application.test.js && node build/tests/licensing.test.js && node build/tests/database-migration.test.js && node build/tests/operating-mode.test.js && node build/tests/video-library.test.js && node build/tests/music-catalog.test.js && node build/tests/player-ui-contracts.test.js && node build/tests/player-playback.test.js && node build/tests/manual-playback.test.js && node build/tests/chromium-playback-host.test.js && node build/tests/player-video-window.test.js && node build/tests/player-playback-recovery.test.js && node --test build/tests/ui-scale.test.js build/tests/logging.test.js build/tests/singer-suggestions.test.js build/tests/sidebar-display-name.test.js && node scripts/player-control-renderer-bundle.test.cjs && node scripts/windows-native-runner.test.cjs && node scripts/playback-engine-evaluation.test.cjs",
+    "test:unit:standalone-contracts": "npm run compile && node build/tests/standalone-player-contracts.test.js",
+    "test:unit:standalone-runtime": "npm run compile && node build/tests/standalone-player-contracts.test.js && node build/tests/standalone-player-runtime.test.js && node build/tests/player-playback-recovery.test.js",
+    "test:unit:standalone-sequence": "npm run compile && node build/tests/standalone-player-sequence.test.js",
+    "test:unit:standalone-interaction": "npm run compile && node build/tests/standalone-player-interaction.test.js",
+    "test:unit:standalone-interaction-transport": "npm run compile && node build/tests/standalone-player-interaction-transport.test.js",
+    "test:unit:standalone-playback-adapter": "npm run compile && node build/tests/standalone-player-playback-adapter.test.js",
+    "test:unit:standalone-ipc": "npm run compile && node build/tests/standalone-player-ipc.test.js",
     "test:e2e:drag:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/drag-electron.js",
     "test:e2e:persistence:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/persistence-electron.js",
     "test:e2e:ipc-validation:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/ipc-validation-electron.js",
@@ -20,6 +27,11 @@
     "test:e2e:video-library:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/video-library-electron.js",
     "test:e2e:music-catalog:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/music-catalog-electron.js",
     "test:e2e:player-playback:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/player-playback-electron.js",
+    "test:e2e:standalone-playback:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/standalone-player-playback-electron.js",
+    "test:e2e:standalone-ipc:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/standalone-player-ipc-electron.js",
+    "test:e2e:standalone-integration:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/standalone-player-integration-electron.js",
+    "test:e2e:standalone-playback:windows": "npm run test:e2e:multi-instance:windows -- --standalone-playback",
+    "test:e2e:standalone-integration:windows": "npm run test:e2e:multi-instance:windows -- --standalone-integration",
     "test:e2e:player-control:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/player-control-electron.js",
     "test:e2e:player-control:windows": "npm run test:e2e:multi-instance:windows -- --player-control",
     "test:e2e:player-recovery:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/player-playback-recovery-electron.js",
@@ -59,7 +71,8 @@
     "files": [
       "build/**/*",
       "!build/tests/**",
-      "!build/scripts/**"
+      "!build/scripts/**",
+      "!build/standalone-player-preload.js"
     ],
     "win": {
       "target": [

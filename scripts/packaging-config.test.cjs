@@ -22,6 +22,7 @@ test('package metadata and Windows target describe the x64 NSIS product', () => 
   assert.ok(pkg.build.files.includes('build/**/*'))
   assert.ok(pkg.build.files.includes('!build/tests/**'))
   assert.ok(pkg.build.files.includes('!build/scripts/**'))
+  assert.ok(pkg.build.files.includes('!build/standalone-player-preload.js'))
   assert.ok(pkg.build.artifactName.includes('${version}'))
   assert.ok(pkg.build.artifactName.includes('${arch}'))
 })

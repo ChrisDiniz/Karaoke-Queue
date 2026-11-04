@@ -43,6 +43,8 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   const chromiumFinal = powershellLauncher('C:\\stage', 'run-chromium-final', false, '--playback-chromium-final')
   const chromiumInteractive = powershellLauncher('C:\\stage', 'run-chromium-interactive', false, '--playback-chromium-interactive')
   const playerPlayback = powershellLauncher('C:\\stage', 'run-player-playback', false, '--player-playback')
+  const standalonePlayback = powershellLauncher('C:\\stage', 'run-standalone-playback', false, '--standalone-playback')
+  const standaloneIntegration = powershellLauncher('C:\\stage', 'run-standalone-integration', false, '--standalone-integration')
   const playerRecovery = powershellLauncher('C:\\stage', 'run-player-recovery', false, '--player-recovery')
   const playerControl = powershellLauncher('C:\\stage', 'run-player-control', false, '--player-control')
 
@@ -51,12 +53,16 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.equal(launcherPayload(chromiumFinal).playbackMode, '--playback-chromium-final')
   assert.equal(launcherPayload(chromiumInteractive).playbackMode, '--playback-chromium-interactive')
   assert.equal(launcherPayload(playerPlayback).playbackMode, '--player-playback')
+  assert.equal(launcherPayload(standalonePlayback).playbackMode, '--standalone-playback')
+  assert.equal(launcherPayload(standaloneIntegration).playbackMode, '--standalone-integration')
   assert.equal(launcherPayload(playerRecovery).playbackMode, '--player-recovery')
   assert.equal(launcherPayload(playerControl).playbackMode, '--player-control')
   assert.match(evaluation, /\$workerArgs \+= "--playback-evaluation"/)
   assert.match(chromiumFinal, /\$workerArgs \+= "--playback-chromium-final"/)
   assert.match(chromiumInteractive, /\$workerArgs \+= "--playback-chromium-interactive"/)
   assert.match(playerPlayback, /\$workerArgs \+= "--player-playback"/)
+  assert.match(standalonePlayback, /\$workerArgs \+= "--standalone-playback"/)
+  assert.match(standaloneIntegration, /\$workerArgs \+= "--standalone-integration"/)
   assert.match(playerRecovery, /\$workerArgs \+= "--player-recovery"/)
   assert.match(playerControl, /\$workerArgs \+= "--player-control"/)
   assert.match(evaluation, /& node\.exe \$worker @workerArgs/)
@@ -67,6 +73,8 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
 test('focused playback recovery harness does not require unrelated window-focus assertions', () => {
   assert.equal(requiresWindowFocus('--player-recovery'), false)
   assert.equal(requiresWindowFocus('--player-playback'), false)
+  assert.equal(requiresWindowFocus('--standalone-playback'), false)
+  assert.equal(requiresWindowFocus('--standalone-integration'), false)
   assert.equal(requiresWindowFocus('--player-control'), false)
   assert.equal(requiresWindowFocus('--playback-chromium-final'), false)
   assert.equal(requiresWindowFocus(null), true)
@@ -122,6 +130,34 @@ test('focused Windows Player recovery mode runs recovery unit coverage before re
   ])
   assert.deepEqual(selectWindowsTestSuites('--player-control').map(suite => suite.script), [
     'build/tests/player-control-electron.js'
+  ])
+})
+
+test('focused Windows Standalone mode runs affected Standalone/playback tests and its real Electron harness', () => {
+  assert.deepEqual(selectWindowsTestSuites('--standalone-playback').map(suite => suite.script), [
+    'build/tests/standalone-player-contracts.test.js',
+    'build/tests/standalone-player-runtime.test.js',
+    'build/tests/standalone-player-sequence.test.js',
+    'build/tests/standalone-player-interaction.test.js',
+    'build/tests/standalone-player-playback-adapter.test.js',
+    'build/tests/player-playback.test.js',
+    'build/tests/player-playback-recovery.test.js',
+    'build/tests/standalone-player-playback-electron.js'
+  ])
+})
+
+test('focused Windows Standalone integration mode covers B2/IPC, shared playback and real Electron/MP4 composition', () => {
+  assert.deepEqual(selectWindowsTestSuites('--standalone-integration').map(suite => suite.script), [
+    'build/tests/standalone-player-contracts.test.js',
+    'build/tests/standalone-player-runtime.test.js',
+    'build/tests/standalone-player-sequence.test.js',
+    'build/tests/standalone-player-interaction.test.js',
+    'build/tests/standalone-player-interaction-transport.test.js',
+    'build/tests/standalone-player-ipc.test.js',
+    'build/tests/standalone-player-playback-adapter.test.js',
+    'build/tests/player-playback.test.js',
+    'build/tests/player-playback-recovery.test.js',
+    'build/tests/standalone-player-integration-electron.js'
   ])
 })
 
