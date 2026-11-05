@@ -1,4 +1,5 @@
 import type { IpcMainInvokeEvent } from 'electron'
+import { STANDALONE_CELEBRATION_MESSAGES } from './standalone-player-contracts'
 import type {
   StandalonePlayerCommandResult,
   StandalonePlayerControl,
@@ -8,6 +9,7 @@ import type {
 import {
   STANDALONE_PLAYER_IPC_CHANNELS,
   type StandalonePlayerIpcCommandReply,
+  type StandalonePlayerMetadataPreview,
   type StandalonePlayerMainIpcBridgeOptions,
   type StandalonePlayerSnapshotEnvelope,
   type StandalonePlayerSnapshotUpdate,
@@ -26,6 +28,7 @@ export class StandalonePlayerMainIpcBridge {
   private readonly subscriptions = new Map<string, SubscriptionRecord>()
   private readonly registeredChannels = new Set<string>()
   private unsubscribeControl: () => void = () => undefined
+  private unsubscribeCatalogRevision: () => void = () => undefined
   private currentEnvelope: StandalonePlayerSnapshotEnvelope
   private nextGeneration = 0
   private disposed = false
@@ -43,12 +46,16 @@ export class StandalonePlayerMainIpcBridge {
     this.unsubscribeControl = options.control.subscribe(snapshot => this.publish(snapshot))
     try {
       this.registerHandlers()
+      this.unsubscribeCatalogRevision = options.metadataCatalog?.subscribeToMetadataRevision(revision => {
+        this.publishCatalogRevision(revision)
+      }) ?? (() => undefined)
       options.webContents.on('did-start-navigation', this.onMainFrameNavigation)
       options.webContents.on('render-process-gone', this.onRendererGone)
       options.webContents.once('destroyed', this.onWebContentsDestroyed)
     } catch (error) {
       this.clearSubscriptions()
       this.unsubscribeControl()
+      this.unsubscribeCatalogRevision()
       this.removeRegisteredHandlers()
       options.webContents.removeListener('did-start-navigation', this.onMainFrameNavigation)
       options.webContents.removeListener('render-process-gone', this.onRendererGone)
@@ -62,6 +69,7 @@ export class StandalonePlayerMainIpcBridge {
     this.disposed = true
     this.clearSubscriptions()
     this.unsubscribeControl()
+    this.unsubscribeCatalogRevision()
     this.removeRegisteredHandlers()
     this.options.webContents.removeListener('did-start-navigation', this.onMainFrameNavigation)
     this.options.webContents.removeListener('render-process-gone', this.onRendererGone)
@@ -84,6 +92,15 @@ export class StandalonePlayerMainIpcBridge {
       if (this.disposed) throw new Error('STANDALONE_IPC_DISPOSED')
       if (result.operationId !== request.operationId) throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
       return this.createCommandReply(result)
+    })
+    this.handle(STANDALONE_PLAYER_IPC_CHANNELS.lookupMetadata, (event, ...args) => {
+      this.assertAuthorized(event)
+      if (args.length !== 1 || typeof args[0] !== 'string' || !/^[0-9]{1,5}$/.test(args[0])) {
+        throw new Error('STANDALONE_IPC_INVALID_REQUEST')
+      }
+      const catalog = this.options.metadataCatalog
+      if (!catalog) return { catalogRevision: null, title: null, artist: null } satisfies StandalonePlayerMetadataPreview
+      return cloneMetadataPreview(catalog.lookupMetadataByVideoCode(args[0]))
     })
     this.handle(STANDALONE_PLAYER_IPC_CHANNELS.subscribe, (event, ...args) => {
       this.assertAuthorized(event)
@@ -159,6 +176,13 @@ export class StandalonePlayerMainIpcBridge {
     }
   }
 
+  private publishCatalogRevision(revision: string | null): void {
+    if (this.disposed || !this.canSendToCurrentDocument()) return
+    try {
+      this.options.webContents.send(STANDALONE_PLAYER_IPC_CHANNELS.catalogRevisionChanged, { catalogRevision: revision })
+    } catch { /* A catalog refresh must not affect its committed result if the Renderer is closing. */ }
+  }
+
   private createCommandReply(result: StandalonePlayerCommandResult): StandalonePlayerIpcCommandReply {
     if (result.outcome === 'confirmed') {
       return {
@@ -230,13 +254,50 @@ function hasExactKeys(value: Record<string, unknown>, expected: readonly string[
   return actual.length === expected.length && expected.every(key => Object.hasOwn(value, key))
 }
 
+function cloneMetadataPreview(value: unknown): StandalonePlayerMetadataPreview {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ['catalogRevision', 'title', 'artist']) ||
+      !(value.catalogRevision === null || (typeof value.catalogRevision === 'string' && value.catalogRevision.length <= 128)) ||
+      !(value.title === null || (typeof value.title === 'string' && value.title.length <= 4096)) ||
+      !(value.artist === null || (typeof value.artist === 'string' && value.artist.length <= 4096))) {
+    throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+  }
+  return { catalogRevision: value.catalogRevision, title: value.title, artist: value.artist }
+}
+
 function cloneSnapshot(snapshot: StandalonePlayerSnapshot): StandalonePlayerSnapshot {
   if (snapshot.playbackCondition === 'ready') return { playbackCondition: 'ready', state: cloneStableState(snapshot.state) }
   if (snapshot.playbackCondition === 'transitioning') {
-    return {
-      playbackCondition: 'transitioning',
+    const base = {
+      playbackCondition: 'transitioning' as const,
       lastConfirmedState: cloneStableState(snapshot.lastConfirmedState),
       pending: snapshot.pending.map(entry => ({ entryId: entry.entryId, musicCode: entry.musicCode }))
+    }
+    if (snapshot.phase === 'countdown') return {
+      ...base,
+      phase: 'countdown',
+      target: { entryId: snapshot.target.entryId, musicCode: snapshot.target.musicCode },
+      remainingMs: snapshot.remainingMs,
+      paused: snapshot.paused
+    }
+    if (snapshot.phase === 'loading') return {
+      ...base,
+      phase: 'loading',
+      target: { entryId: snapshot.target.entryId, musicCode: snapshot.target.musicCode }
+    }
+    if (snapshot.phase === 'celebration') {
+      if (!STANDALONE_CELEBRATION_MESSAGES.includes(snapshot.message)) throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+      return {
+        ...base,
+        phase: 'celebration',
+        remainingMs: snapshot.remainingMs,
+        paused: snapshot.paused,
+        message: snapshot.message
+      }
+    }
+    if (snapshot.phase === 'resuming') return { ...base, phase: 'resuming' }
+    return {
+      ...base,
+      phase: 'operation'
     }
   }
   return {

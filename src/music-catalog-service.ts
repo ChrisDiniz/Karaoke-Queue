@@ -63,6 +63,12 @@ export interface MusicCatalogImportResult {
   importedAt: string
 }
 
+export interface MusicCatalogMetadataPreview {
+  readonly catalogRevision: string | null
+  readonly title: string | null
+  readonly artist: string | null
+}
+
 function isLinkOrReparsePoint(stats: fs.Stats | fs.BigIntStats): boolean {
   const attributes = (stats as (fs.Stats | fs.BigIntStats) & { attributes?: number }).attributes ?? 0
   return stats.isSymbolicLink() || (process.platform === 'win32' && (attributes & 0x400) !== 0)
@@ -197,6 +203,7 @@ export class MusicCatalogService {
   private pendingImports = 0
   private closing = false
   private closePromise: Promise<void> | undefined
+  private readonly revisionListeners = new Set<(revision: string | null) => void>()
 
   constructor(
     private readonly repository: MusicCatalogRepository,
@@ -206,6 +213,26 @@ export class MusicCatalogService {
   getMetadata(): MusicCatalogMetadata {
     this.ensureOpen()
     return this.repository.getMusicCatalogMetadata()
+  }
+
+  /** Exact metadata-only lookup. It does not consult video inventory or decide playback availability. */
+  lookupMetadataByVideoCode(value: unknown): MusicCatalogMetadataPreview {
+    this.ensureOpen()
+    const videoCode = videoCodeForLookup(value)
+    const result = this.repository.getMusicCatalogRecordByVideoCode(videoCode)
+    return {
+      catalogRevision: result.metadata.revision,
+      title: result.record?.title ?? null,
+      artist: result.record?.artist ?? null
+    }
+  }
+
+  /** Notifies active UI previews after a catalog replacement has committed. */
+  subscribeToMetadataRevision(listener: (revision: string | null) => void): () => void {
+    this.ensureOpen()
+    if (typeof listener !== 'function') throw new TypeError('O listener da revisão do catálogo precisa ser uma função.')
+    this.revisionListeners.add(listener)
+    return () => this.revisionListeners.delete(listener)
   }
 
   importFile(filePath: unknown): Promise<MusicCatalogImportResult> {
@@ -231,6 +258,9 @@ export class MusicCatalogService {
     const committed = this.repository.getMusicCatalogMetadata()
     if (committed.revision !== parsed.revision || committed.recordCount !== parsed.recordCount) {
       throw new MusicCatalogError('DATABASE_FAILURE', 'A importação não confirmou a nova revisão do catálogo.')
+    }
+    for (const listener of [...this.revisionListeners]) {
+      try { listener(committed.revision) } catch { /* A preview listener cannot roll back a committed catalog import. */ }
     }
     return {
       revision: committed.revision,
@@ -304,7 +334,9 @@ export class MusicCatalogService {
   close(): Promise<void> {
     if (!this.closePromise) {
       this.closing = true
-      this.closePromise = this.importTail.then(() => undefined)
+      this.closePromise = this.importTail.then(() => {
+        this.revisionListeners.clear()
+      })
     }
     return this.closePromise
   }

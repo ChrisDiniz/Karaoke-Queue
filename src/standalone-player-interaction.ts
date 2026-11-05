@@ -38,8 +38,15 @@ export type StandalonePlayerMenuAction = 'commands' | 'options' | 'back' | 'exit
 
 export type StandalonePlayerInteractionIntent =
   | { readonly type: 'player-command'; readonly request: StandalonePlayerCommandRequest }
+  | { readonly type: 'open-stop-confirmation' }
+  | { readonly type: 'close-stop-confirmation' }
   /** The future application shell may handle this request after its own exit confirmation flow. */
   | { readonly type: 'request-application-exit' }
+
+export interface StandalonePlayerEntryStrokeResult {
+  readonly recognized: boolean
+  readonly intent?: StandalonePlayerInteractionIntent
+}
 
 export type StandaloneInteractionListener = (snapshot: StandalonePlayerInteractionSnapshot) => void
 
@@ -64,10 +71,14 @@ export class StandalonePlayerInteractionController {
   private menuScreen: StandalonePlayerMenuScreen = 'closed'
   private lastSubmission: StandaloneCodeSubmissionStatus | undefined
   private readonly pendingSubmissions = new Map<string, StandaloneCodeSubmissionStatus>()
+  private readonly submissionInputRevisions = new Map<string, number>()
+  private stopAllRequest: StandalonePlayerCommandRequest | undefined
+  private stopAllPending = false
   private readonly listeners = new Set<StandaloneInteractionListener>()
   private timerHandle: unknown
   private timerArmed = false
   private timerGeneration = 0
+  private inputRevision = 0
   private disposed = false
 
   constructor(private readonly options: StandalonePlayerInteractionOptions) {
@@ -92,36 +103,125 @@ export class StandalonePlayerInteractionController {
   }
 
   handleKeyStroke(stroke: StandaloneKeyboardStroke): StandalonePlayerInteractionIntent | undefined {
-    if (this.disposed) return undefined
+    return this.handleStroke(stroke, false, false).intent
+  }
+
+  /**
+   * Handles only numeric entry and closing an open entry panel. Returns true
+   * for every recognized V1 stroke so the Renderer can prevent browser/host
+   * defaults even when that command belongs to a later UI round.
+   */
+  handleEntryKeyStroke(stroke: StandaloneKeyboardStroke, allowSubmission = false,
+    allowCountdownPause = false, confirmationOpen = false, allowPlaybackControls = false): StandalonePlayerEntryStrokeResult {
+    return this.handleStroke(stroke, true, allowSubmission, allowCountdownPause, confirmationOpen, allowPlaybackControls)
+  }
+
+  /** Creates the single Main-authoritative Stop All request for the current confirmation attempt. */
+  requestStopAll(): StandalonePlayerInteractionIntent | undefined {
+    if (this.disposed || this.stopAllPending) return undefined
+    if (!this.stopAllRequest) {
+      this.stopAllRequest = this.playerCommand({ type: 'stop-all' }).request
+    }
+    this.stopAllPending = true
+    return { type: 'player-command', request: this.stopAllRequest }
+  }
+
+  cancelStopAllConfirmation(): StandalonePlayerInteractionIntent | undefined {
+    if (this.disposed || this.stopAllPending) return undefined
+    return { type: 'close-stop-confirmation' }
+  }
+
+  /** Clears input and transient submission state only after Main confirms Stop All. */
+  resetAfterStopAll(): void {
+    if (this.disposed) return
+    this.inputRevision++
+    this.numericPanelOpen = false
+    this.enteredCode = ''
+    this.cancelInactivityTimer()
+    this.lastSubmission = undefined
+    this.pendingSubmissions.clear()
+    this.submissionInputRevisions.clear()
+    this.stopAllRequest = undefined
+    this.stopAllPending = false
+    this.publish()
+  }
+
+  private handleStroke(
+    stroke: StandaloneKeyboardStroke,
+    entryOnly: boolean,
+    allowSubmission: boolean,
+    allowCountdownPause = false,
+    confirmationOpen = false,
+    allowPlaybackControls = false
+  ): StandalonePlayerEntryStrokeResult {
+    if (this.disposed) return { recognized: false }
     const action = interpretStandaloneKeyboardStroke(stroke)
-    if (!action) return undefined
+    if (confirmationOpen) {
+      if (action?.type === 'escape') {
+        const intent = this.cancelStopAllConfirmation()
+        return { recognized: true, ...(intent ? { intent } : {}) }
+      }
+      if (action?.type === 'confirm-normal') {
+        const intent = this.requestStopAll()
+        return { recognized: true, ...(intent ? { intent } : {}) }
+      }
+      // The confirmation owns keyboard input until it is closed; do not leak a key to playback or the page.
+      return { recognized: true }
+    }
+    if (!action) return { recognized: false }
 
     // Esc is the only keyboard command available while a menu is open. Menu navigation is owned by its UI.
-    if (this.menuScreen !== 'closed' && action.type !== 'escape') return undefined
+    if (this.menuScreen !== 'closed' && action.type !== 'escape') return { recognized: true }
+
+    if (entryOnly) {
+      switch (action.type) {
+        case 'digit': this.appendDigit(action.digit); return { recognized: true }
+        case 'backspace': this.removeDigit(); return { recognized: true }
+        case 'confirm-normal':
+          return { recognized: true, ...(allowSubmission ? { intent: this.submitCode('normal') } : {}) }
+        case 'confirm-priority':
+          return { recognized: true, ...(allowSubmission ? { intent: this.submitCode('priority') } : {}) }
+        case 'escape':
+          if (this.numericPanelOpen) this.handleEscape()
+          return { recognized: true }
+        case 'toggle-pause':
+          if (!allowCountdownPause && !allowPlaybackControls) return { recognized: true }
+          this.refreshInputTimerForInteraction()
+          return { recognized: true, intent: this.playerCommand({ type: 'toggle-pause' }) }
+        case 'next':
+        case 'restart':
+          if (!allowPlaybackControls || allowCountdownPause) return { recognized: true }
+          this.refreshInputTimerForInteraction()
+          return { recognized: true, intent: this.playerCommand({ type: action.type }) }
+        case 'confirm-stop-all': return { recognized: true, intent: { type: 'open-stop-confirmation' } }
+        default: return { recognized: true }
+      }
+    }
 
     switch (action.type) {
       case 'digit':
         this.appendDigit(action.digit)
-        return undefined
+        return { recognized: true }
       case 'backspace':
         this.removeDigit()
-        return undefined
+        return { recognized: true }
       case 'confirm-normal':
-        return this.submitCode('normal')
+        return { recognized: true, intent: this.submitCode('normal') }
       case 'confirm-priority':
-        return this.submitCode('priority')
+        return { recognized: true, intent: this.submitCode('priority') }
       case 'toggle-pause':
         this.refreshInputTimerForInteraction()
-        return this.playerCommand({ type: 'toggle-pause' })
+        return { recognized: true, intent: this.playerCommand({ type: 'toggle-pause' }) }
       case 'next':
         this.refreshInputTimerForInteraction()
-        return this.playerCommand({ type: 'next' })
+        return { recognized: true, intent: this.playerCommand({ type: 'next' }) }
       case 'restart':
         this.refreshInputTimerForInteraction()
-        return this.playerCommand({ type: 'restart' })
+        return { recognized: true, intent: this.playerCommand({ type: 'restart' }) }
+      case 'confirm-stop-all': return { recognized: true, intent: { type: 'open-stop-confirmation' } }
       case 'escape':
         this.handleEscape()
-        return undefined
+        return { recognized: true }
     }
   }
 
@@ -171,6 +271,11 @@ export class StandalonePlayerInteractionController {
   /** Applies a result mapped from an authorized transport without coupling B2 to Electron IPC. */
   applyCommandOutcome(result: StandalonePlayerInteractionCommandOutcome): StandaloneCodeSubmissionStatus | undefined {
     if (this.disposed) return undefined
+    if (this.stopAllRequest?.operationId === result.operationId) {
+      this.stopAllPending = false
+      if (result.outcome === 'confirmed' || result.outcome === 'rejected') this.stopAllRequest = undefined
+      return undefined
+    }
     const submission = this.pendingSubmissions.get(result.operationId)
     if (!submission) return undefined
 
@@ -185,11 +290,27 @@ export class StandalonePlayerInteractionController {
       }
     }
     this.pendingSubmissions.delete(result.operationId)
+    const submissionInputRevision = this.submissionInputRevisions.get(result.operationId)
+    this.submissionInputRevisions.delete(result.operationId)
     if (this.lastSubmission?.operationId === result.operationId) {
       this.lastSubmission = settled
+      if (result.outcome === 'rejected' && submissionInputRevision === this.inputRevision &&
+          this.numericPanelOpen && this.enteredCode.length === 0) {
+        this.enteredCode = submission.enteredCode
+      }
       this.publish()
     }
     return settled
+  }
+
+  /** Closes and clears the transient numeric entry when the UI leaves idle for active playback. */
+  closeNumericEntry(): void {
+    if (this.disposed || !this.numericPanelOpen) return
+    this.inputRevision++
+    this.numericPanelOpen = false
+    this.enteredCode = ''
+    this.cancelInactivityTimer()
+    this.publish()
   }
 
   dispose(): void {
@@ -201,10 +322,14 @@ export class StandalonePlayerInteractionController {
     this.menuScreen = 'closed'
     this.lastSubmission = undefined
     this.pendingSubmissions.clear()
+    this.submissionInputRevisions.clear()
+    this.stopAllRequest = undefined
+    this.stopAllPending = false
     this.listeners.clear()
   }
 
   private appendDigit(digit: string): void {
+    this.inputRevision++
     if (!this.numericPanelOpen) this.numericPanelOpen = true
     if (this.enteredCode.length < 5) this.enteredCode += digit
     this.resetInactivityTimer()
@@ -213,6 +338,7 @@ export class StandalonePlayerInteractionController {
 
   private removeDigit(): void {
     if (!this.numericPanelOpen) return
+    this.inputRevision++
     this.enteredCode = this.enteredCode.slice(0, -1)
     this.resetInactivityTimer()
     this.publish()
@@ -235,6 +361,7 @@ export class StandalonePlayerInteractionController {
     }
     this.lastSubmission = submission
     this.pendingSubmissions.set(submission.operationId, submission)
+    this.submissionInputRevisions.set(submission.operationId, this.inputRevision)
     this.enteredCode = ''
     this.resetInactivityTimer()
     this.publish()
@@ -253,10 +380,7 @@ export class StandalonePlayerInteractionController {
 
   private handleEscape(): void {
     if (this.numericPanelOpen) {
-      this.numericPanelOpen = false
-      this.enteredCode = ''
-      this.cancelInactivityTimer()
-      this.publish()
+      this.closeNumericEntry()
       return
     }
     if (this.menuScreen === 'closed') {
@@ -269,6 +393,8 @@ export class StandalonePlayerInteractionController {
     }
     this.publish()
   }
+
+  getStopAllPending(): boolean { return this.stopAllPending }
 
   private refreshInputTimerForInteraction(): void {
     if (this.numericPanelOpen) this.resetInactivityTimer()
@@ -284,6 +410,7 @@ export class StandalonePlayerInteractionController {
       this.timerHandle = undefined
       this.timerGeneration++
       if (!this.numericPanelOpen) return
+      this.inputRevision++
       this.numericPanelOpen = false
       this.enteredCode = ''
       this.publish()

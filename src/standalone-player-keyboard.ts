@@ -1,7 +1,7 @@
 /** Small, DOM-independent subset of the keyboard event fields used by Standalone V1. */
 export interface StandaloneKeyboardStroke {
   readonly key: string
-  /** Physical code is informational; numeric keypad keys are recognized by their `key` value. */
+  /** Physical code identifies numeric keypad digits even when NumLock emits navigation key values. */
   readonly code?: string
   readonly repeat?: boolean
   readonly ctrlKey?: boolean
@@ -17,6 +17,7 @@ export type StandaloneKeyboardAction =
   | { readonly type: 'toggle-pause' }
   | { readonly type: 'next' }
   | { readonly type: 'restart' }
+  | { readonly type: 'confirm-stop-all' }
   | { readonly type: 'backspace' }
   | { readonly type: 'escape' }
 
@@ -30,6 +31,15 @@ export function interpretStandaloneKeyboardStroke(
   const shift = stroke.shiftKey === true
   const alt = stroke.altKey === true
   const meta = stroke.metaKey === true
+
+  if ((stroke.key === ' ' || stroke.code === 'Space') && ctrl && !shift && !alt && !meta) {
+    return { type: 'confirm-stop-all' }
+  }
+
+  if (!ctrl && !shift && !alt && !meta) {
+    const keypadDigit = stroke.code?.match(/^Numpad([0-9])$/)?.[1]
+    if (keypadDigit !== undefined) return { type: 'digit', digit: keypadDigit }
+  }
 
   if (stroke.key === 'ArrowRight') {
     return ctrl && !shift && !alt && !meta ? { type: 'next' } : undefined

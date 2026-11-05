@@ -95,6 +95,64 @@ O runner oferece modos focados de avaliação Chromium e um teste da implementa�
 - `--standalone-integration`: executa contratos/runtime/sequência/interação e transport B2, IPC B4.1, adapter e regressões de playback/recovery, depois `tests/standalone-player-integration-electron.js` em Electron nativo isolado. O harness usa uma janela de controle com `standalone-player-preload` e o IPC real, mais uma janela técnica com `player-preload`/`ChromiumPlaybackHost`; ambas apontam para a mesma sequência, biblioteca, protocolo e serviço técnico. Verifica comandos B2 por IPC, snapshots/revisões, retry e perda de ACK ao destruir o controle, URL estática autorizada, playback/EOF HTML5 real, corrida Next/EOF, crash do host, relançamento com o registro incerto criado pelo cenário de crash, bloqueio sem autoplay, recuperação inválida preservada e shutdown. Não inicia `main.ts`, não instancia `ManualPlaybackService`, não altera modos nem cria UI de produto. Exige `KQ_PLAYER_TEST_MEDIA_DIR` com as amostras MP4 locais read-only; o CSV é opcional e não é aberto pelo harness.
 - `--player-recovery`: compila e executa primeiro `tests/player-playback-recovery.test.js`, depois `tests/player-playback-recovery-electron.js` em processos Electron nativos separados e perfil temporário persistente entre reinícios. Exercita recuperação de filesystem, incluindo journal/quarentena, crash após o `idle` durável, encerramento abrupto, recovery pendente sem autoplay, replay explícito com nova tentativa, Stop confirmado, EOF natural e preservação da base operacional Combined após crash do Renderer. Requer `KQ_PLAYER_RECOVERY_TEST_MEDIA_DIR` apontando para uma pasta local read-only com `01001.mp4`. O modo não mede foco de janela; o relatório esperado é `WINDOW_FOCUS NOT APPLICABLE`.
 
+### Sessão visual manual C1–C5 no PowerShell nativo
+
+Para abrir a C1 sem E2E e sem tocar no clone `source\karaoke-queue-win`, execute **no PowerShell do Windows**:
+
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File '\\wsl.localhost\Ubuntu\home\chris\projetos\karaoke-queue\scripts\standalone-c1-windows-native.ps1'
+
+O script usa `wsl.exe` somente para gerar o snapshot verificado em `/tmp` com `readSourceSnapshot()`/`stageSnapshot()` e SHA-256 do runner. PowerShell copia esse snapshot via `\\wsl.localhost` para um novo diretório NTFS em `%TEMP%`, verifica os hashes e pede `SYNC` para os arquivos novos. A partir daí, PowerShell, `node.exe`, `npm.cmd`, `npm ci`, compilação e `electron.exe` executam no Windows. O `node_modules` Linux e o `build/` da origem não são copiados. A branch e o estado do clone Windows existente não são consultados nem alterados.
+
+O exportador é invocado com o Node Linux do WSL em `/home/chris/.nvm/versions/node/v24.15.0/bin/node`, validando `platform=linux`; isso serve apenas para ler e empacotar o working tree de origem. O snapshot é verificado no staging pelo Node Windows nativo (`platform=win32`). O helper `scripts/standalone-c1-windows-manual.cjs` oferece comandos CLI nomeados para essas verificações, importação do catálogo e localização do Electron. Essa chamada evita passar código JavaScript inline por `node -e`, cujo quoting pelo Windows PowerShell pode remover aspas necessárias e invalidar o comando.
+
+Os padrões usam `C:\Users\Chris\Documents\Video musicas e catalogo`, o MP4 `01001.mp4` e o CSV `LISTA-06-12-24-41A-15H-LD52769-BASE-1.csv`. O catálogo é importado para o perfil exclusivo no staging. A janela de controle não é iniciada por Playwright nem fecha por um teste: fica aberta até o operador fechá-la com `Alt+F4`. A reprodução manual começa pelo fluxo normal: digitar um código e confirmar com `Enter` ou `P`. `F10` imprime no terminal PowerShell o snapshot autoritativo atual, incluindo fase, estado, faixa alvo/atual e ordem FIFO/LIFO, sem adicionar uma fila visual à UI. `F11` aproxima um MP4 já reproduzindo do EOF para que o Chromium gere o evento `ended` natural. `npm ci`, a compilação e o Electron executam como o usuário atual do Windows, com o ambiente dessa sessão PowerShell. Ao fechar a janela, o script limpa o perfil, as dependências Windows e o staging temporário.
+
+Para validar C3 manualmente durante a janela, faça duas execuções do mesmo comando, começando cada uma com um perfil temporário novo:
+
+- Na primeira execução, em idle, digite `1001` e pressione `Enter`. Confira preview `Always` / `Bon Jovi`, countdown de 5 até 1 e ausência de playback durante a contagem.
+- Durante o countdown, pressione `Espaço`; confirme que o número congela e aguarde alguns segundos. Pressione `Espaço` novamente e confira que a contagem retoma do restante sem voltar a 5.
+- Aguarde o loading técnico se ocorrer e confirme que o MP4 real começa somente depois do countdown, com áudio/vídeo. A tela de reprodução deve começar limpa, sem o painel numérico.
+- Feche essa janela. Na segunda execução, repita `1001`, mas confirme com `P`. Verifique novamente countdown, pausa/retomada e início real após a contagem.
+- `F10` imprime o snapshot Main autoritativo; durante a transição, procure fase `countdown`/`loading`, alvo `01001` e contador/pausa quando aplicável. Após a confirmação técnica, o estado deve ser `playing` para `01001`.
+- C2 continua testável depois de playback: Enter/P com MP4 disponível, `F10` para conferir FIFO/LIFO e código indisponível para conferir que a faixa atual não muda. Feedbacks duram 3,5s; o painel numérico usa 5s.
+- Para testar C4 com EOF natural de um MP4 real, comece playback pelo fluxo normal (digite `1001` e pressione `Enter`, aguarde o countdown e o início confirmado). Pressione `F11`: o harness posiciona o vídeo real nos últimos cinco segundos, sem emitir EOF sintético. Chromium continua reproduzindo e deve emitir `HTMLMediaElement.ended` naturalmente. `F11` só existe no harness de teste.
+- Com fila pendente, durante playback adicione `1001` com Enter e/ou P, então use `F11`. Confirme a celebração por cinco segundos e a mensagem sorteada; `Espaço` deve congelar e retomar somente o timer. `F10` mostra o snapshot Main-side (`phase: celebration`, `remainingMs`, `paused`, `message` e ordem FIFO/LIFO). Adições Enter/P durante a celebração aguardam o fim do timer; a prioridade mais recente inicia diretamente, sem outro countdown, e a faixa anterior permanece encerrada. `Ctrl + →` fica bloqueado durante a celebração.
+- Para fila vazia, use um perfil novo e não adicione outras faixas: inicie `1001` por Enter, aguarde playback e use `F11`. A celebração não deve anunciar próxima faixa e, após cinco segundos, a interface volta ao idle. Este segundo cenário também pode ser feito após consumir a fila num perfil temporário.
+- A janela permite apenas observação manual; o teste automatizado Linux/Electron cobre EOF natural, a pausa/retomada, seleção da mensagem, transição direta e capturas. A validação audiovisual C4 foi concluída e aprovada pelo proprietário; F11 não representa um comando de produto.
+
+Para validar a C5, reutilize a mesma janela temporária e confira pelo `F10` o snapshot autoritativo antes/depois das operações:
+
+- Inicie `1001` por `Enter` e aguarde o playback. Pressione `Espaço`: vídeo/áudio devem pausar e o snapshot deve ficar `paused`. Pressione novamente: devem retomar da mesma posição, sem reinício. Observe o feedback transitório “RETOMANDO”.
+- Com a faixa atual tocando, adicione `1002` por `Enter` e `1003` por `P`. Confira a fila Main-side e a barra `PRÓXIMAS`: a prioridade mais recente vem primeiro. Pressione `R`; a mesma ocorrência reinicia desde o início e a fila mantém a mesma ordem. `F10` mostra `attemptId` novo para o restart e as mesmas entradas pendentes. Repita `Espaço` para pausar e `R`: o restart deve começar do início sem mostrar o feedback `RETOMANDO`, e a fila deve continuar visível e inalterada.
+- Pressione `Ctrl + →` enquanto reproduz: a próxima faixa começa diretamente, sem celebração. A fila visual e o snapshot devem avançar uma vez. Em pausa/countdown/celebração/loading, Next deve ficar bloqueado; `F11` pode posicionar a mídia perto do fim para testar o bloqueio durante a celebração natural.
+- Abra uma fila com pendentes e pressione `Ctrl + Espaço`. O modal deve aparecer enquanto áudio/vídeo continuam. `Esc` cancela; confira que faixa, posição de reprodução e fila permanecem. Abra novamente e confirme com `Enter`: playback e pendências são encerrados, a tela volta ao idle, a janela continua aberta e nenhum EOF/celebração/autoplay ocorre. Use `F10` depois para confirmar estado idle e fila vazia.
+- `F10` e `F11` são recursos exclusivos do harness. Não use esses atalhos de teste como comandos de produto; eles não substituem as teclas reais da C5.
+
+#### Reteste manual da correção C5 — painel “Próximas”
+
+Em 2026-11-05, o proprietário concluiu e aprovou este reteste no Electron nativo Windows, incluindo atualização FIFO/LIFO, visibilidade após Esc/timeout, limite e layout da fila, interface e áudio/vídeo. Os passos abaixo permanecem como procedimento reproduzível para futuras verificações.
+
+Depois de atualizar o snapshot de origem pelo launcher, execute novamente o comando PowerShell acima. Na janela temporária, use `1001` + `Enter` para iniciar playback e então valide:
+
+- Com fila vazia durante playback, digite `1002` + `Enter`. O painel numérico tem precedência visual; use `F10` para conferir a pendência Main-side. Após cinco segundos sem digitação, o painel fecha e “Próximas” deve aparecer imediatamente com `1002`, sem Pause/Resume/Next/EOF.
+- Digite `1003` + `Enter`; confirme que o painel fica temporariamente oculto e, ao pressionar `Esc`, “Próximas” reaparece com `1002 1003`. Repita com `1004` + `P`; ao fechar por `Esc`, confira a ordem `1004 1002 1003`.
+- Adicione entradas até haver seis pendentes. A barra apresenta somente as primeiras cinco; `F10` deve continuar mostrando a sexta na sequência autoritativa. Adicione outra com `P`: ela vira a primeira e a antiga sexta permanece pendente. Use `Ctrl + →` para avançar e confira que a próxima pendência aparece na janela de cinco itens.
+- Não use Pause/Resume, Next ou EOF para “atualizar” a fila antes de verificar o comportamento: a mudança deve aparecer ao fechar a entrada numérica. O vídeo e o áudio atuais devem continuar sem interrupção durante as adições.
+
+O painel também foi conferido automaticamente em 1280×800 e 960×600, a largura mínima da janela de produção. A aprovação manual registrada acima é do proprietário; não atribui execução do runner Windows ao agente.
+
+O script informa `Enter`, `P`, `Espaço`, `R`, `Ctrl + →`, `Ctrl + Espaço`, `F10` e `F11` ao iniciar. O comando e o staging continuam os mesmos; basta atualizar o snapshot de origem local pelo próprio launcher. Não abra nem sincronize o checkout auxiliar `source\karaoke-queue-win`.
+
+Durante a sessão, o script imprime `Node` com `platform=win32`, o caminho do `electron.exe` dentro de `node_modules\electron\dist` e o PID/caminho confirmado via `Get-CimInstance Win32_Process`. Para conferir em outra janela PowerShell, substitua `PID` pelo valor impresso:
+
+    Get-CimInstance Win32_Process -Filter "ProcessId = PID" | Select-Object ProcessId,ExecutablePath,CommandLine
+
+Esse caminho de executável em `C:\...\Temp\...\node_modules\electron\dist\electron.exe`, junto de `platform=win32`, confirma o Electron Windows nativo. A execução automática não comprova audibilidade física nem fidelidade visual; essas validações continuam manuais.
+
+**Registro de execução manual C1:** em 2026-11-04, o proprietário confirmou a interface ociosa/reproduzindo, teclado/numpad, preview, Backspace/Esc, timeout e reprodução de MP4 com áudio e vídeo reais no Electron Windows nativo. A diferença do aviso de código inexistente foi reservada à C2.
+
+**Validação manual C1–C5:** concluída e aprovada pelo proprietário no Electron nativo Windows, incluindo áudio/vídeo real e a correção final de “Próximas”. Resultados Linux/Xvfb permanecem registrados separadamente e não são apresentados como validação audiovisual manual.
+
 Exemplo com diretórios previamente preparados; use caminhos reais do seu ambiente, sem incluir a coleção no repositório:
 
     sample_wsl_path='<caminho WSL do diretório de amostras no volume NTFS>'

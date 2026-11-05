@@ -462,6 +462,8 @@ function parseRequest(value: unknown): ParsedRequest {
     normalized = { type: 'next' }
   } else if (command.type === 'restart' && hasOnlyKeys(command, ['type'])) {
     normalized = { type: 'restart' }
+  } else if (command.type === 'stop-all' && hasOnlyKeys(command, ['type'])) {
+    normalized = { type: 'stop-all' }
   } else {
     throw new StandaloneRuntimeError('INVALID_STATE', 'O comando Standalone é inválido.')
   }
@@ -479,7 +481,8 @@ function commandFingerprint(command: StandalonePlayerCommand): string {
     case 'submit-code': return JSON.stringify([command.type, command.enteredCode, command.priority])
     case 'toggle-pause':
     case 'next':
-    case 'restart': return JSON.stringify([command.type])
+    case 'restart':
+    case 'stop-all': return JSON.stringify([command.type])
   }
 }
 

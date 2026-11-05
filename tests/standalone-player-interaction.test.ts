@@ -93,6 +93,79 @@ test('digits are preserved in entry order, including numeric keypad keys', () =>
   controller.dispose()
 })
 
+test('C2 entry scope uses the shared B2 parser and submits only Enter/P without enabling other playback commands', () => {
+  const fixture = build(5_000)
+  const { controller } = fixture
+  assert.equal(controller.handleEntryKeyStroke({ key: 'End', code: 'Numpad1' }).recognized, true)
+  assert.equal(controller.handleEntryKeyStroke({ key: '0' }).recognized, true)
+  assert.equal(controller.handleEntryKeyStroke({ key: 'Enter' }).intent, undefined)
+  assert.equal(controller.handleEntryKeyStroke({ key: 'p' }).intent, undefined)
+  assert.equal(controller.handleEntryKeyStroke({ key: ' ' }).recognized, true)
+  assert.equal(controller.handleEntryKeyStroke({ key: 'ArrowRight', ctrlKey: true }).recognized, true)
+  assert.equal(controller.handleEntryKeyStroke({ key: 'S' }).recognized, false)
+  assert.deepEqual(controller.getSnapshot(), {
+    numericPanelOpen: true,
+    enteredCode: '10',
+    menuScreen: 'closed'
+  })
+  assert.equal(fixture.operationNumber, 0)
+  assert.equal(fixture.scheduler.latest().delayMs, 5_000)
+  assert.equal(controller.handleEntryKeyStroke({ key: 'Escape' }).recognized, true)
+  assert.deepEqual(controller.getSnapshot(), { numericPanelOpen: false, enteredCode: '', menuScreen: 'closed' })
+  assert.equal(controller.handleEntryKeyStroke({ key: 'Escape' }).recognized, true)
+  assert.equal(controller.getSnapshot().menuScreen, 'closed', 'entry-only Esc does not open the C7 menu')
+  controller.dispose()
+})
+
+test('C2 entry scope emits normal and priority submissions only when enabled by the Renderer state', () => {
+  const { controller } = build()
+  typeDigits(controller, '1001')
+  const normal = controller.handleEntryKeyStroke({ key: 'Enter' }, true).intent
+  assert.ok(normal && normal.type === 'player-command')
+  assert.deepEqual(normal.request.command, { type: 'submit-code', enteredCode: '1001', priority: 'normal' })
+
+  typeDigits(controller, '1002')
+  const priority = controller.handleEntryKeyStroke({ key: 'P' }, true).intent
+  assert.ok(priority && priority.type === 'player-command')
+  assert.deepEqual(priority.request.command, { type: 'submit-code', enteredCode: '1002', priority: 'priority' })
+  assert.notEqual(normal.request.operationId, priority.request.operationId)
+  assert.equal(controller.getSnapshot().enteredCode, '')
+  controller.dispose()
+})
+
+test('C5 entry scope emits Next and Restart only when the authoritative playback is stable', () => {
+  const { controller } = build()
+  const countdownNext = controller.handleEntryKeyStroke({ key: 'ArrowRight', ctrlKey: true }, false, true, false, true)
+  assert.equal(countdownNext.recognized, true)
+  assert.equal(countdownNext.intent, undefined, 'countdown/celebration keep their own timer command scope.')
+  const loadingRestart = controller.handleEntryKeyStroke({ key: 'R' })
+  assert.equal(loadingRestart.intent, undefined, 'C1-C4 callers do not enable the C5 playback command scope by default.')
+  const next = controller.handleEntryKeyStroke({ key: 'ArrowRight', ctrlKey: true }, false, false, false, true)
+  assert.equal(next.intent?.type, 'player-command')
+  if (next.intent?.type === 'player-command') assert.deepEqual(next.intent.request.command, { type: 'next' })
+  const restart = controller.handleEntryKeyStroke({ key: 'R' }, false, false, false, true)
+  assert.equal(restart.intent?.type, 'player-command')
+  if (restart.intent?.type === 'player-command') assert.deepEqual(restart.intent.request.command, { type: 'restart' })
+  controller.dispose()
+})
+
+test('countdown scope maps Space to the existing pause command without enabling playback controls or submissions', () => {
+  const { controller } = build()
+  typeDigits(controller, '1001')
+  const paused = controller.handleEntryKeyStroke({ key: ' ' }, false, true)
+  assert.equal(paused.recognized, true)
+  assert.ok(paused.intent && paused.intent.type === 'player-command')
+  if (paused.intent?.type === 'player-command') assert.deepEqual(paused.intent.request.command, { type: 'toggle-pause' })
+  assert.equal(controller.getSnapshot().enteredCode, '1001')
+  const blockedSubmission = controller.handleEntryKeyStroke({ key: 'Enter' }, false, true)
+  assert.equal(blockedSubmission.recognized, true)
+  assert.equal(blockedSubmission.intent, undefined)
+  const blockedNext = controller.handleEntryKeyStroke({ key: 'ArrowRight', ctrlKey: true }, false, true)
+  assert.equal(blockedNext.recognized, true)
+  assert.equal(blockedNext.intent, undefined)
+  controller.dispose()
+})
+
 test('the code accepts at most five digits and does not pad leading zeroes', () => {
   const { controller } = build()
   typeDigits(controller, '123456')
@@ -204,6 +277,25 @@ test('Esc closes the numeric panel and discards the current code', () => {
   controller.dispose()
 })
 
+test('closing numeric entry on idle-to-playing cancels its timer and prevents a late rejection from restoring input', () => {
+  const { controller, scheduler } = build()
+  typeDigits(controller, '1001')
+  const intent = stroke(controller, 'Enter')
+  const request = playerCommand(intent)
+  assert.equal(controller.getSnapshot().numericPanelOpen, true)
+  const pendingTimer = scheduler.latest()
+
+  controller.closeNumericEntry()
+
+  assert.deepEqual(controller.getSnapshot(), { numericPanelOpen: false, enteredCode: '', menuScreen: 'closed',
+    lastSubmission: { operationId: request.operationId, enteredCode: '1001', priority: 'normal', outcome: 'pending' } })
+  assert.equal(pendingTimer.cancelled, true)
+  controller.applyCommandOutcome({ operationId: request.operationId, outcome: 'rejected', errorCode: 'INVALID_STATE' })
+  assert.deepEqual(controller.getSnapshot(), { numericPanelOpen: false, enteredCode: '', menuScreen: 'closed',
+    lastSubmission: { operationId: request.operationId, enteredCode: '1001', priority: 'normal', outcome: 'rejected', errorCode: 'INVALID_STATE' } })
+  controller.dispose()
+})
+
 test('Esc opens the main menu only when no panel or menu is open, then closes it', () => {
   const { controller } = build()
   stroke(controller, 'Escape')
@@ -301,11 +393,11 @@ test('R emits Restart without depending on engine state', () => {
   controller.dispose()
 })
 
-test('unsupported modifier combinations are ignored', () => {
+test('unsupported modifier combinations are ignored while Ctrl+Space remains the approved confirmation shortcut', () => {
   const fixture = build()
   const { controller } = fixture
   for (const options of [
-    { shiftKey: true }, { altKey: true }, { metaKey: true }, { ctrlKey: true }
+    { shiftKey: true }, { altKey: true }, { metaKey: true }
   ]) {
     assert.equal(stroke(controller, '2', options), undefined)
     assert.equal(stroke(controller, 'P', options), undefined)
@@ -313,6 +405,8 @@ test('unsupported modifier combinations are ignored', () => {
     assert.equal(stroke(controller, 'Enter', options), undefined)
     assert.equal(stroke(controller, ' ', options), undefined)
   }
+  for (const key of ['2', 'P', 'R', 'Enter']) assert.equal(stroke(controller, key, { ctrlKey: true }), undefined)
+  assert.deepEqual(stroke(controller, ' ', { ctrlKey: true }), { type: 'open-stop-confirmation' })
   assert.equal(fixture.operationNumber, 0)
   controller.dispose()
 })
@@ -349,12 +443,61 @@ test('separate non-repeat key presses remain separate intentional actions', () =
   controller.dispose()
 })
 
+test('Ctrl+Space opens confirmation exactly once and does not emit pause or Stop All', () => {
+  const { controller } = build()
+  const opened = controller.handleEntryKeyStroke({ key: ' ', code: 'Space', ctrlKey: true }, true)
+  assert.equal(opened.recognized, true)
+  assert.deepEqual(opened.intent, { type: 'open-stop-confirmation' })
+  const repeated = controller.handleEntryKeyStroke({ key: ' ', code: 'Space', ctrlKey: true, repeat: true }, true)
+  assert.deepEqual(repeated, { recognized: false })
+  assert.equal(controller.handleEntryKeyStroke({ key: ' ', code: 'Space', ctrlKey: true, shiftKey: true }, true).intent, undefined)
+  assert.equal(controller.handleEntryKeyStroke({ key: ' ', code: 'Space', ctrlKey: true, altKey: true }, true).intent, undefined)
+  assert.equal(controller.handleEntryKeyStroke({ key: ' ', code: 'Space', ctrlKey: true, metaKey: true }, true).intent, undefined)
+  controller.dispose()
+})
+
+test('confirmation owns keyboard input; Esc cancels and Enter sends one identified Stop All command', () => {
+  const { controller } = build()
+  const opened = controller.handleEntryKeyStroke({ key: ' ', code: 'Space', ctrlKey: true }, true)
+  assert.deepEqual(opened.intent, { type: 'open-stop-confirmation' })
+  assert.deepEqual(controller.handleEntryKeyStroke({ key: ' ', code: 'Space' }, true, false, true), { recognized: true },
+    'Space inside the modal cannot pause playback.')
+  assert.deepEqual(controller.handleEntryKeyStroke({ key: 'Escape' }, true, false, true).intent,
+    { type: 'close-stop-confirmation' })
+
+  const reopened = controller.handleEntryKeyStroke({ key: ' ', code: 'Space', ctrlKey: true }, true)
+  assert.deepEqual(reopened.intent, { type: 'open-stop-confirmation' })
+  const confirmed = controller.handleEntryKeyStroke({ key: 'Enter' }, true, false, true)
+  assert.equal(confirmed.recognized, true)
+  assert.ok(confirmed.intent?.type === 'player-command')
+  if (confirmed.intent?.type !== 'player-command') throw new Error('Expected Main-authoritative Stop All command.')
+  assert.deepEqual(confirmed.intent.request.command, { type: 'stop-all' })
+  const operationId = confirmed.intent.request.operationId
+  assert.equal(controller.handleEntryKeyStroke({ key: 'Enter' }, true, false, true).intent, undefined,
+    'a rapid duplicate confirmation is suppressed while its request is pending.')
+  assert.deepEqual(controller.applyCommandOutcome({ operationId, outcome: 'uncertain', errorCode: 'COMMAND_TIMEOUT' }), undefined)
+  const retry = controller.handleEntryKeyStroke({ key: 'Enter' }, true, false, true)
+  assert.equal(retry.intent?.type, 'player-command')
+  if (retry.intent?.type === 'player-command') assert.equal(retry.intent.request.operationId, operationId,
+    'an uncertain retry reuses its original operationId.')
+  controller.resetAfterStopAll()
+  assert.equal(controller.getStopAllPending(), false)
+  controller.dispose()
+})
+
 test('keyboard interpreter recognizes only V1 actions and keypad digits', () => {
   assert.deepEqual(interpretStandaloneKeyboardStroke({ key: '6', code: 'Numpad6' }), { type: 'digit', digit: '6' })
+  assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'End', code: 'Numpad1' }), { type: 'digit', digit: '1' },
+    'a physical Numpad digit remains usable when NumLock makes Chromium emit its navigation key value.')
+  assert.equal(interpretStandaloneKeyboardStroke({ key: 'End', code: 'Numpad1', ctrlKey: true }), undefined,
+    'modifier combinations do not turn navigation keypad keys into code digits.')
   assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'Enter' }), { type: 'confirm-normal' })
   assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'p' }), { type: 'confirm-priority' })
   assert.deepEqual(interpretStandaloneKeyboardStroke({ key: ' ' }), { type: 'toggle-pause' })
   assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'ArrowRight', ctrlKey: true }), { type: 'next' })
+  assert.deepEqual(interpretStandaloneKeyboardStroke({ key: ' ', code: 'Space', ctrlKey: true }), { type: 'confirm-stop-all' })
+  assert.equal(interpretStandaloneKeyboardStroke({ key: ' ', code: 'Space', ctrlKey: true, shiftKey: true }), undefined)
+  assert.equal(interpretStandaloneKeyboardStroke({ key: ' ', code: 'Space', ctrlKey: true, repeat: true }), undefined)
   assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'R' }), { type: 'restart' })
   assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'Backspace' }), { type: 'backspace' })
   assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'Escape' }), { type: 'escape' })
@@ -402,12 +545,30 @@ test('the emitted request is accepted by the B1 control contract and rejection s
   })
   assert.equal('outcome' in (intent ?? {}), false)
   assert.deepEqual(controller.getSnapshot(), {
-    numericPanelOpen: true, enteredCode: '', menuScreen: 'closed',
+    numericPanelOpen: true, enteredCode: '99999', menuScreen: 'closed',
     lastSubmission: {
       operationId: request.operationId, enteredCode: '99999', priority: 'normal',
       outcome: 'rejected', errorCode: 'INVALID_MUSIC_CODE'
     }
   })
+  controller.dispose()
+})
+
+test('a rejection restores its code only while the operator has not changed or closed the entry panel', () => {
+  const { controller } = build()
+  typeDigits(controller, '99999')
+  const request = playerCommand(stroke(controller, 'Enter'))
+  typeDigits(controller, '2')
+  controller.applyCommandOutcome({ operationId: request.operationId, outcome: 'rejected', errorCode: 'MEDIA_UNAVAILABLE' })
+  assert.equal(controller.getSnapshot().enteredCode, '2')
+  stroke(controller, 'Escape')
+
+  typeDigits(controller, '99999')
+  const closedRequest = playerCommand(stroke(controller, 'P'))
+  stroke(controller, 'Escape')
+  controller.applyCommandOutcome({ operationId: closedRequest.operationId, outcome: 'rejected', errorCode: 'MEDIA_UNAVAILABLE' })
+  assert.equal(controller.getSnapshot().numericPanelOpen, false)
+  assert.equal(controller.getSnapshot().enteredCode, '')
   controller.dispose()
 })
 

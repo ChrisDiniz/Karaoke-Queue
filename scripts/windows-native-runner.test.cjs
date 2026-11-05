@@ -28,6 +28,7 @@ const {
   verifySnapshotDirectory,
   verifyThenRun
 } = require('./run-windows-native-tests.cjs')
+const { validateTemporaryStagePath } = require('./standalone-c1-windows-manual.cjs')
 
 const head = '0123456789abcdef0123456789abcdef01234567'
 
@@ -295,6 +296,81 @@ test('recognizes Player control and first-launch Welcome bundles and copied asse
     'build/src/welcome-renderer.bundle.js', 'build/src/welcome-renderer.js',
     'build/src/welcome.css', 'build/src/welcome.html'
   ].sort())
+})
+
+test('recognizes C1 HTML, CSS, renderer bundle, restricted preload, harness and art as generated build outputs', () => {
+  const manifest = manifestFor([
+    { path: 'player-preload.ts', content: 'export {}' },
+    { path: 'standalone-player-preload.ts', content: 'export {}' },
+    { path: 'src/standalone-player-renderer.ts', content: 'export {}' },
+    { path: 'src/standalone-player.html', content: '<main></main>' },
+    { path: 'src/standalone-player.css', content: 'main {}' },
+    { path: 'src/assets/standalone-empty-stage.png', content: 'image' },
+    { path: 'tests/standalone-player-ui-electron.ts', content: 'export {}' }
+  ])
+  const generated = generatedBuildPaths([manifest])
+  for (const filePath of [
+    'build/standalone-player-ui-preload.js',
+    'build/src/standalone-player-renderer.bundle.js',
+    'build/src/standalone-player.html',
+    'build/src/standalone-player.css',
+    'build/src/assets/standalone-empty-stage.png',
+    'build/tests/standalone-player-ui-electron.js'
+  ]) assert.ok(generated.has(filePath), filePath)
+})
+
+test('C1 manual export requires a mounted NTFS TEMP path and the native PowerShell launcher owns Electron lifetime', () => {
+  const allowedStage = path.join(os.tmpdir(), 'karaoke-queue-windows-stage-qQWY8y')
+  assert.equal(validateTemporaryStagePath(allowedStage), allowedStage)
+  assert.throws(() => validateTemporaryStagePath(path.join(os.tmpdir(), 'unrelated-temp')), /diretório temporário exclusivo/)
+  assert.throws(() => validateTemporaryStagePath(path.resolve(os.tmpdir(), '..', 'outside-stage')), /diretório temporário exclusivo/)
+  const launcher = fs.readFileSync(path.join(__dirname, 'standalone-c1-windows-native.ps1'), 'utf8')
+  assert.match(launcher, /WslNodePath = '\/home\/chris\/\.nvm\/versions\/node\/v24\.15\.0\/bin\/node'/)
+  assert.match(launcher, /wslNodePath -notmatch/)
+  assert.match(launcher, /wslRuntime\.platform -ne 'linux'/)
+  assert.match(launcher, /--exec \$wslNodePath \/home\/chris\/projetos\/karaoke-queue\/scripts\/standalone-c1-windows-manual\.cjs --export-snapshot --approve-untracked/)
+  assert.match(launcher, /--exec \$wslNodePath \/home\/chris\/projetos\/karaoke-queue\/scripts\/standalone-c1-windows-manual\.cjs --cleanup-snapshot/)
+  assert.doesNotMatch(launcher, /npm run prepare:standalone-c1:windows|bash -lc \$wslCommand/)
+  assert.match(launcher, /--node-info/)
+  assert.match(launcher, /--verify-snapshot/)
+  assert.match(launcher, /--verify-build/)
+  assert.match(launcher, /--import-catalog/)
+  assert.match(launcher, /--electron-path/)
+  assert.doesNotMatch(launcher, /\$nodeExe -e|\$nodeExe -p/)
+  assert.match(launcher, /Digite SYNC para incluir exatamente esta lista/)
+  assert.match(launcher, /\$npmExe ci --cache/)
+  assert.match(launcher, /\$npmExe run compile/)
+  assert.match(launcher, /KQ_STANDALONE_C1_CATALOG_CSV|KQ_PLAYER_TEST_CATALOG_CSV/)
+  assert.match(launcher, /Start-Process -FilePath \$electronExe/)
+  assert.match(launcher, /Get-CimInstance -ClassName Win32_Process/)
+  assert.match(launcher, /Wait-Process -Id \$electronProcess\.Id/)
+  assert.match(launcher, /DriveFormat -ne 'NTFS'/)
+  assert.match(launcher, /Copy-Item -Path \(\$sourceStage \+ '\\tree\\\*'\)/)
+  const manualHelper = fs.readFileSync(path.join(__dirname, 'standalone-c1-windows-manual.cjs'), 'utf8')
+  assert.match(manualHelper, /process\.platform/)
+  assert.match(manualHelper, /CSV não produziu registros\/metadados para o código de amostra 1001/)
+  assert.match(launcher, /stagePathLinux -notmatch '\^\/tmp\/karaoke-queue-windows-stage-\[A-Za-z0-9\]\+\$/)
+  assert.match(launcher, /Remove-Item -LiteralPath \$stageRoot -Recurse -Force/)
+  assert.match(launcher, /--cleanup-snapshot/)
+  assert.doesNotMatch(launcher, /powershell\.exe|git reset|\$checkout/i)
+  const harness = fs.readFileSync(path.join(__dirname, '..', 'tests', 'standalone-player-ui-electron.ts'), 'utf8')
+  assert.match(launcher, /KQ_STANDALONE_C1_MANUAL = '1'/)
+  assert.match(harness, /KQ_STANDALONE_C1_MANUAL === '1'/)
+  assert.match(harness, /!\['F10', 'F11'\]\.includes\(input\.code\)/)
+  const manualHookStart = harness.indexOf('// Manual-only validation hooks')
+  const manualHookEnd = harness.indexOf('\n    }\n  }).catch', manualHookStart)
+  assert.ok(manualHookStart >= 0 && manualHookEnd > manualHookStart)
+  assert.doesNotMatch(harness.slice(manualHookStart, manualHookEnd), /\bF9\b|seedPlayback/)
+  assert.match(harness, /input\.code === 'F10'/)
+  assert.match(harness, /input\.code === 'F11'/)
+})
+
+test('C1 Windows helper exposes native Node metadata through an argument-safe command', () => {
+  const { getNodeInfo } = require('./standalone-c1-windows-manual.cjs')
+  assert.deepEqual(getNodeInfo(), {
+    platform: process.platform,
+    version: process.version
+  })
 })
 
 test('blocks environment secrets, token/password files, and SQLite journal sidecars from transfer', () => {

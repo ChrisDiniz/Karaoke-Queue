@@ -10,11 +10,13 @@ import type {
   StandalonePlaybackPort,
   StandalonePlayerCommandRequest,
   StandalonePlayerCommandResult,
+  StandaloneCelebrationMessage,
   StandalonePlayerSnapshot,
   StandaloneRecoveryPort
 } from '../src/standalone-player-contracts'
 import type { PlayerRecoverySnapshot } from '../src/player-playback-recovery-contracts'
-import { StandalonePlayerSequence } from '../src/standalone-player-sequence'
+import { STANDALONE_CELEBRATION_MESSAGES } from '../src/standalone-player-contracts'
+import { StandalonePlayerSequence, STANDALONE_CELEBRATION_MS, STANDALONE_INITIAL_COUNTDOWN_MS, type StandaloneCountdownScheduler } from '../src/standalone-player-sequence'
 
 class FakePlayback implements StandalonePlaybackPort {
   state: PlayerPlaybackState = { status: 'idle' }
@@ -32,8 +34,12 @@ class FakePlayback implements StandalonePlaybackPort {
   startStarted = new Map<string, Deferred<void>>()
   stopGate: Deferred<void> | undefined
   stopStarted: Deferred<string | undefined> | undefined
+  clearCompletedGate: Deferred<void> | undefined
+  clearCompletedStarted: Deferred<void> | undefined
   pauseStarted: Deferred<void> | undefined
   pauseObservationGate: Deferred<void> | undefined
+  pauseCalls = 0
+  resumeCalls = 0
   resumeStarted: Deferred<void> | undefined
   resumeObservationGate: Deferred<void> | undefined
   nextSubscriptionAdded: Deferred<void> | undefined
@@ -41,6 +47,7 @@ class FakePlayback implements StandalonePlaybackPort {
   clearStoppedResult = true
   disposeCount = 0
   private attemptNumber = 0
+  private commandGeneration = 0
   private readonly listeners = new Set<PlayerPlaybackListener>()
 
   getState(): PlayerPlaybackState { return { ...this.state } }
@@ -55,9 +62,11 @@ class FakePlayback implements StandalonePlaybackPort {
   }
 
   async playImmediately(code: string): Promise<PlayerPlaybackState> {
+    const generation = ++this.commandGeneration
     this.starts.push(code)
     this.startStarted.get(code)?.resolve()
     await this.startGates.get(code)?.promise
+    if (generation !== this.commandGeneration) throw new PlayerPlaybackError('SUPERSEDED', 'A newer playback command superseded this start.')
     const error = this.startErrors.shift()
     if (error) throw error
     const state = { status: 'playing' as const, attemptId: `attempt-${++this.attemptNumber}`, musicCode: code }
@@ -67,6 +76,7 @@ class FakePlayback implements StandalonePlaybackPort {
   }
 
   async pause(): Promise<PlayerPlaybackState> {
+    this.pauseCalls++
     if (this.pauseObservationGate) {
       const acknowledgedState = this.getState()
       this.pauseStarted?.resolve()
@@ -84,6 +94,7 @@ class FakePlayback implements StandalonePlaybackPort {
   }
 
   async resume(): Promise<PlayerPlaybackState> {
+    this.resumeCalls++
     if (this.resumeObservationGate) {
       const acknowledgedState = { ...this.state, status: 'starting' as const }
       this.state = acknowledgedState
@@ -102,6 +113,7 @@ class FakePlayback implements StandalonePlaybackPort {
   }
 
   async restart(): Promise<PlayerPlaybackState> {
+    this.commandGeneration++
     const musicCode = this.state.musicCode
     if (!musicCode) throw new PlayerPlaybackError('INVALID_STATE', 'No current media')
     const oldAttempt = this.state.attemptId
@@ -113,6 +125,7 @@ class FakePlayback implements StandalonePlaybackPort {
   }
 
   async stop(expectedAttemptId?: string): Promise<PlayerPlaybackState> {
+    this.commandGeneration++
     this.stops.push(expectedAttemptId)
     this.stopStarted?.resolve(expectedAttemptId)
     await this.stopGate?.promise
@@ -121,7 +134,10 @@ class FakePlayback implements StandalonePlaybackPort {
     if (expectedAttemptId && this.state.attemptId !== expectedAttemptId) {
       throw new PlayerPlaybackError('SUPERSEDED', 'Playback changed')
     }
-    if (this.state.status === 'completed') throw new PlayerPlaybackError('SUPERSEDED', 'Natural completion won before Stop')
+    if (this.state.status === 'completed') {
+      if (expectedAttemptId) throw new PlayerPlaybackError('SUPERSEDED', 'Natural completion won before Stop')
+      return this.getState()
+    }
     const attemptId = expectedAttemptId ?? this.state.attemptId
     const musicCode = this.state.musicCode
     if (attemptId && musicCode) this.emit({ type: 'interrupted', attemptId, musicCode, reason: 'stop' })
@@ -132,6 +148,8 @@ class FakePlayback implements StandalonePlaybackPort {
 
   async clearCompletedMedia(attemptId: string): Promise<boolean> {
     this.clearedCompleted.push(attemptId)
+    this.clearCompletedStarted?.resolve()
+    await this.clearCompletedGate?.promise
     if (!this.clearCompletedResult || this.state.status !== 'completed' || this.state.attemptId !== attemptId) return false
     this.state = { status: 'idle' }
     this.emit({ type: 'state-changed', state: this.getState() })
@@ -184,24 +202,89 @@ function deferred<T>(): Deferred<T> {
 }
 
 let entrySequence = 0
-async function build(options: { playback?: FakePlayback } = {}) {
+interface ScheduledCountdown { readonly due: number; readonly callback: () => void; cancelled: boolean }
+class FakeCountdownScheduler implements StandaloneCountdownScheduler {
+  nowMs = 0
+  readonly timers: ScheduledCountdown[] = []
+  get activeTimerCount(): number { return this.timers.filter(timer => !timer.cancelled).length }
+  now(): number { return this.nowMs }
+  schedule(callback: () => void, delayMs: number): ScheduledCountdown {
+    const timer = { due: this.nowMs + delayMs, callback, cancelled: false }
+    this.timers.push(timer)
+    return timer
+  }
+  cancel(handle: unknown): void { (handle as ScheduledCountdown).cancelled = true }
+  async elapseWithoutRunning(ms: number): Promise<void> { this.nowMs += ms }
+  async advance(ms: number): Promise<void> {
+    const end = this.nowMs + ms
+    while (true) {
+      const next = this.timers.filter(timer => !timer.cancelled && timer.due <= end)
+        .sort((a, b) => a.due - b.due)[0]
+      if (!next) break
+      next.cancelled = true
+      this.nowMs = next.due
+      next.callback()
+      await new Promise<void>(resolve => setImmediate(resolve))
+    }
+    this.nowMs = end
+    await new Promise<void>(resolve => setImmediate(resolve))
+    await new Promise<void>(resolve => setImmediate(resolve))
+  }
+}
+
+const schedulerBySequence = new WeakMap<StandalonePlayerSequence, FakeCountdownScheduler>()
+async function build(options: { playback?: FakePlayback; scheduler?: FakeCountdownScheduler;
+  selectCelebrationMessage?: () => StandaloneCelebrationMessage } = {}) {
   const playback = options.playback ?? new FakePlayback()
   const errors: unknown[] = []
+  const scheduler = options.scheduler ?? new FakeCountdownScheduler()
   const sequence = await StandalonePlayerSequence.create({
     createPlayback: () => playback,
     createEntryId: () => `entry-${++entrySequence}`,
+    countdownScheduler: scheduler,
+    ...(options.selectCelebrationMessage ? { selectCelebrationMessage: options.selectCelebrationMessage } : {}),
     onCoordinationError: error => errors.push(error)
   })
-  return { playback, sequence, errors }
+  schedulerBySequence.set(sequence, scheduler)
+  return { playback, sequence, errors, scheduler }
 }
 
-function submit(sequence: StandalonePlayerSequence, operationId: string, enteredCode: string,
+function submitRaw(sequence: StandalonePlayerSequence, operationId: string, enteredCode: string,
   priority: 'normal' | 'priority' = 'normal'): Promise<StandalonePlayerCommandResult> {
   return sequence.execute({ operationId, command: { type: 'submit-code', enteredCode, priority } })
 }
 
+async function advanceInitialCountdown(sequence: StandalonePlayerSequence, scheduler = schedulerBySequence.get(sequence)!): Promise<void> {
+  await scheduler.advance(5000)
+  await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition !== 'transitioning')
+}
+
+async function beginCelebration(sequence: StandalonePlayerSequence, playback: FakePlayback): Promise<Extract<StandalonePlayerSnapshot, { playbackCondition: 'transitioning' }> & { phase: 'celebration' }> {
+  const celebration = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'transitioning' && snapshot.phase === 'celebration')
+  playback.endCurrent()
+  return await celebration as Extract<StandalonePlayerSnapshot, { playbackCondition: 'transitioning' }> & { phase: 'celebration' }
+}
+
+async function advanceCelebrationTimer(sequence: StandalonePlayerSequence,
+  scheduler = schedulerBySequence.get(sequence)!): Promise<void> {
+  await scheduler.advance(STANDALONE_CELEBRATION_MS)
+}
+
+async function submit(sequence: StandalonePlayerSequence, operationId: string, enteredCode: string,
+  priority: 'normal' | 'priority' = 'normal'): Promise<StandalonePlayerCommandResult> {
+  const result = await submitRaw(sequence, operationId, enteredCode, priority)
+  if (result.outcome === 'confirmed' && result.snapshot.playbackCondition === 'transitioning' &&
+      result.snapshot.phase === 'countdown') await advanceInitialCountdown(sequence)
+  return result
+}
+
 async function addCurrent(sequence: StandalonePlayerSequence, code = '1001'): Promise<StandalonePlayerCommandResult> {
   return submit(sequence, `add-${code}-${entrySequence}`, code)
+}
+
+async function seedPlayback(sequence: StandalonePlayerSequence): Promise<void> {
+  await sequence.executeHarnessSampleStart()
+  await advanceInitialCountdown(sequence)
 }
 
 function ready(snapshot: StandalonePlayerSnapshot) {
@@ -231,12 +314,174 @@ test('initial state is idle and has no current or pending entries', async () => 
   await sequence.dispose()
 })
 
-test('first valid normal addition starts playback and commits it as current', async () => {
-  const { sequence, playback } = await build()
-  const result = await submit(sequence, 'first', '1001')
+test('first valid idle admission runs a real five-second Main countdown before starting playback', async () => {
+  const { sequence, playback, scheduler } = await build()
+  const result = await submitRaw(sequence, 'first', '1001')
   assert.equal(result.outcome, 'confirmed')
+  assert.deepEqual(playback.validateCalls, ['01001'])
+  assert.deepEqual(playback.starts, [], 'media is not opened during countdown.')
+  assert.equal(result.snapshot.playbackCondition, 'transitioning')
+  if (result.snapshot.playbackCondition === 'transitioning') {
+    assert.equal(result.snapshot.phase, 'countdown')
+    if (result.snapshot.phase === 'countdown') {
+      assert.equal(result.snapshot.remainingMs, 5000)
+      assert.equal(result.snapshot.target.musicCode, '01001')
+      assert.equal(result.snapshot.paused, false)
+    }
+  }
+  await scheduler.advance(4999)
+  assert.deepEqual(playback.starts, [], 'no early MP4 start is allowed.')
+  const during = sequence.getSnapshot()
+  assert.equal(during.playbackCondition, 'transitioning')
+  if (during.playbackCondition === 'transitioning' && during.phase === 'countdown') assert.equal(during.remainingMs, 1)
+  await scheduler.advance(1)
+  await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition !== 'transitioning')
   assert.deepEqual(playback.starts, ['01001'])
   assert.equal(ready(sequence.getSnapshot()).current?.musicCode, '01001')
+  await sequence.dispose()
+})
+
+test('retrying the initial Enter with the same operationId keeps one reservation, timer, and playback start', async () => {
+  const { sequence, playback, scheduler } = await build()
+  const request: StandalonePlayerCommandRequest = {
+    operationId: 'initial-start-retry',
+    command: { type: 'submit-code', enteredCode: '1001', priority: 'normal' }
+  }
+
+  const [first, retry] = await Promise.all([sequence.execute(request), sequence.execute(request)])
+
+  assert.equal(first.outcome, 'confirmed')
+  assert.equal(retry.outcome, 'confirmed')
+  assert.deepEqual(playback.validateCalls, ['01001'])
+  assert.deepEqual(playback.starts, [])
+  assert.equal(scheduler.activeTimerCount, 1)
+  const snapshot = sequence.getSnapshot()
+  assert.equal(snapshot.playbackCondition, 'transitioning')
+  if (snapshot.playbackCondition === 'transitioning') {
+    assert.deepEqual(snapshot.pending.map(entry => entry.musicCode), ['01001'])
+  }
+
+  await scheduler.advance(STANDALONE_INITIAL_COUNTDOWN_MS)
+  await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' &&
+    snapshot.state.operationalState === 'playing')
+  assert.deepEqual(playback.starts, ['01001'])
+  await sequence.dispose()
+})
+
+test('countdown pause freezes Main time and resume continues the remaining duration without playback calls', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await submitRaw(sequence, 'countdown-pause-target', '1001')
+  await scheduler.advance(2300)
+  const pause = await sequence.execute({ operationId: 'countdown-pause', command: { type: 'toggle-pause' } })
+  assert.equal(pause.outcome, 'confirmed')
+  assert.equal(pause.snapshot.playbackCondition, 'transitioning')
+  if (pause.snapshot.playbackCondition === 'transitioning') {
+    assert.equal(pause.snapshot.phase, 'countdown')
+    if (pause.snapshot.phase === 'countdown') {
+      assert.equal(pause.snapshot.paused, true)
+      assert.equal(pause.snapshot.remainingMs, 2700)
+    }
+  }
+  assert.deepEqual(playback.starts, [])
+  assert.equal(playback.pauseCalls, 0, 'countdown pause must not call playback Pause.')
+  assert.equal(playback.resumeCalls, 0, 'countdown resume must not call playback Resume.')
+  await scheduler.advance(10000)
+  const frozen = sequence.getSnapshot()
+  assert.equal(frozen.playbackCondition, 'transitioning')
+  if (frozen.playbackCondition === 'transitioning' && frozen.phase === 'countdown') assert.equal(frozen.remainingMs, 2700)
+  assert.deepEqual(playback.starts, [])
+  const resume = await sequence.execute({ operationId: 'countdown-resume', command: { type: 'toggle-pause' } })
+  assert.equal(resume.outcome, 'confirmed')
+  if (resume.snapshot.playbackCondition === 'transitioning' && resume.snapshot.phase === 'countdown') {
+    assert.equal(resume.snapshot.paused, false)
+    assert.equal(resume.snapshot.remainingMs, 2700)
+  } else assert.fail('Expected resumed countdown snapshot')
+  await scheduler.advance(2699)
+  assert.deepEqual(playback.starts, [])
+  await scheduler.advance(1)
+  await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition !== 'transitioning')
+  assert.deepEqual(playback.starts, ['01001'])
+  assert.equal(playback.pauseCalls, 0)
+  assert.equal(playback.resumeCalls, 0)
+  await sequence.dispose()
+})
+
+test('a cancelled countdown callback cannot expire a paused countdown', async () => {
+  const { sequence, scheduler, playback } = await build()
+  await submitRaw(sequence, 'countdown-stale-target', '1001')
+  const stale = scheduler.timers[0]
+  assert.ok(stale)
+  await scheduler.advance(1000)
+  const pause = await sequence.execute({ operationId: 'countdown-stale-pause', command: { type: 'toggle-pause' } })
+  assert.equal(pause.outcome, 'confirmed')
+  stale.callback()
+  await new Promise<void>(resolve => setImmediate(resolve))
+  const snapshot = sequence.getSnapshot()
+  assert.equal(snapshot.playbackCondition, 'transitioning')
+  if (snapshot.playbackCondition === 'transitioning' && snapshot.phase === 'countdown') {
+    assert.equal(snapshot.paused, true)
+    assert.equal(snapshot.remainingMs, 4000)
+  }
+  assert.deepEqual(playback.starts, [])
+  await sequence.dispose()
+})
+
+test('Space arriving at the deadline and a stale expiry callback start the reserved item exactly once', async () => {
+  const { sequence, scheduler, playback } = await build()
+  await submitRaw(sequence, 'countdown-deadline-target', '1001')
+  const expiry = scheduler.timers[0]
+  assert.ok(expiry)
+  await scheduler.elapseWithoutRunning(5000)
+  const pause = await sequence.execute({ operationId: 'countdown-deadline-space', command: { type: 'toggle-pause' } })
+  assert.equal(pause.outcome, 'confirmed')
+  assert.equal(pause.snapshot.playbackCondition, 'transitioning')
+  if (pause.snapshot.playbackCondition === 'transitioning') assert.equal(pause.snapshot.phase, 'loading')
+  expiry.callback()
+  await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition !== 'transitioning')
+  assert.deepEqual(playback.starts, ['01001'])
+  assert.equal(ready(sequence.getSnapshot()).current?.musicCode, '01001')
+  await sequence.dispose()
+})
+
+test('disposing during countdown cancels the timer and prevents delayed autoplay', async () => {
+  const { sequence, scheduler, playback } = await build()
+  await submitRaw(sequence, 'countdown-dispose-target', '1001')
+  const expiry = scheduler.timers[0]
+  assert.ok(expiry)
+  await sequence.dispose()
+  expiry.callback()
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(playback.starts, [])
+  assert.equal(playback.disposeCount, 1)
+})
+
+test('a second Enter/P during an initial countdown cannot replace or duplicate its reserved target', async () => {
+  const { sequence, playback } = await build()
+  const initial = await submitRaw(sequence, 'countdown-original', '1001')
+  assert.equal(initial.outcome, 'confirmed')
+  const result = await submitRaw(sequence, 'countdown-second', '1002', 'priority')
+  assert.equal(result.outcome, 'rejected')
+  if (result.outcome === 'rejected') assert.equal(result.error.code, 'INVALID_STATE')
+  assert.deepEqual(playback.validateCalls, ['01001'])
+  assert.deepEqual(playback.starts, [])
+  const snapshot = sequence.getSnapshot()
+  assert.equal(snapshot.playbackCondition, 'transitioning')
+  if (snapshot.playbackCondition === 'transitioning' && snapshot.phase === 'countdown') {
+    assert.equal(snapshot.target.musicCode, '01001')
+    assert.deepEqual(snapshot.pending.map(entry => entry.musicCode), ['01001'])
+  }
+  await sequence.dispose()
+})
+
+test('idle validation reports physically unavailable media without starting countdown or mutating sequence', async () => {
+  const playback = new FakePlayback()
+  playback.validationErrors.set('09999', new PlayerPlaybackError('MEDIA_UNAVAILABLE', 'Missing sample'))
+  const { sequence } = await build({ playback })
+  const result = await submit(sequence, 'c2-idle-missing', '9999')
+  assert.equal(result.outcome, 'rejected')
+  if (result.outcome === 'rejected') assert.equal(result.error.code, 'MEDIA_UNAVAILABLE')
+  assert.deepEqual(playback.starts, [])
+  assert.deepEqual(ready(sequence.getSnapshot()), { operationalState: 'idle', current: null, pending: [] })
   await sequence.dispose()
 })
 
@@ -245,13 +490,17 @@ test('Next submitted during a technical start transition is rejected instead of 
   const gate = deferred<void>()
   playback.startGates.set('01001', gate)
   playback.startStarted.set('01001', deferred<void>())
-  const add = submit(sequence, 'start-pending', '1001')
+  const add = submitRaw(sequence, 'start-pending', '1001')
+  await add
+  const scheduler = schedulerBySequence.get(sequence)!
+  await scheduler.advance(5000)
   await playback.startStarted.get('01001')!.promise
   const next = await sequence.execute({ operationId: 'next-during-start', command: { type: 'next' } })
   assert.equal(next.outcome, 'rejected')
   if (next.outcome === 'rejected') assert.equal(next.error.code, 'INVALID_STATE')
   gate.resolve()
   await add
+  await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.operationalState === 'playing')
   assert.equal(ready(sequence.getSnapshot()).current?.musicCode, '01001')
   assert.deepEqual(playback.stops, [])
   await sequence.dispose()
@@ -266,6 +515,60 @@ test('normal additions during playback append in FIFO order without interrupting
   assert.equal(state.current?.musicCode, '01001')
   assert.deepEqual(state.pending.map(entry => entry.musicCode), ['01002', '01003'])
   assert.deepEqual(playback.starts, ['01001'])
+  await sequence.dispose()
+})
+
+test('an active submission committed after EOF returns to idle must still wait through the initial countdown', async () => {
+  const playback = new FakePlayback()
+  const validationGate = deferred<void>()
+  playback.validateGates.set('01002', validationGate)
+  playback.validationStarted.set('01002', deferred<void>())
+  const { sequence } = await build({ playback })
+  await seedPlayback(sequence)
+  const active = ready(sequence.getSnapshot())
+  assert.equal(active.operationalState, 'playing')
+
+  const addition = submit(sequence, 'c2-validation-races-eof', '1002')
+  await playback.validationStarted.get('01002')!.promise
+  await beginCelebration(sequence, playback)
+  const idle = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' &&
+    snapshot.state.operationalState === 'idle')
+  await advanceCelebrationTimer(sequence)
+  await idle
+  validationGate.resolve()
+
+  const result = await addition
+  assert.equal(result.outcome, 'confirmed')
+  assert.deepEqual(playback.starts, ['01001', '01002'])
+  assert.equal(ready(sequence.getSnapshot()).current?.musicCode, '01002')
+  await sequence.dispose()
+})
+
+test('Enter and P during celebration update FIFO/LIFO without restarting the ended media or resetting the timer', async () => {
+  const { sequence, playback, scheduler } = await build({ selectCelebrationMessage: () => STANDALONE_CELEBRATION_MESSAGES[0] })
+  await addCurrent(sequence)
+  const celebration = await beginCelebration(sequence, playback)
+  assert.equal(celebration.message, STANDALONE_CELEBRATION_MESSAGES[0])
+  assert.deepEqual(playback.starts, ['01001'])
+
+  await submit(sequence, 'celebration-enter', '1002')
+  await submit(sequence, 'celebration-priority', '1003', 'priority')
+  const during = sequence.getSnapshot()
+  assert.equal(during.playbackCondition, 'transitioning')
+  if (during.playbackCondition === 'transitioning' && during.phase === 'celebration') {
+    assert.deepEqual(during.pending.map(entry => entry.musicCode), ['01003', '01002'])
+    assert.equal(during.remainingMs, STANDALONE_CELEBRATION_MS)
+  }
+  assert.deepEqual(playback.starts, ['01001'], 'admissions do not start a song during the celebration.')
+  assert.deepEqual(playback.stops, [], 'the naturally ended video is not stopped or restarted.')
+  assert.equal(scheduler.activeTimerCount, 1, 'submissions do not create or reset the authoritative celebration timer.')
+
+  const started = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' &&
+    snapshot.state.operationalState === 'playing' && snapshot.state.current?.musicCode === '01003')
+  await advanceCelebrationTimer(sequence)
+  await started
+  assert.deepEqual(playback.starts, ['01001', '01003'])
+  assert.deepEqual(ready(sequence.getSnapshot()).pending.map(entry => entry.musicCode), ['01002'])
   await sequence.dispose()
 })
 
@@ -394,48 +697,188 @@ test('concurrent validation completions preserve normal FIFO and priority LIFO a
   await sequence.dispose()
 })
 
-test('EOF with pending music advances to the FIFO head', async () => {
-  const { sequence, playback } = await build()
+test('natural EOF keeps the celebration for five seconds then starts the current FIFO head without a second countdown', async () => {
+  const { sequence, playback, scheduler } = await build()
   await addCurrent(sequence)
   await submit(sequence, 'queued', '1002')
+  const celebrating = await beginCelebration(sequence, playback)
+  assert.equal(celebrating.remainingMs, STANDALONE_CELEBRATION_MS)
+  assert.deepEqual(playback.starts, ['01001'], 'the next video does not start before the celebration ends.')
   const advanced = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.current?.musicCode === '01002')
-  playback.endCurrent()
+  await advanceCelebrationTimer(sequence, scheduler)
   await advanced
   assert.deepEqual(playback.starts, ['01001', '01002'])
   await sequence.dispose()
 })
 
-test('priority committed before EOF reservation takes precedence over older normal pending music', async () => {
-  const { sequence, playback } = await build()
+test('priority committed before EOF remains ahead of FIFO at celebration expiry', async () => {
+  const { sequence, playback, scheduler } = await build()
   await addCurrent(sequence)
   await submit(sequence, 'normal-next', '1002')
   await submit(sequence, 'priority-before-eof', '1111', 'priority')
   const advanced = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.current?.musicCode === '01111')
-  playback.endCurrent()
+  await beginCelebration(sequence, playback)
+  assert.deepEqual(playback.starts, ['01001'])
+  await advanceCelebrationTimer(sequence, scheduler)
   await advanced
   assert.deepEqual(playback.starts, ['01001', '01111'])
   assert.deepEqual(ready(sequence.getSnapshot()).pending.map(entry => entry.musicCode), ['01002'])
   await sequence.dispose()
 })
 
-test('EOF of the last song clears current and returns to idle', async () => {
-  const { sequence, playback } = await build()
+test('natural EOF with an empty queue celebrates for five seconds then clears current and returns to idle', async () => {
+  const { sequence, playback, scheduler } = await build()
   await addCurrent(sequence)
   const idle = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.operationalState === 'idle')
-  const ended = playback.endCurrent()
+  const ended = playback.getState()
+  const celebrating = await beginCelebration(sequence, playback)
+  assert.deepEqual(playback.clearedCompleted, [], 'completed media is retained through the celebration window.')
+  assert.equal(celebrating.pending.length, 0)
+  await advanceCelebrationTimer(sequence, scheduler)
   await idle
   assert.deepEqual(playback.clearedCompleted, [ended.attemptId])
+  assert.deepEqual(ready(sequence.getSnapshot()), { operationalState: 'idle', current: null, pending: [] })
+  await sequence.dispose()
+})
+
+test('celebration messages are chosen from the approved forty-message set and remain fixed for that EOF', async () => {
+  assert.equal(STANDALONE_CELEBRATION_MESSAGES.length, 40)
+  const { sequence, playback } = await build()
+  await addCurrent(sequence)
+  const current = ready(sequence.getSnapshot()).current!
+  const celebrating = await beginCelebration(sequence, playback)
+  assert.ok((STANDALONE_CELEBRATION_MESSAGES as readonly string[]).includes(celebrating.message))
+  playback.emit({ type: 'natural-end-candidate', attemptId: current.attemptId,
+    musicCode: current.musicCode, duration: 1, endedAt: new Date(1).toISOString() })
+  const afterDuplicate = sequence.getSnapshot()
+  assert.equal(afterDuplicate.playbackCondition, 'transitioning')
+  if (afterDuplicate.playbackCondition === 'transitioning' && afterDuplicate.phase === 'celebration') {
+    assert.equal(afterDuplicate.message, celebrating.message)
+  }
+  await sequence.dispose()
+})
+
+test('Space pauses and resumes only the celebration timer from its frozen remainder', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await addCurrent(sequence)
+  const current = ready(sequence.getSnapshot()).current!
+  await beginCelebration(sequence, playback)
+  await scheduler.advance(2300)
+  const paused = await sequence.execute({ operationId: 'celebration-pause', command: { type: 'toggle-pause' } })
+  assert.equal(paused.outcome, 'confirmed')
+  assert.equal(paused.snapshot.playbackCondition, 'transitioning')
+  if (paused.snapshot.playbackCondition === 'transitioning' && paused.snapshot.phase === 'celebration') {
+    assert.equal(paused.snapshot.paused, true)
+    assert.equal(paused.snapshot.remainingMs, 2700)
+  }
+  assert.equal(playback.pauseCalls, 0)
+  assert.equal(playback.resumeCalls, 0)
+  await scheduler.advance(3000)
+  assert.equal(sequence.getSnapshot().playbackCondition, 'transitioning', 'elapsed wall time does not consume a paused celebration.')
+
+  await sequence.execute({ operationId: 'celebration-resume', command: { type: 'toggle-pause' } })
+  const beforeFinalRemainder = sequence.getSnapshot()
+  assert.equal(beforeFinalRemainder.playbackCondition, 'transitioning')
+  if (beforeFinalRemainder.playbackCondition === 'transitioning' && beforeFinalRemainder.phase === 'celebration') {
+    assert.equal(beforeFinalRemainder.paused, false)
+    assert.equal(beforeFinalRemainder.remainingMs, 2700)
+  }
+  await scheduler.advance(2699)
+  assert.equal(sequence.getSnapshot().playbackCondition, 'transitioning')
+  await scheduler.advance(1)
+  await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.operationalState === 'idle')
+  assert.deepEqual(playback.clearedCompleted, [current.attemptId])
+  assert.equal(playback.pauseCalls, 0)
+  assert.equal(playback.resumeCalls, 0)
+  await sequence.dispose()
+})
+
+test('a validation started during celebration delays the final FIFO/LIFO choice until it commits', async () => {
+  const playback = new FakePlayback()
+  const validationGate = deferred<void>()
+  playback.validateGates.set('01111', validationGate)
+  playback.validationStarted.set('01111', deferred<void>())
+  const { sequence, scheduler } = await build({ playback })
+  await addCurrent(sequence)
+  await beginCelebration(sequence, playback)
+
+  const admission = submitRaw(sequence, 'celebration-slow-priority', '1111', 'priority')
+  await playback.validationStarted.get('01111')!.promise
+  await advanceCelebrationTimer(sequence, scheduler)
+  const expiredPending = sequence.getSnapshot()
+  assert.equal(expiredPending.playbackCondition, 'transitioning')
+  if (expiredPending.playbackCondition === 'transitioning' && expiredPending.phase === 'celebration') {
+    assert.equal(expiredPending.remainingMs, 0)
+  }
+  assert.deepEqual(playback.starts, ['01001'], 'expiry does not start from a queue snapshot while an admitted validation is unresolved.')
+
+  validationGate.resolve()
+  const result = await admission
+  assert.equal(result.outcome, 'confirmed')
+  await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' &&
+    snapshot.state.operationalState === 'playing' && snapshot.state.current?.musicCode === '01111')
+  assert.deepEqual(playback.starts, ['01001', '01111'])
+  await sequence.dispose()
+})
+
+test('Next is rejected during celebration and cannot skip its timer or create a manual EOF transition', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await addCurrent(sequence)
+  await beginCelebration(sequence, playback)
+  const result = await sequence.execute({ operationId: 'next-during-celebration', command: { type: 'next' } })
+  assert.equal(result.outcome, 'rejected')
+  if (result.outcome === 'rejected') assert.equal(result.error.code, 'INVALID_STATE')
+  const during = sequence.getSnapshot()
+  assert.equal(during.playbackCondition, 'transitioning')
+  if (during.playbackCondition === 'transitioning') assert.equal(during.phase, 'celebration')
+  assert.deepEqual(playback.starts, ['01001'])
+  await advanceCelebrationTimer(sequence, scheduler)
+  await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.operationalState === 'idle')
+  await sequence.dispose()
+})
+
+test('disposing during celebration cancels its timer and never starts a queued song later', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'dispose-celebration-queued', '1002')
+  await beginCelebration(sequence, playback)
+  assert.equal(scheduler.activeTimerCount, 1)
+  await sequence.dispose()
+  assert.equal(scheduler.activeTimerCount, 0)
+  await scheduler.advance(STANDALONE_CELEBRATION_MS)
+  assert.deepEqual(playback.starts, ['01001'])
+})
+
+test('Space at an elapsed deadline settles the celebration once and makes a stale timer callback harmless', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'deadline-space-next', '1002')
+  await beginCelebration(sequence, playback)
+  await scheduler.elapseWithoutRunning(STANDALONE_CELEBRATION_MS)
+  const nextStarted = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' &&
+    snapshot.state.operationalState === 'playing' && snapshot.state.current?.musicCode === '01002')
+  const pauseAtDeadline = await sequence.execute({ operationId: 'space-at-celebration-deadline', command: { type: 'toggle-pause' } })
+  assert.equal(pauseAtDeadline.outcome, 'confirmed')
+  await scheduler.advance(0)
+  await nextStarted
+  assert.deepEqual(playback.starts, ['01001', '01002'])
+  assert.equal(playback.pauseCalls, 0)
+  assert.equal(playback.resumeCalls, 0)
+  assert.equal(scheduler.activeTimerCount, 0)
   await sequence.dispose()
 })
 
 test('dispose during a background EOF start settles the tracked effect and disposes playback once', async () => {
-  const { sequence, playback } = await build()
+  const { sequence, playback, scheduler } = await build()
   await addCurrent(sequence)
   await submit(sequence, 'queued', '1002')
   const gate = deferred<void>()
   playback.startGates.set('01002', gate)
   playback.startStarted.set('01002', deferred<void>())
-  playback.endCurrent()
+  await beginCelebration(sequence, playback)
+  const ended = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'transitioning' && snapshot.phase === 'loading')
+  await advanceCelebrationTimer(sequence, scheduler)
+  await ended
   await playback.startStarted.get('01002')!.promise
   await sequence.dispose()
   assert.equal(playback.disposeCount, 1)
@@ -490,6 +933,119 @@ test('manual Next without a pending song stops and returns to idle without synth
   assert.deepEqual(playback.clearedCompleted, [])
   assert.deepEqual(playback.clearedStopped, [attemptId])
   assert.equal(ready(sequence.getSnapshot()).operationalState, 'idle')
+  await sequence.dispose()
+})
+
+test('manual Next is rejected while playback is paused and performs no stop or start', async () => {
+  const { sequence, playback } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'paused-next-queue', '1002')
+  await sequence.execute({ operationId: 'paused-next-pause', command: { type: 'toggle-pause' } })
+  const stopCount = playback.stops.length
+  const startCount = playback.starts.length
+  const result = await sequence.execute({ operationId: 'paused-next-blocked', command: { type: 'next' } })
+  assert.equal(result.outcome, 'rejected')
+  if (result.outcome === 'rejected') assert.equal(result.error.code, 'INVALID_STATE')
+  assert.equal(playback.stops.length, stopCount)
+  assert.equal(playback.starts.length, startCount)
+  assert.equal(ready(sequence.getSnapshot()).operationalState, 'paused')
+  assert.deepEqual(ready(sequence.getSnapshot()).pending.map(entry => entry.musicCode), ['01002'])
+  await sequence.dispose()
+})
+
+test('Stop All atomically stops playback, clears FIFO/LIFO, returns idle, and is idempotent', async () => {
+  const { sequence, playback } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'stop-all-normal-1', '1002')
+  await submit(sequence, 'stop-all-normal-2', '1003')
+  await submit(sequence, 'stop-all-priority-1', '1004', 'priority')
+  await submit(sequence, 'stop-all-priority-2', '1005', 'priority')
+  const previousAttemptId = ready(sequence.getSnapshot()).current!.attemptId
+  const request: StandalonePlayerCommandRequest = {
+    operationId: 'stop-all-once', command: { type: 'stop-all' }
+  }
+  const [first, duplicate] = await Promise.all([sequence.execute(request), sequence.execute(request)])
+  assert.deepEqual(duplicate, first, 'duplicate delivery shares one result and does not repeat effects.')
+  assert.equal(first.outcome, 'confirmed')
+  assert.deepEqual(playback.stops, [undefined], 'Stop All uses one unqualified stop to supersede pending playback commands.')
+  assert.deepEqual(playback.clearedStopped, [previousAttemptId])
+  assert.deepEqual(ready(sequence.getSnapshot()), { operationalState: 'idle', current: null, pending: [] })
+  assert.equal(playback.getState().status, 'idle')
+  assert.deepEqual(await sequence.execute(request), first, 'a completed retry reuses the cached result.')
+  const conflict = await sequence.execute({ operationId: request.operationId, command: { type: 'next' } })
+  assert.equal(conflict.outcome, 'rejected')
+  if (conflict.outcome === 'rejected') assert.equal(conflict.error.code, 'OPERATION_ID_CONFLICT')
+  assert.equal(playback.stops.length, 1)
+  await sequence.dispose()
+})
+
+test('Stop All cancels an initial countdown and a stale expiry cannot autoplay', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await submitRaw(sequence, 'stop-all-countdown-entry', '1001')
+  const expiry = scheduler.timers.find(timer => !timer.cancelled)
+  assert.ok(expiry)
+  const result = await sequence.execute({ operationId: 'stop-all-countdown', command: { type: 'stop-all' } })
+  assert.equal(result.outcome, 'confirmed')
+  assert.deepEqual(ready(sequence.getSnapshot()), { operationalState: 'idle', current: null, pending: [] })
+  expiry.callback()
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(playback.starts, [])
+  assert.equal(scheduler.activeTimerCount, 0)
+  await sequence.dispose()
+})
+
+test('Stop All cancels a celebration and stale expiry cannot start queued music', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'stop-all-celebration-normal', '1002')
+  await submit(sequence, 'stop-all-celebration-priority', '1003', 'priority')
+  const celebration = await beginCelebration(sequence, playback)
+  const expiry = scheduler.timers.find(timer => !timer.cancelled)
+  assert.ok(expiry)
+  const result = await sequence.execute({ operationId: 'stop-all-celebration', command: { type: 'stop-all' } })
+  assert.equal(result.outcome, 'confirmed')
+  assert.deepEqual(playback.clearedCompleted, [celebration.lastConfirmedState.current!.attemptId])
+  assert.deepEqual(ready(sequence.getSnapshot()), { operationalState: 'idle', current: null, pending: [] })
+  expiry.callback()
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(playback.starts, ['01001'])
+  assert.equal(scheduler.activeTimerCount, 0)
+  await sequence.dispose()
+})
+
+test('Stop All failure never claims idle and preserves pending state for recovery', async () => {
+  const { sequence, playback } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'stop-all-failure-pending', '1002')
+  const confirmedBefore = ready(sequence.getSnapshot())
+  playback.clearStoppedResult = false
+  const result = await sequence.execute({ operationId: 'stop-all-failure', command: { type: 'stop-all' } })
+  assert.equal(result.outcome, 'blocked')
+  assert.equal(result.snapshot.playbackCondition, 'blocked')
+  assert.equal(result.snapshot.lastConfirmedState.current?.attemptId, confirmedBefore.current?.attemptId)
+  assert.deepEqual(result.snapshot.pending.map(entry => entry.musicCode), ['01002'])
+  assert.equal(playback.getState().status, 'stopped', 'the sequence does not claim successful media clearing.')
+  await sequence.dispose()
+})
+
+test('Stop All supersedes an already preparing playback start and prevents delayed autoplay', async () => {
+  const { sequence, playback, scheduler } = await build()
+  const startGate = deferred<void>()
+  const startStarted = deferred<void>()
+  playback.startGates.set('01001', startGate)
+  playback.startStarted.set('01001', startStarted)
+  await submitRaw(sequence, 'stop-all-load-entry', '1001')
+  await scheduler.advance(STANDALONE_INITIAL_COUNTDOWN_MS)
+  await startStarted.promise
+  const stopAll = await sequence.execute({ operationId: 'stop-all-during-load', command: { type: 'stop-all' } })
+  assert.equal(stopAll.outcome, 'confirmed')
+  assert.deepEqual(ready(sequence.getSnapshot()), { operationalState: 'idle', current: null, pending: [] })
+  startGate.resolve()
+  await new Promise<void>(resolve => setImmediate(resolve))
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(ready(sequence.getSnapshot()), { operationalState: 'idle', current: null, pending: [] })
+  assert.equal(playback.getState().status, 'stopped')
+  assert.deepEqual(playback.starts, ['01001'], 'the stale attempt was requested once but did not commit after Stop All.')
   await sequence.dispose()
 })
 
@@ -550,20 +1106,18 @@ test('a conflicting retry cannot erase a Next intention waiting behind an event 
   await sequence.dispose()
 })
 
-test('EOF reserved before a concurrent Next wins once and the stale Next does not skip the successor', async () => {
-  const { sequence, playback } = await build()
+test('a concurrent Next cannot bypass celebration and the queued successor starts once after the timer', async () => {
+  const { sequence, playback, scheduler } = await build()
   await addCurrent(sequence)
   await submit(sequence, 'queued-1', '1002')
   await submit(sequence, 'queued-2', '1003')
-  const gate = deferred<void>()
-  playback.startGates.set('01002', gate)
-  playback.startStarted.set('01002', deferred<void>())
+  await beginCelebration(sequence, playback)
+  const result = await sequence.execute({ operationId: 'next-after-eof-reserve', command: { type: 'next' } })
+  assert.equal(result.outcome, 'rejected')
+  if (result.outcome === 'rejected') assert.equal(result.error.code, 'INVALID_STATE')
+  assert.deepEqual(playback.starts, ['01001'])
   const advanced = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.current?.musicCode === '01002')
-  playback.endCurrent()
-  await playback.startStarted.get('01002')!.promise
-  const next = sequence.execute({ operationId: 'next-after-eof-reserve', command: { type: 'next' } })
-  gate.resolve()
-  await next
+  await advanceCelebrationTimer(sequence, scheduler)
   await advanced
   assert.equal(ready(sequence.getSnapshot()).current?.musicCode, '01002')
   assert.deepEqual(ready(sequence.getSnapshot()).pending.map(entry => entry.musicCode), ['01003'])
@@ -629,14 +1183,22 @@ test('an uncertain host event preserves its matching technical error code', asyn
 })
 
 test('EOF is deduplicated and does not advance twice', async () => {
-  const { sequence, playback } = await build()
+  const { sequence, playback, scheduler } = await build()
   await addCurrent(sequence)
   await submit(sequence, 'queued-1', '1002')
   await submit(sequence, 'queued-2', '1003')
   const current = ready(sequence.getSnapshot()).current!
   const advanced = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.current?.musicCode === '01002')
-  playback.endCurrent()
+  const celebrating = await beginCelebration(sequence, playback)
   playback.emit({ type: 'natural-end-candidate', attemptId: current.attemptId, musicCode: current.musicCode, duration: 1, endedAt: new Date(2).toISOString() })
+  const afterDuplicate = sequence.getSnapshot()
+  assert.equal(afterDuplicate.playbackCondition, 'transitioning')
+  if (afterDuplicate.playbackCondition === 'transitioning' && afterDuplicate.phase === 'celebration') {
+    assert.equal(afterDuplicate.message, celebrating.message, 'a duplicate EOF does not reroll the message.')
+    assert.equal(afterDuplicate.remainingMs, STANDALONE_CELEBRATION_MS, 'a duplicate EOF does not restart the timer.')
+  }
+  assert.equal(scheduler.activeTimerCount, 1)
+  await advanceCelebrationTimer(sequence, scheduler)
   await advanced
   assert.equal(ready(sequence.getSnapshot()).current?.musicCode, '01002')
   assert.deepEqual(ready(sequence.getSnapshot()).pending.map(entry => entry.musicCode), ['01003'])
@@ -645,7 +1207,7 @@ test('EOF is deduplicated and does not advance twice', async () => {
 })
 
 test('normal addition linearized before EOF becomes the next song', async () => {
-  const { sequence, playback } = await build()
+  const { sequence, playback, scheduler } = await build()
   await addCurrent(sequence)
   const gate = deferred<void>()
   playback.validationStarted.set('01002', deferred<void>())
@@ -653,16 +1215,17 @@ test('normal addition linearized before EOF becomes the next song', async () => 
   const add = submit(sequence, 'add-before-eof', '1002')
   await playback.validationStarted.get('01002')!.promise
   const advanced = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.current?.musicCode === '01002')
-  playback.endCurrent()
+  await beginCelebration(sequence, playback)
   gate.resolve()
   await add
+  await advanceCelebrationTimer(sequence, scheduler)
   await advanced
   assert.equal(ready(sequence.getSnapshot()).current?.musicCode, '01002')
   await sequence.dispose()
 })
 
-test('priority committed after EOF reserved its head does not preempt that reserved next song', async () => {
-  const { sequence, playback } = await build()
+test('priority committed during celebration becomes the next song at expiry', async () => {
+  const { sequence, playback, scheduler } = await build()
   await addCurrent(sequence)
   await submit(sequence, 'normal-next', '1002')
   const gate = deferred<void>()
@@ -670,13 +1233,14 @@ test('priority committed after EOF reserved its head does not preempt that reser
   playback.validateGates.set('01111', gate)
   const add = submit(sequence, 'priority-before-eof', '1111', 'priority')
   await playback.validationStarted.get('01111')!.promise
-  const advanced = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.current?.musicCode === '01002')
-  playback.endCurrent()
+  const advanced = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.current?.musicCode === '01111')
+  await beginCelebration(sequence, playback)
   gate.resolve()
   await add
+  await advanceCelebrationTimer(sequence, scheduler)
   await advanced
-  assert.deepEqual(playback.starts, ['01001', '01002'])
-  assert.deepEqual(ready(sequence.getSnapshot()).pending.map(entry => entry.musicCode), ['01111'])
+  assert.deepEqual(playback.starts, ['01001', '01111'])
+  assert.deepEqual(ready(sequence.getSnapshot()).pending.map(entry => entry.musicCode), ['01002'])
   await sequence.dispose()
 })
 
@@ -695,9 +1259,10 @@ test('known failure to start preserves the first pending entry in blocked state'
   const { sequence, playback } = await build()
   playback.startErrors.push(new PlayerPlaybackError('HOST_UNAVAILABLE', 'No host'))
   const result = await submit(sequence, 'start-fail', '1001')
-  assert.equal(result.outcome, 'blocked')
-  assert.equal(result.snapshot.playbackCondition, 'blocked')
-  assert.deepEqual(result.snapshot.pending.map(entry => entry.musicCode), ['01001'])
+  assert.equal(result.outcome, 'confirmed', 'the code is accepted into the Main reservation before the countdown.')
+  const failedSnapshot = sequence.getSnapshot()
+  assert.equal(failedSnapshot.playbackCondition, 'blocked', 'the technical start failure blocks after countdown expiry.')
+  assert.deepEqual(failedSnapshot.pending.map(entry => entry.musicCode), ['01001'])
   assert.deepEqual(playback.starts, ['01001'])
   const retry = await submit(sequence, 'blocked-retry', '1002')
   assert.equal(retry.outcome, 'blocked')
@@ -707,12 +1272,13 @@ test('known failure to start preserves the first pending entry in blocked state'
 })
 
 test('known failure to start the next song blocks without dropping the reserved head', async () => {
-  const { sequence, playback } = await build()
+  const { sequence, playback, scheduler } = await build()
   await addCurrent(sequence)
   await submit(sequence, 'queued', '1002')
   playback.startErrors.push(new PlayerPlaybackError('MEDIA_LOAD_FAILED', 'Next media failed'))
   const advanced = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'blocked')
-  playback.endCurrent()
+  await beginCelebration(sequence, playback)
+  await advanceCelebrationTimer(sequence, scheduler)
   await advanced
   const snapshot = sequence.getSnapshot()
   assert.equal(snapshot.playbackCondition, 'blocked')
@@ -726,9 +1292,10 @@ test('uncertain start is not treated as success or known failure and retains pen
   const { sequence, playback } = await build()
   playback.startErrors.push(new PlayerPlaybackError('COMMAND_TIMEOUT', 'No acknowledgement'))
   const result = await submit(sequence, 'start-uncertain', '1001')
-  assert.equal(result.outcome, 'uncertain')
-  assert.equal(result.snapshot.playbackCondition, 'uncertain')
-  assert.deepEqual(result.snapshot.pending.map(entry => entry.musicCode), ['01001'])
+  assert.equal(result.outcome, 'confirmed', 'admission is confirmed before countdown, independently of later host certainty.')
+  const uncertainSnapshot = sequence.getSnapshot()
+  assert.equal(uncertainSnapshot.playbackCondition, 'uncertain')
+  assert.deepEqual(uncertainSnapshot.pending.map(entry => entry.musicCode), ['01001'])
   assert.deepEqual(playback.starts, ['01001'])
   await sequence.dispose()
 })
@@ -766,16 +1333,20 @@ test('different operationIds for the same code create separate queue occurrences
   await sequence.dispose()
 })
 
-test('restart preserves the current entry identity and replaces only attemptId', async () => {
+test('restart preserves the current entry and pending queue while replacing only attemptId', async () => {
   const { sequence, playback } = await build()
   await addCurrent(sequence)
+  await submit(sequence, 'restart-preserved-queue', '1002')
+  await submit(sequence, 'restart-preserved-priority', '1003', 'priority')
   const before = ready(sequence.getSnapshot()).current!
   const result = await sequence.execute({ operationId: 'restart', command: { type: 'restart' } })
   const after = ready(sequence.getSnapshot()).current!
   assert.equal(result.outcome, 'confirmed')
   assert.equal(after.entryId, before.entryId)
   assert.notEqual(after.attemptId, before.attemptId)
+  assert.deepEqual(ready(sequence.getSnapshot()).pending.map(entry => entry.musicCode), ['01003', '01002'])
   assert.equal(playback.starts.length, 1)
+  assert.equal(sequence.getSnapshot().playbackCondition, 'ready', 'Restart does not enter EOF celebration.')
   await sequence.dispose()
 })
 
@@ -806,12 +1377,13 @@ test('mutating a returned snapshot cannot mutate the authoritative queue', async
 })
 
 test('EOF event from an obsolete attempt cannot affect a newer current song', async () => {
-  const { sequence, playback } = await build()
+  const { sequence, playback, scheduler } = await build()
   await addCurrent(sequence)
   await submit(sequence, 'queued', '1002')
   const old = ready(sequence.getSnapshot()).current!
   const advanced = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.current?.musicCode === '01002')
-  playback.endCurrent()
+  await beginCelebration(sequence, playback)
+  await advanceCelebrationTimer(sequence, scheduler)
   await advanced
   playback.state = { status: 'completed', attemptId: old.attemptId, musicCode: old.musicCode }
   playback.emit({ type: 'natural-end-candidate', attemptId: old.attemptId, musicCode: old.musicCode, duration: 1, endedAt: new Date(3).toISOString() })

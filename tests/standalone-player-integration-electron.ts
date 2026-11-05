@@ -574,9 +574,10 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       assert.equal(invalid.reply.outcome, 'rejected')
       assert.equal(invalid.status.outcome, 'rejected')
       assert.equal((await context.controlPage.evaluate(() => window.standalonePlayer.getSnapshot())).snapshot.state.operationalState, 'idle')
+      client.key({ key: 'Escape' }) // The rejected code remains visible for its feedback; close it before the next test entry.
 
       const first = await client.code('1001', 'normal', true)
-      assert.equal(first.reply.outcome, 'confirmed')
+      assert.equal(first.reply.outcome, 'confirmed', JSON.stringify(first.reply))
       assert.equal(first.retryReply.outcome, 'confirmed')
       assert.equal(first.retryReply.operationId, first.intent.request.operationId)
       assert.equal(first.status.outcome, 'confirmed')

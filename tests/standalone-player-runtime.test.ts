@@ -270,6 +270,34 @@ test('same operationId and payload share one in-flight execution and its confirm
   await built.composition.dispose()
 })
 
+test('Stop All request parsing is exact and duplicate deliveries share one Main effect', async () => {
+  const gate = deferred<StandaloneCommandExecutionResult>()
+  const started = deferred<void>()
+  let preparationCount = 0
+  let effectCount = 0
+  const built = await buildComposition({
+    prepareCommand: request => {
+      preparationCount++
+      return preparedCommand(async () => { effectCount++; started.resolve(); return gate.promise })
+    }
+  })
+  const request: StandalonePlayerCommandRequest = { operationId: 'stop-all-runtime', command: { type: 'stop-all' } }
+  const first = built.composition.control.execute(request)
+  const retry = built.composition.control.execute(request)
+  assert.equal(first, retry)
+  await started.promise
+  const conflict = await built.composition.control.execute({ operationId: request.operationId, command: { type: 'toggle-pause' } })
+  assert.equal(conflict.outcome, 'rejected')
+  if (conflict.outcome === 'rejected') assert.equal(conflict.error.code, 'OPERATION_ID_CONFLICT')
+  assert.equal(preparationCount, 1)
+  assert.equal(effectCount, 1)
+  gate.resolve(executionConfirmed(request.operationId))
+  assert.deepEqual(await first, confirmed(request.operationId))
+  assert.deepEqual(await built.composition.control.execute(request), confirmed(request.operationId))
+  assert.equal(effectCount, 1)
+  await built.composition.dispose()
+})
+
 test('distinct command intentions are prepared and started in order without waiting for prior playback confirmation', async () => {
   const firstStarted = deferred<void>()
   const secondStarted = deferred<void>()

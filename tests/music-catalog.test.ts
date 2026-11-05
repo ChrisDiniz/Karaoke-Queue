@@ -732,6 +732,43 @@ test('Player-only catalog persists metadata in an isolated SQLite file without C
   }
 })
 
+test('Standalone metadata preview is exact, inventory-independent, and invalidated only after catalog commit', async () => {
+  const temp = temporaryDirectory()
+  const source = writeCsv(temp.directory, 'preview-catalog.csv', catalogCsv([['Bon Jovi', '1001', 'Always']]))
+  const database = createPlayerMusicCatalogDatabase(temp.directory)
+  const inventory = {
+    getSnapshot: () => { throw new Error('metadata preview must not inspect video inventory') },
+    lookup: async () => { throw new Error('metadata preview must not validate MP4 availability') }
+  }
+  const service = new MusicCatalogService(database, inventory)
+  const revisions: Array<string | null> = []
+  const unsubscribe = service.subscribeToMetadataRevision(revision => revisions.push(revision))
+  try {
+    assert.deepEqual(service.lookupMetadataByVideoCode('1001'), {
+      catalogRevision: null, title: null, artist: null
+    })
+    const imported = await service.importFile(source)
+    assert.deepEqual(revisions, [imported.revision], 'a revision is published only after the SQLite replacement commits')
+    assert.deepEqual(service.lookupMetadataByVideoCode('1001'), {
+      catalogRevision: imported.revision, title: 'Always', artist: 'Bon Jovi'
+    })
+    assert.deepEqual(service.lookupMetadataByVideoCode('100'), {
+      catalogRevision: imported.revision, title: null, artist: null
+    }, 'numeric preview uses canonical exact equality, not a catalog prefix search')
+    assert.deepEqual(service.lookupMetadataByVideoCode('01001'), {
+      catalogRevision: imported.revision, title: 'Always', artist: 'Bon Jovi'
+    }, 'an already canonical five-digit code is matched exactly')
+    assert.throws(() => service.lookupMetadataByVideoCode('0100'), MusicCatalogError)
+    assert.equal(JSON.stringify(service.lookupMetadataByVideoCode('1001')).includes(temp.directory), false,
+      'the preview DTO does not expose filesystem paths')
+  } finally {
+    unsubscribe()
+    await service.close()
+    database.close()
+    temp.cleanup()
+  }
+})
+
 test('Player-only catalog rejects a hard-link alias to the operational Controller database', () => {
   const temp = temporaryDirectory()
   const controller = createKaraokeDatabase(temp.directory)

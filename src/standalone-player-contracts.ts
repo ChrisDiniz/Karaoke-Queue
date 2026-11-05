@@ -12,6 +12,52 @@ import type { MusicCatalogService } from './music-catalog-service'
 /** The three user-facing operational states defined by the Standalone V1. */
 export type StandaloneOperationalState = 'idle' | 'playing' | 'paused'
 
+/** Owner-approved copy options for the natural-EOF celebration screen. */
+export const STANDALONE_CELEBRATION_MESSAGES = Object.freeze([
+  'O palco foi todo seu!',
+  'Você brilhou até a última nota!',
+  'Aplausos para você!',
+  'Que apresentação!',
+  'Você fez bonito do início ao fim!',
+  'Que energia no palco!',
+  'Você fechou com chave de ouro!',
+  'Parabéns pelo show!',
+  'Que voz, que presença!',
+  'Você arrasou!',
+  'Essa música ganhou vida com você!',
+  'Uma salva de palmas para essa interpretação!',
+  'O microfone agradece!',
+  'Essa foi para cantar junto!',
+  'A última nota foi especial!',
+  'Você deu vida a essa canção!',
+  'Que final de arrepiar!',
+  'Uma apresentação para guardar!',
+  'O palco ainda está vibrando!',
+  'Mais uma música, mais um grande momento!',
+  'A música acabou, o brilho continua!',
+  'Seu momento no palco foi demais!',
+  'Você levou essa até o fim em grande estilo!',
+  'Mais um sucesso no karaokê!',
+  'Pode soltar o aplauso!',
+  'O show foi seu — parabéns!',
+  'Que jeito bom de terminar a música!',
+  'Você merece esse aplauso!',
+  'Mais um momento inesquecível!',
+  'A fila espera; este aplauso é seu!',
+  'A música acabou, mas o microfone já está pedindo bis.',
+  'Última nota entregue. O microfone vai tirar uma folga.',
+  'O refrão terminou; agora ele pode sair da sua cabeça… talvez.',
+  'O palco está aplaudindo. O microfone também, mas ele é suspeito.',
+  'Canção concluída! Confetes virtuais ativados na imaginação.',
+  'Essa terminou tão bem que até o botão de avançar bateu palmas.',
+  'O microfone já está contando essa história para a caixa de som.',
+  'Fim da música: todo mundo pode respirar — inclusive o microfone.',
+  'O show acabou por enquanto. O microfone já está escolhendo o próximo sucesso.',
+  'Música concluída. A fila está pronta para o próximo capítulo musical.'
+] as const)
+
+export type StandaloneCelebrationMessage = typeof STANDALONE_CELEBRATION_MESSAGES[number]
+
 /** Engine condition is separate from the V1 operational state. */
 export type StandalonePlaybackCondition = 'ready' | 'blocked' | 'uncertain'
 
@@ -57,12 +103,30 @@ export interface StandaloneReadySnapshot {
 }
 
 /** A technical transition is in flight; it is deliberately not exposed as a V1 operational state. */
-export interface StandaloneTransitioningSnapshot {
+interface StandaloneTransitioningSnapshotBase {
   readonly playbackCondition: 'transitioning'
   readonly lastConfirmedState: StandaloneStableState
   /** Includes a reserved head until its start is confirmed. */
   readonly pending: readonly StandaloneQueueEntry[]
 }
+
+export type StandaloneTransitioningSnapshot = StandaloneTransitioningSnapshotBase & (
+  | { readonly phase: 'operation' }
+  | { readonly phase: 'resuming' }
+  | {
+      readonly phase: 'countdown'
+      readonly target: StandaloneQueueEntry
+      readonly remainingMs: number
+      readonly paused: boolean
+    }
+  | { readonly phase: 'loading'; readonly target: StandaloneQueueEntry }
+  | {
+      readonly phase: 'celebration'
+      readonly remainingMs: number
+      readonly paused: boolean
+      readonly message: StandaloneCelebrationMessage
+    }
+)
 
 /**
  * A blocked/uncertain snapshot is not an operational V1 state. It preserves
@@ -89,7 +153,8 @@ export const STANDALONE_PLAYER_COMMAND_TYPES = Object.freeze([
   'submit-code',
   'toggle-pause',
   'next',
-  'restart'
+  'restart',
+  'stop-all'
 ] as const)
 
 export type StandalonePlayerCommand =
@@ -97,6 +162,7 @@ export type StandalonePlayerCommand =
   | { readonly type: 'toggle-pause' }
   | { readonly type: 'next' }
   | { readonly type: 'restart' }
+  | { readonly type: 'stop-all' }
 
 /** A retry of one logical action reuses this ID and payload; a new operator action gets a new ID. */
 export interface StandalonePlayerCommandRequest {

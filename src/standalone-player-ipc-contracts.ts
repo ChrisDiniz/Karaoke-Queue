@@ -9,7 +9,20 @@ export const enum STANDALONE_PLAYER_IPC_CHANNELS {
   execute = 'standalone:v1:execute',
   subscribe = 'standalone:v1:subscribe',
   unsubscribe = 'standalone:v1:unsubscribe',
-  snapshotChanged = 'standalone:v1:snapshot-changed'
+  snapshotChanged = 'standalone:v1:snapshot-changed',
+  lookupMetadata = 'standalone:v1:lookup-metadata',
+  catalogRevisionChanged = 'standalone:v1:catalog-revision-changed'
+}
+
+export interface StandalonePlayerMetadataPreview {
+  readonly catalogRevision: string | null
+  readonly title: string | null
+  readonly artist: string | null
+}
+
+export interface StandaloneMetadataCatalogPort {
+  lookupMetadataByVideoCode(value: unknown): StandalonePlayerMetadataPreview
+  subscribeToMetadataRevision(listener: (revision: string | null) => void): () => void
 }
 
 export interface StandalonePlayerSnapshotEnvelope {
@@ -45,6 +58,8 @@ export type StandalonePlayerIpcCommandReply =
 export interface StandalonePlayerRendererApi {
   getSnapshot(): Promise<StandalonePlayerSnapshotEnvelope>
   execute(request: StandalonePlayerCommandRequest): Promise<StandalonePlayerIpcCommandReply>
+  lookupMetadata(code: string): Promise<StandalonePlayerMetadataPreview>
+  onCatalogRevisionChanged(listener: (revision: string | null) => void): () => void
   /** Calls listener with a consistent initial snapshot before resolving, then with newer revisions only. */
   subscribe(listener: (envelope: StandalonePlayerSnapshotEnvelope) => void): Promise<StandalonePlayerSubscriptionRef>
   unsubscribe(subscription: StandalonePlayerSubscriptionRef): Promise<boolean>
@@ -55,4 +70,5 @@ export interface StandalonePlayerMainIpcBridgeOptions {
   readonly webContents: Electron.WebContents
   readonly expectedDocumentUrl: string
   readonly control: import('./standalone-player-contracts').StandalonePlayerControl
+  readonly metadataCatalog?: StandaloneMetadataCatalogPort
 }

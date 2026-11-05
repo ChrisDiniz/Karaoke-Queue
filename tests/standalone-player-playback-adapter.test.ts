@@ -9,7 +9,7 @@ import { PlayerPlaybackRecoveryCoordinator } from '../src/player-playback-recove
 import { PlayerPlaybackRecoveryStore } from '../src/player-playback-recovery-store'
 import { VideoLibraryService } from '../src/video-library-service'
 import { createStandalonePlayerWithSharedPlayback } from '../src/standalone-player-playback-adapter'
-import type { StandalonePlayerSequence } from '../src/standalone-player-sequence'
+import type { StandaloneCountdownScheduler, StandalonePlayerSequence } from '../src/standalone-player-sequence'
 
 interface Deferred<T> {
   promise: Promise<T>
@@ -135,6 +135,21 @@ interface FixtureOptions {
   readonly recovery?: PlayerPlaybackRecoveryCoordinator
   readonly onCatalogLookup?: () => void
   readonly onCatalogClose?: () => void
+  readonly countdownScheduler?: StandaloneCountdownScheduler
+}
+
+function createElapsedCountdownScheduler(): StandaloneCountdownScheduler {
+  let now = 0
+  return {
+    now: () => now,
+    schedule: (callback, delayMs) => {
+      now += delayMs
+      const handle = { cancelled: false }
+      queueMicrotask(() => { if (!handle.cancelled) callback() })
+      return handle
+    },
+    cancel: handle => { (handle as { cancelled: boolean }).cancelled = true }
+  }
 }
 
 async function createFixture(options: FixtureOptions = {}) {
@@ -176,6 +191,8 @@ async function createFixture(options: FixtureOptions = {}) {
       mediaSources.dispose(protocol as never)
     },
     createEntryId: (() => { let id = 0; return () => `entry-${++id}` })(),
+    // These adapter tests cover the real playback service/host boundary; Sequence tests cover the full 5s clock.
+    countdownScheduler: options.countdownScheduler ?? createElapsedCountdownScheduler(),
     onCoordinationError: error => errors.push(error)
   })
 
@@ -192,7 +209,15 @@ async function createFixture(options: FixtureOptions = {}) {
 }
 
 function submit(sequence: StandalonePlayerSequence, operationId: string, enteredCode: string) {
-  return sequence.execute({ operationId, command: { type: 'submit-code', enteredCode, priority: 'normal' } })
+  return sequence.execute({ operationId, command: { type: 'submit-code', enteredCode, priority: 'normal' } }).then(async result => {
+    if (result.outcome === 'confirmed' && result.snapshot.playbackCondition === 'transitioning' &&
+        result.snapshot.phase === 'countdown') {
+      await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'blocked' ||
+        snapshot.playbackCondition === 'uncertain' ||
+        (snapshot.playbackCondition === 'ready' && snapshot.state.operationalState === 'playing'))
+    }
+    return result
+  })
 }
 
 test('real PlayerPlaybackService composes with the Standalone sequence, library and media capability protocol', async () => {
@@ -207,6 +232,9 @@ test('real PlayerPlaybackService composes with the Standalone sequence, library 
     assert.strictEqual(retriedSubmission, firstSubmission, 'same operationId/payload shares the authoritative result')
     const firstResult = await firstSubmission
     assert.equal(firstResult.outcome, 'confirmed')
+    await waitForSnapshot(fixture.sequence, snapshot => snapshot.playbackCondition === 'blocked' ||
+      snapshot.playbackCondition === 'uncertain' ||
+      (snapshot.playbackCondition === 'ready' && snapshot.state.operationalState === 'playing'))
     assert.equal(fixture.host.commands.filter(command => command.type === 'load').length, 1)
     const firstSnapshot = fixture.sequence.getSnapshot()
     assert.equal(firstSnapshot.playbackCondition, 'ready')
@@ -360,7 +388,7 @@ test('known load failure blocks while retaining the reserved queue entry', async
   try {
     fixture.host.nextLoadError = new PlayerPlaybackError('MEDIA_LOAD_FAILED', 'known media load failure')
     const result = await submit(fixture.sequence, 'known-failure', '1001')
-    assert.equal(result.outcome, 'blocked')
+    assert.equal(result.outcome, 'confirmed', 'the request confirms the accepted countdown reservation before technical loading starts')
     const snapshot = fixture.sequence.getSnapshot()
     assert.equal(snapshot.playbackCondition, 'blocked')
     if (snapshot.playbackCondition !== 'blocked') assert.fail('Known failure was not represented as blocked.')
@@ -378,7 +406,8 @@ test('uncertain host acknowledgement remains uncertain and does not duplicate pl
     const retry = fixture.sequence.execute(request)
     assert.strictEqual(retry, first)
     const result = await first
-    assert.equal(result.outcome, 'uncertain')
+    assert.equal(result.outcome, 'confirmed', 'the request confirms the accepted countdown reservation before technical loading starts')
+    await waitForSnapshot(fixture.sequence, snapshot => snapshot.playbackCondition === 'uncertain')
     const snapshot = fixture.sequence.getSnapshot()
     assert.equal(snapshot.playbackCondition, 'uncertain')
     if (snapshot.playbackCondition !== 'uncertain') assert.fail('Lost acknowledgement was not represented as uncertain.')
@@ -420,7 +449,8 @@ test('shutdown aborts the pending sequence operation, stops playback and release
   try {
     fixture.host.nextLoadGate = startGate
     const loadSeen = fixture.host.nextCommand('load')
-    const pendingStart = submit(fixture.sequence, 'shutdown-start', '1001')
+    const pendingStart = fixture.sequence.execute({ operationId: 'shutdown-start',
+      command: { type: 'submit-code', enteredCode: '1001', priority: 'normal' } })
     await loadSeen
     const stopSeen = fixture.host.nextCommand('stop')
     const disposal = fixture.sequence.dispose()
@@ -428,7 +458,7 @@ test('shutdown aborts the pending sequence operation, stops playback and release
     startGate.resolve()
     await disposal
     const result = await pendingStart
-    assert.ok(['uncertain', 'rejected'].includes(result.outcome))
+    assert.equal(result.outcome, 'confirmed', 'C3 already acknowledged the countdown reservation; disposal contains the pending real host load.')
     assert.equal(fixture.host.disposed, true)
     assert.equal(fixture.host.listenerCount, 0)
     assert.equal(fixture.library.getSnapshot().scanStatus, 'closed')

@@ -1023,3 +1023,42 @@ existing behavior while supporting controlled evolution.
   lock serializes runners but cannot lock out arbitrary editors.
 - See `docs/windows-native-testing.md` for setup, recovery,
   status interpretation, and the headless/GUI boundary.
+
+## 16. Ambientes e caminhos confirmados
+
+- O desenvolvimento principal ocorre no checkout WSL2
+  `/home/chris/projetos/karaoke-queue`, na distribuição
+  `Ubuntu`.
+- O checkout Windows auxiliar fica em
+  `C:\Users\Chris\source\karaoke-queue-win`. Ele pode estar
+  em outra branch e conter alterações locais. Não sincronize
+  nem sobrescreva esse checkout sem verificar seu estado e
+  obter autorização.
+- O runner oficial é
+  `scripts/run-windows-native-tests.cjs`; ele suporta snapshots
+  da working tree e testes nativos isolados. As instruções
+  completas estão em `docs/windows-native-testing.md`.
+- A pasta de mídia de teste no Windows é
+  `C:\Users\Chris\Documents\Video musicas e catalogo`; o CSV de
+  teste é `LISTA-06-12-24-41A-15H-LD52769-BASE-1.csv`, dentro
+  dessa pasta.
+- A validação manual das rodadas Standalone C1–C5 usa
+  `scripts/standalone-c1-windows-native.ps1`, iniciado pelo
+  PowerShell do Windows. O script prepara um snapshot temporário
+  em NTFS, compila com dependências Windows e abre o Electron
+  nativo em uma janela persistente. O staging usa o `%TEMP%`
+  efetivo do Windows, não um caminho fixo. O comando está em
+  `docs/windows-native-testing.md`.
+- Em 2026-11-04, o proprietário confirmou a validação visual
+  e funcional C1 no Electron nativo do Windows, incluindo
+  teclado/numpad, preview, Backspace/Esc, timeout e playback
+  de MP4 com áudio e vídeo reais. A mensagem de código
+  inexistente foi reservada à C2.
+- Na janela manual do harness, a reprodução começa pelo fluxo
+  normal com `Enter` ou `P`; `F10` imprime no PowerShell o
+  snapshot autoritativo para conferir a ordem da sequência sem
+  uma UI de fila provisória, e `F11` aproxima o vídeo do EOF
+  natural para testes. Esses atalhos não pertencem à V1 de
+  produção. Em 2026-11-05, o proprietário confirmou a validação
+  manual C1–C5 no Electron nativo Windows, incluindo a correção
+  final da fila “Próximas”; a C6 ainda não foi iniciada.

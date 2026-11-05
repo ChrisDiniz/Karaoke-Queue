@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src kq-media:; connect-src 'none'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="player-playback.css">
+  <link rel="stylesheet" href="standalone-player.css">
+  <title>Karaoke Queue · Player Only</title>
+</head>
+<body tabindex="-1">
+  <main id="playback-stage" aria-label="Player Only Standalone">
+    <div id="playback-media-layer" aria-hidden="true"></div>
+    <div id="standalone-paused-indicator" class="paused-status" aria-label="Reprodução pausada" hidden>
+      <span class="pause-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"></path></svg></span>
+      <strong class="status-text">PAUSADO</strong>
+    </div>
+    <div id="standalone-resuming-indicator" class="resume-feedback" aria-label="Retomando reprodução" hidden>
+      <span class="play-disc" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 4.8c0-.8.9-1.3 1.6-.8l11 7.2a1 1 0 0 1 0 1.6l-11 7.2c-.7.5-1.6 0-1.6-.8z"></path></svg></span>
+      <strong class="resume-label">RETOMANDO</strong>
+    </div>
+    <section id="standalone-queue" class="queue-bar" aria-label="Próximas músicas" hidden>
+      <span class="queue-label">PRÓXIMAS</span>
+      <div id="standalone-queue-window" class="queue-window" aria-live="polite"></div>
+    </section>
+    <div id="standalone-idle-art" class="idle-art" aria-hidden="true">
+      <img src="assets/standalone-empty-stage.png" alt="">
+    </div>
+    <section id="standalone-countdown" class="transition-screen countdown-screen" aria-label="Contagem regressiva para início da música" aria-live="polite" hidden>
+      <img class="transition-stage-image" src="assets/standalone-empty-stage.png" alt="">
+      <div class="transition-scrim countdown-scrim" aria-hidden="true"></div>
+      <div class="countdown-content">
+        <p class="countdown-kicker">Prepare-se</p>
+        <h1 class="countdown-heading">A música começa em</h1>
+        <div id="countdown-ring" class="countdown-ring" aria-label="5 segundos restantes">
+          <div class="countdown-inner"><span id="countdown-number" class="countdown-number">5</span><span class="countdown-unit">segundos</span></div>
+        </div>
+        <div class="transition-track countdown-track" aria-label="Faixa selecionada">
+          <div class="transition-note-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg></div>
+          <div class="transition-track-copy"><span class="transition-track-label">Faixa selecionada</span><strong id="countdown-title" class="transition-track-title">Dados indisponíveis</strong><span id="countdown-artist" class="transition-track-artist">Dados indisponíveis</span></div>
+          <span id="countdown-code" class="transition-track-code"></span>
+        </div>
+      </div>
+    </section>
+    <section id="standalone-loading" class="transition-screen loading-screen" aria-label="Carregamento da música" aria-live="polite" hidden>
+      <img class="transition-stage-image" src="assets/standalone-empty-stage.png" alt="">
+      <div class="transition-scrim loading-scrim" aria-hidden="true"></div>
+      <div class="loading-card">
+        <div class="loading-spinner" role="progressbar" aria-label="Carregando música"></div>
+        <h1 class="loading-heading">Carregando música</h1>
+        <p class="loading-description">Aguarde enquanto preparamos o vídeo para reprodução.</p>
+        <div class="transition-track loading-track" aria-label="Faixa em preparação">
+          <div class="transition-note-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg></div>
+          <div class="transition-track-copy"><span class="transition-track-label">Faixa em preparação</span><strong id="loading-title" class="transition-track-title">Dados indisponíveis</strong><span id="loading-artist" class="transition-track-artist">Dados indisponíveis</span></div>
+          <span id="loading-code" class="transition-track-code"></span>
+        </div>
+      </div>
+    </section>
+    <section id="standalone-celebration" class="celebration-screen" aria-label="Celebração após o término natural da música" aria-live="polite" hidden>
+      <img class="celebration-stage" src="assets/standalone-empty-stage.png" alt="" aria-hidden="true">
+      <div class="celebration-shade" aria-hidden="true"></div>
+      <div class="celebration-glow" aria-hidden="true"></div>
+      <div class="celebration-beam celebration-beam-left" aria-hidden="true"></div>
+      <div class="celebration-beam celebration-beam-right" aria-hidden="true"></div>
+      <div class="celebration-beam celebration-beam-center" aria-hidden="true"></div>
+      <div class="celebration-confetti" aria-hidden="true">
+        <span class="celebration-piece"></span><span class="celebration-piece round"></span>
+        <span class="celebration-piece star"></span><span class="celebration-piece round"></span>
+        <span class="celebration-piece"></span><span class="celebration-piece star"></span>
+        <span class="celebration-piece round"></span><span class="celebration-piece gold"></span>
+        <span class="celebration-piece star"></span><span class="celebration-piece"></span>
+        <span class="celebration-piece round"></span><span class="celebration-piece star"></span>
+        <span class="celebration-piece"></span><span class="celebration-piece gold round"></span>
+        <span class="celebration-piece star"></span><span class="celebration-piece"></span>
+      </div>
+      <div class="celebration-content">
+        <div class="celebration-label">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.2 4.2L19 7"></path></svg>
+          <span>MÚSICA CONCLUÍDA</span>
+        </div>
+        <h1 id="celebration-message" class="celebration-message">Mandou bem!</h1>
+        <p class="celebration-subtitle">Parabéns pela apresentação. Mais uma música concluída!</p>
+        <div id="celebration-continue" class="celebration-continue" hidden>
+          <span class="celebration-equalizer" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+          <span id="celebration-continue-text">A fila continuará automaticamente em 5s</span>
+        </div>
+      </div>
+      <div id="celebration-footer" class="celebration-footer">Aguarde um instante</div>
+    </section>
+    <footer id="standalone-idle-panel" class="entry-footer" aria-label="Entrada de música">
+      <div class="entry-grid">
+        <section class="idle-card" aria-label="Estado do Player">
+          <span class="idle-status"><i aria-hidden="true"></i>LIVRE</span>
+          <small>Nenhuma música na fila</small>
+        </section>
+        <section class="code-card" aria-label="Entrada de código">
+          <span class="field-label">Digite o número</span>
+          <div class="code-line">
+            <div id="idle-code-digits" class="digits" aria-label="Nenhum código digitado"></div>
+            <kbd class="keycap code-hint">0–9</kbd>
+          </div>
+          <div id="idle-feedback" class="entry-feedback" role="status" aria-live="polite" hidden>
+            <svg class="feedback-icon" viewBox="0 0 16 16" aria-hidden="true"><circle class="feedback-icon-ring" cx="8" cy="8" r="6.5"></circle><path class="feedback-icon-error" d="M8 4.5v4"></path><circle class="feedback-icon-error-dot" cx="8" cy="11.2" r=".45"></circle><path class="feedback-icon-success" d="M4.8 8.2 7 10.3l4.3-4.6"></path></svg>
+            <span></span>
+          </div>
+        </section>
+        <section class="metadata-card" aria-label="Metadados do código digitado">
+          <div class="metadata-field">
+            <span class="field-label">Música</span>
+            <strong id="idle-title" class="metadata-value">—</strong>
+          </div>
+          <div class="metadata-field">
+            <span class="field-label">Artista</span>
+            <strong id="idle-artist" class="metadata-value">—</strong>
+          </div>
+        </section>
+      </div>
+    </footer>
+    <section id="standalone-playing-panel" class="top-menu" aria-label="Entrada de música durante a reprodução" hidden>
+      <div class="code-entry" aria-label="Entrada de código durante a reprodução">
+        <span class="field-label">DIGITE O NUMERO</span>
+        <div class="code-line">
+          <div id="playing-code-digits" class="digits" aria-label="Nenhum código digitado"></div>
+          <kbd class="keycap">0–9</kbd>
+        </div>
+      </div>
+      <div class="track-info" aria-label="Informações do código digitado">
+        <div class="track-field">
+          <span class="field-label">Música</span>
+          <strong id="playing-title" class="track-value empty">—</strong>
+        </div>
+        <div class="track-field">
+          <span class="field-label">Artista</span>
+          <strong id="playing-artist" class="track-value empty">—</strong>
+        </div>
+      </div>
+      <div id="playing-feedback" class="entry-feedback" role="status" aria-live="polite" hidden>
+        <svg class="feedback-icon" viewBox="0 0 16 16" aria-hidden="true"><circle class="feedback-icon-ring" cx="8" cy="8" r="6.5"></circle><path class="feedback-icon-error" d="M8 4.5v4"></path><circle class="feedback-icon-error-dot" cx="8" cy="11.2" r=".45"></circle><path class="feedback-icon-success" d="M4.8 8.2 7 10.3l4.3-4.6"></path></svg>
+        <span></span>
+      </div>
+    </section>
+    <section id="standalone-stop-confirmation" class="stop-confirmation-overlay" role="dialog"
+      aria-modal="true" aria-labelledby="stop-confirmation-title"
+      aria-describedby="stop-confirmation-description" hidden>
+      <div class="stop-confirmation-dialog">
+        <div class="stop-confirmation-copy">
+          <span class="stop-confirmation-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 3.7 21 20H3z"></path><path d="M12 9v5"></path><circle cx="12" cy="17" r=".65"></circle></svg>
+          </span>
+          <div class="stop-confirmation-text">
+            <h1 id="stop-confirmation-title">Voltar ao início?</h1>
+            <p id="stop-confirmation-description">A música será encerrada e a fila será limpa. Deseja continuar?</p>
+          </div>
+        </div>
+        <div class="stop-confirmation-actions">
+          <button id="stop-confirmation-cancel" class="stop-confirmation-button cancel" type="button">
+            <span>Cancelar</span><kbd>Esc</kbd>
+          </button>
+          <button id="stop-confirmation-confirm" class="stop-confirmation-button confirm" type="button">
+            <span>Confirmar</span><kbd>Enter</kbd>
+          </button>
+        </div>
+        <p id="stop-confirmation-status" class="stop-confirmation-status" role="status" aria-live="polite" hidden></p>
+      </div>
+    </section>
+  </main>
+  <script src="player-playback.js"></script>
+  <script src="standalone-player-renderer.bundle.js"></script>
+</body>
+</html>

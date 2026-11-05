@@ -691,6 +691,9 @@ function generatedBuildPaths(manifests) {
           file.path === 'src/welcome.html' || file.path === 'src/welcome.css') {
         expected.add('build/src/' + file.path.slice(4))
       }
+      if (file.path === 'src/standalone-player.html' || file.path === 'src/standalone-player.css') {
+        expected.add('build/src/' + file.path.slice(4))
+      }
       if (file.path === 'src/player-playback-renderer.ts') {
         expected.add('build/src/player-playback.js')
       }
@@ -699,6 +702,12 @@ function generatedBuildPaths(manifests) {
       }
       if (file.path === 'src/welcome-renderer.ts') {
         expected.add('build/src/welcome-renderer.bundle.js')
+      }
+      if (file.path === 'src/standalone-player-renderer.ts') {
+        expected.add('build/src/standalone-player-renderer.bundle.js')
+      }
+      if (file.path === 'standalone-player-preload.ts' || file.path === 'player-preload.ts') {
+        expected.add('build/standalone-player-ui-preload.js')
       }
       if (file.path.startsWith('src/assets/')) expected.add('build/' + file.path)
     }
@@ -1606,6 +1615,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  approveUntracked,
   generatedBuildPaths,
   isExcludedPath,
   isSensitivePath,
@@ -1615,6 +1625,7 @@ module.exports = {
   prepareFreshBuild,
   powershellCancellation,
   powershellLauncher,
+  readSourceSnapshot,
   requiresWindowFocus,
   selectWindowsTestSuites,
   restorePreviousBuild,

@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events'
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
 import {
   createInitialStandalonePlayerSnapshot,
+  STANDALONE_CELEBRATION_MESSAGES,
   type StandalonePlayerCommandRequest,
   type StandalonePlayerCommandResult,
   type StandalonePlayerControl,
@@ -87,7 +88,7 @@ class FakeControl implements StandalonePlayerControl {
 
 const documentUrl = 'file:///isolated/standalone.html'
 
-function setup() {
+function setup(metadataCatalog?: Parameters<typeof installStandalonePlayerMainIpcBridge>[0]['metadataCatalog']) {
   const ipcMain = new FakeIpcMain()
   const webContents = new FakeWebContents(documentUrl)
   const control = new FakeControl()
@@ -95,7 +96,8 @@ function setup() {
     ipcMain: ipcMain as unknown as IpcMain,
     webContents: webContents as unknown as WebContents,
     expectedDocumentUrl: documentUrl,
-    control
+    control,
+    ...(metadataCatalog ? { metadataCatalog } : {})
   })
   const event = (sender: WebContents = webContents.sender(), frame: { url: string } = webContents.mainFrame) => ({
     sender,
@@ -103,6 +105,71 @@ function setup() {
   }) as IpcMainInvokeEvent
   return { ipcMain, webContents, control, bridge, event }
 }
+
+test('metadata preview IPC validates exact digit payloads, sender origin, and the minimal response DTO', async t => {
+  const revisions = new Set<(revision: string | null) => void>()
+  const lookups: unknown[] = []
+  const catalog = {
+    getMetadata: () => ({ revision: 'catalog-r1' }),
+    lookupMetadataByVideoCode: (value: unknown) => {
+      lookups.push(value)
+      const match = value === '1001' || value === '01001'
+      return { catalogRevision: 'catalog-r1', title: match ? 'Always' : null, artist: match ? 'Bon Jovi' : null }
+    },
+    subscribeToMetadataRevision: (listener: (revision: string | null) => void) => {
+      revisions.add(listener)
+      return () => revisions.delete(listener)
+    }
+  }
+  const state = setup(catalog)
+  t.after(() => state.bridge.dispose())
+  assert.deepEqual(await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.lookupMetadata, state.event(), '1001'), {
+    catalogRevision: 'catalog-r1', title: 'Always', artist: 'Bon Jovi'
+  })
+  assert.deepEqual(lookups, ['1001'])
+  for (const invalid of [null, {}, '', '123456', '12x', 1001]) {
+    await assert.rejects(state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.lookupMetadata, state.event(), invalid),
+      /STANDALONE_IPC_INVALID_REQUEST/)
+  }
+  assert.deepEqual(await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.lookupMetadata, state.event(), '01001'), {
+    catalogRevision: 'catalog-r1', title: 'Always', artist: 'Bon Jovi'
+  }, 'a canonical five-digit code is an exact catalog match')
+  assert.deepEqual(lookups, ['1001', '01001'], 'invalid payloads do not reach catalog lookup')
+
+  const foreign = new FakeWebContents(documentUrl)
+  await assert.rejects(state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.lookupMetadata,
+    state.event(foreign.sender()), '1001'), /STANDALONE_IPC_FORBIDDEN/)
+  foreign.destroy()
+  revisions.forEach(listener => listener('catalog-r2'))
+  assert.deepEqual(state.webContents.sent.at(-1), {
+    channel: STANDALONE_PLAYER_IPC_CHANNELS.catalogRevisionChanged,
+    value: { catalogRevision: 'catalog-r2' }
+  })
+  state.webContents.navigate('file:///untrusted.html')
+  revisions.forEach(listener => listener('catalog-r3'))
+  assert.equal(state.webContents.sent.length, 1, 'catalog revisions are not sent to a navigated document')
+  state.bridge.dispose()
+  assert.equal(revisions.size, 0, 'disposing the bridge removes its catalog revision listener')
+})
+
+test('metadata preview IPC exposes no arbitrary catalog fields and supports an absent catalog', async t => {
+  const state = setup()
+  t.after(() => state.bridge.dispose())
+  assert.deepEqual(await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.lookupMetadata, state.event(), '1001'), {
+    catalogRevision: null, title: null, artist: null
+  })
+  state.bridge.dispose()
+
+  const invalidCatalog = {
+    getMetadata: () => ({ revision: 'r1' }),
+    lookupMetadataByVideoCode: () => ({ catalogRevision: 'r1', title: 'x', artist: null, filePath: '/secret' }),
+    subscribeToMetadataRevision: () => () => undefined
+  }
+  const malformed = setup(invalidCatalog)
+  t.after(() => malformed.bridge.dispose())
+  await assert.rejects(malformed.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.lookupMetadata, malformed.event(), '1001'),
+    /STANDALONE_IPC_INVALID_RESPONSE/)
+})
 
 test('snapshot queries are versioned, cloned, and expose no mutable Main references', async t => {
   const state = setup()
@@ -123,6 +190,60 @@ test('snapshot queries are versioned, cloned, and expose no mutable Main referen
   const current = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getSnapshot, state.event()) as any
   assert.equal(current.revision, 1)
   assert.equal(current.snapshot.state.current.attemptId, 'attempt-1')
+})
+
+test('countdown and loading snapshots preserve only the bounded typed transition target over IPC', async t => {
+  const state = setup()
+  t.after(() => state.bridge.dispose())
+  const idle = createInitialStandalonePlayerSnapshot().state
+  const target = { entryId: 'transition-entry', musicCode: '01001' }
+  state.control.setSnapshot({
+    playbackCondition: 'transitioning', phase: 'countdown', lastConfirmedState: idle,
+    pending: [target], target, remainingMs: 3210, paused: true
+  })
+  const countdown = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getSnapshot, state.event()) as any
+  assert.equal(countdown.snapshot.phase, 'countdown')
+  assert.equal(countdown.snapshot.remainingMs, 3210)
+  assert.equal(countdown.snapshot.paused, true)
+  assert.deepEqual(countdown.snapshot.target, target)
+  countdown.snapshot.target.musicCode = '99999'
+  assert.equal(state.control.snapshot.playbackCondition, 'transitioning')
+  if (state.control.snapshot.playbackCondition === 'transitioning' && state.control.snapshot.phase === 'countdown') {
+    assert.equal(state.control.snapshot.target.musicCode, '01001')
+  }
+
+  state.control.setSnapshot({
+    playbackCondition: 'transitioning', phase: 'loading', lastConfirmedState: idle,
+    pending: [target], target
+  })
+  const loading = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getSnapshot, state.event()) as any
+  assert.equal(loading.snapshot.phase, 'loading')
+  assert.deepEqual(loading.snapshot.target, target)
+  assert.equal(Object.hasOwn(loading.snapshot, 'remainingMs'), false)
+})
+
+test('celebration snapshots preserve the Main-selected random message and timer state over IPC', async t => {
+  const state = setup()
+  t.after(() => state.bridge.dispose())
+  const idle = createInitialStandalonePlayerSnapshot().state
+  const message = STANDALONE_CELEBRATION_MESSAGES[39]
+  state.control.setSnapshot({
+    playbackCondition: 'transitioning',
+    phase: 'celebration',
+    lastConfirmedState: idle,
+    pending: [],
+    remainingMs: 2345,
+    paused: true,
+    message
+  })
+  const response = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getSnapshot, state.event()) as any
+  assert.deepEqual(response.snapshot, {
+    playbackCondition: 'transitioning', phase: 'celebration', lastConfirmedState: idle, pending: [],
+    remainingMs: 2345, paused: true, message
+  })
+  response.snapshot.message = 'altered by renderer'
+  const second = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getSnapshot, state.event()) as any
+  assert.equal(second.snapshot.message, message, 'the renderer receives a clone and cannot change the authoritative selected message.')
 })
 
 test('each invoke validates the exact WebContents, main frame, document URL, and argument count', async t => {
@@ -153,6 +274,7 @@ test('malformed or non-V1 commands are rejected before reaching StandaloneContro
     null,
     [],
     { operationId: 'ok', command: { type: 'next', extra: true } },
+    { operationId: 'ok', command: { type: 'stop-all', extra: true } },
     { operationId: 'op with spaces', command: { type: 'next' } },
     { operationId: 'ok', command: { type: 'stop' } },
     { operationId: 'ok', command: { type: 'submit-code', enteredCode: '1001', priority: 'urgent' } },
@@ -186,6 +308,17 @@ test('valid command preserves operationId, attemptId, outcome, and latest versio
   assert.equal(reply.attemptId, 'attempt-1')
   assert.equal(reply.envelope.revision, 1)
   assert.equal(reply.envelope.snapshot.state.current.musicCode, '01001')
+})
+
+test('the exact C5 Stop All DTO is authorized and preserves its operationId through IPC', async t => {
+  const state = setup()
+  t.after(() => state.bridge.dispose())
+  const request = { operationId: 'c5-stop-all', command: { type: 'stop-all' } } as const
+  const reply = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.execute, state.event(), request) as any
+  assert.deepEqual(state.control.requests, [request])
+  assert.equal(reply.outcome, 'confirmed')
+  assert.equal(reply.operationId, request.operationId)
+  assert.equal(reply.envelope.snapshot.state.operationalState, 'idle')
 })
 
 test('command replies never borrow an attemptId from unrelated current playback', async t => {
@@ -359,7 +492,7 @@ test('destroying Renderer disposes transport but does not cancel its admitted ru
 
 test('bridge shutdown removes every handler and listener but does not mutate sequence state', async () => {
   const state = setup()
-  assert.equal(state.ipcMain.handlers.size, 4)
+  assert.equal(state.ipcMain.handlers.size, 5)
   assert.equal(state.control.listeners.size, 1)
   state.bridge.dispose()
   assert.equal(state.ipcMain.handlers.size, 0)
