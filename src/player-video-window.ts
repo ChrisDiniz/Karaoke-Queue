@@ -37,6 +37,7 @@ export interface PlayerVideoWindowOptions {
 export class PlayerVideoWindow {
   private view: WebContentsView | undefined
   private host: ChromiumPlaybackHost | undefined
+  private controlWebContents: WebContents | undefined
   private viewCreation: Promise<WebContentsView> | undefined
   private readonly hostReleasePromises = new WeakMap<ChromiumPlaybackHost, Promise<void>>()
   private hostRelease: Promise<void> = Promise.resolve()
@@ -57,13 +58,14 @@ export class PlayerVideoWindow {
   private locationRevision = 0
   private returnToInlineRevision = 0
   private readonly observedWindows = new WeakSet<BrowserWindow>()
+  private disposePromise: Promise<void> | undefined
 
   constructor(private readonly options: PlayerVideoWindowOptions) {}
 
   getSnapshot(): PlayerVideoWindowSnapshot {
     const window = this.ownerWindow
-    const view = this.view
-    const alive = Boolean(view && !view.webContents.isDestroyed())
+    const webContents = this.getPlaybackWebContents()
+    const alive = Boolean(webContents && !webContents.isDestroyed() && !webContents.isCrashed())
     return {
       open: alive && this.mode !== 'hidden',
       fullScreen: Boolean(window && !window.isDestroyed() && window.isFullScreen()),
@@ -74,12 +76,80 @@ export class PlayerVideoWindow {
     }
   }
 
+  /** Attaches the existing media host to the Standalone document so video and approved overlays share one compositor. */
+  async attachControlWindow(window: BrowserWindow, allowedDocumentUrl: string): Promise<void> {
+    this.ensureNotDisposed()
+    if (window.isDestroyed() || window.webContents.isDestroyed()) throw new Error('HOST_UNAVAILABLE')
+    if (this.host || this.view || this.controlWebContents) throw new Error('HOST_ALREADY_ATTACHED')
+
+    const webContents = window.webContents
+    const host = new ChromiumPlaybackHost(this.options.ipcMain, webContents, allowedDocumentUrl)
+    this.host = host
+    this.controlWebContents = webContents
+    this.ownerWindow = window
+    this.mode = 'inline'
+    this.inlineVisible = true
+    this.observeWindow(window)
+    const markRendererUnavailable = (): void => {
+      if (this.controlWebContents !== webContents) return
+      this.ready = false
+      this.mode = 'hidden'
+      this.inlineVisible = false
+      this.options.onChange?.()
+    }
+    webContents.once('render-process-gone', markRendererUnavailable)
+    webContents.once('destroyed', markRendererUnavailable)
+    try {
+      this.options.playback.attachHost(host)
+    } catch (error) {
+      this.host = undefined
+      this.controlWebContents = undefined
+      this.ownerWindow = undefined
+      this.mode = 'hidden'
+      host.dispose()
+      throw error
+    }
+
+    await host.ready
+    this.ensureNotDisposed()
+    if (this.host !== host || webContents.isDestroyed()) throw new Error('HOST_TERMINATED')
+    this.ready = true
+    this.publishDisplayLocation('inline')
+    this.publishFullscreenState(window.isFullScreen())
+    this.options.onChange?.()
+  }
+
   async showInline(bounds?: PlayerVideoBounds, focus = true): Promise<PlayerVideoWindowSnapshot> {
     const revision = ++this.locationRevision
     if (bounds) {
       this.inlineBounds = normalizeBounds(bounds)
       this.inlineBoundsRevision = this.inlineLayoutRevision
     }
+    if (this.controlWebContents) {
+      const controlWindow = this.options.getControlWindow()
+      if (!controlWindow || controlWindow.isDestroyed() || controlWindow.webContents !== this.controlWebContents) {
+        throw new Error('HOST_UNAVAILABLE')
+      }
+      if (revision !== this.locationRevision) return this.getSnapshot()
+      this.ownerWindow = controlWindow
+      this.mode = 'inline'
+      this.inlineVisible = true
+      this.publishDisplayLocation('inline')
+      this.publishFullscreenState(controlWindow.isFullScreen())
+      if (focus) {
+        if (controlWindow.isMinimized()) controlWindow.restore()
+        controlWindow.show()
+        controlWindow.focus()
+      }
+      await this.host?.ready
+      this.ensureNotDisposed()
+      if (revision !== this.locationRevision) return this.getSnapshot()
+      if (this.controlWebContents.isDestroyed() || this.controlWebContents.isCrashed()) throw new Error('HOST_TERMINATED')
+      this.publishWindowTipState()
+      this.options.onChange?.()
+      return this.getSnapshot()
+    }
+
     const view = await this.ensureView()
     this.ensureNotDisposed()
     if (revision !== this.locationRevision) return this.getSnapshot()
@@ -109,6 +179,10 @@ export class PlayerVideoWindow {
     if (!Number.isSafeInteger(layoutRevision) || layoutRevision < 0 || layoutRevision !== this.inlineLayoutRevision) return false
     this.inlineBounds = normalizeBounds(bounds)
     this.inlineBoundsRevision = layoutRevision
+    if (this.controlWebContents) {
+      this.focusAfterInlineLayoutRevision = undefined
+      return !this.controlWebContents.isDestroyed()
+    }
     if (this.mode === 'inline') this.applyInlineBounds()
     if (this.mode === 'inline' && this.focusAfterInlineLayoutRevision === layoutRevision) {
       const owner = this.ownerWindow
@@ -125,6 +199,7 @@ export class PlayerVideoWindow {
 
   /** Detaches the exact same media WebContents so playback is neither duplicated nor restarted. */
   async show(focus = true): Promise<PlayerVideoWindowSnapshot> {
+    if (this.controlWebContents) return this.showInline(undefined, focus)
     const revision = ++this.locationRevision
     const view = await this.ensureView()
     this.ensureNotDisposed()
@@ -154,6 +229,12 @@ export class PlayerVideoWindow {
 
   /** Prepares the trusted media WebContents without showing a video window or changing navigation. */
   async preparePlaybackHost(): Promise<void> {
+    if (this.controlWebContents) {
+      await this.host?.ready
+      this.ensureNotDisposed()
+      if (this.controlWebContents.isDestroyed() || this.controlWebContents.isCrashed() || !this.host) throw new Error('HOST_TERMINATED')
+      return
+    }
     const view = await this.ensureView()
     await this.host?.ready
     this.ensureNotDisposed()
@@ -162,6 +243,13 @@ export class PlayerVideoWindow {
 
   /** Hides only an idle inline view; active media must remain visible in some window. */
   hideInline(): boolean {
+    if (this.controlWebContents) {
+      if (['playing', 'paused', 'loading', 'starting', 'ready', 'stopping'].includes(this.options.playback.getState().status)) return false
+      this.mode = 'hidden'
+      this.inlineVisible = false
+      this.options.onChange?.()
+      return true
+    }
     if (this.mode !== 'inline' || !this.view) return true
     if (['playing', 'paused', 'loading', 'starting', 'ready', 'stopping'].includes(this.options.playback.getState().status)) return false
     this.locationRevision++
@@ -177,18 +265,29 @@ export class PlayerVideoWindow {
 
   /** Hides only the inline surface while the operator uses the manual controls; media state is untouched. */
   setInlineVisible(visible: boolean): boolean {
+    if (this.controlWebContents) {
+      // The video is part of the Standalone document; panels must not hide its media layer.
+      this.inlineVisible = true
+      return !this.controlWebContents.isDestroyed() && !this.controlWebContents.isCrashed()
+    }
+    if (!visible) {
+      this.locationRevision++
+      this.inlineVisible = false
+      if (this.mode !== 'inline' || !this.view || this.view.webContents.isDestroyed()) return true
+      this.view.setVisible(false)
+      this.options.onChange?.()
+      return true
+    }
     if (this.mode !== 'inline' || !this.view || this.view.webContents.isDestroyed()) return false
     this.inlineVisible = visible
-    if (visible) this.applyInlineBounds()
-    else this.view.setVisible(false)
+    this.applyInlineBounds()
     this.options.onChange?.()
     return true
   }
 
   setFullScreen(sender: WebContents, action: unknown): boolean {
     const owner = this.ownerWindow
-    const view = this.view
-    if (!owner || owner.isDestroyed() || !view || sender !== view.webContents || !['toggle', 'exit'].includes(String(action))) return false
+    if (!owner || owner.isDestroyed() || sender !== this.getPlaybackWebContents() || !['toggle', 'exit'].includes(String(action))) return false
     const value = action === 'toggle' ? !owner.isFullScreen() : false
     owner.setFullScreen(value)
     return owner.isFullScreen() === value
@@ -215,9 +314,9 @@ export class PlayerVideoWindow {
   allowWindowClose(): void { this.allowClose = true }
 
   publishDisplayStatus(status: 'idle' | 'loading' | 'playing' | 'paused' | 'failed' | 'uncertain'): void {
-    const view = this.view
-    if (!view || view.webContents.isDestroyed()) return
-    view.webContents.send('player-playback:display-status', status)
+    const webContents = this.getPlaybackWebContents()
+    if (!webContents || webContents.isDestroyed()) return
+    webContents.send('player-playback:display-status', status)
   }
 
   setWindowTipVisible(visible: boolean): boolean {
@@ -227,7 +326,8 @@ export class PlayerVideoWindow {
   }
 
   dismissWindowTip(sender: WebContents): boolean {
-    if (!this.view || this.view.webContents.isDestroyed() || sender !== this.view.webContents) return false
+    const webContents = this.getPlaybackWebContents()
+    if (!webContents || webContents.isDestroyed() || sender !== webContents) return false
     this.windowTipRequested = false
     this.windowTipDismissedForRun = true
     this.publishWindowTipState()
@@ -235,34 +335,36 @@ export class PlayerVideoWindow {
   }
 
   private publishFullscreenState(fullScreen: boolean): void {
-    const view = this.view
-    if (view && !view.webContents.isDestroyed()) view.webContents.send('player-playback:fullscreen', fullScreen)
+    const webContents = this.getPlaybackWebContents()
+    if (webContents && !webContents.isDestroyed()) webContents.send('player-playback:fullscreen', fullScreen)
   }
 
   private publishWindowTipState(): void {
-    const view = this.view
-    if (!view || view.webContents.isDestroyed()) return
+    const webContents = this.getPlaybackWebContents()
+    if (!webContents || webContents.isDestroyed()) return
     const owner = this.ownerWindow
     const visible = this.windowTipRequested && this.mode === 'inline' &&
       Boolean(owner && !owner.isDestroyed() && !owner.isFullScreen())
-    view.webContents.send('player-playback:window-tip', visible)
+    webContents.send('player-playback:window-tip', visible)
   }
 
   private publishDisplayLocation(location: Exclude<PlayerVideoLocation, 'hidden'>): void {
-    const view = this.view
-    if (view && !view.webContents.isDestroyed()) view.webContents.send('player-playback:display-location', location)
+    const webContents = this.getPlaybackWebContents()
+    if (webContents && !webContents.isDestroyed()) webContents.send('player-playback:display-location', location)
   }
 
-  dispose(): void {
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise
     this.locationRevision++
     this.disposed = true
     this.viewCreation = undefined
     this.allowClose = true
     const host = this.host
     this.host = undefined
-    if (host) void this.releaseHost(host).catch(() => undefined)
+    const release = host ? this.releaseHost(host) : this.hostRelease
     const view = this.view
     this.view = undefined
+    this.controlWebContents = undefined
     const owner = this.ownerWindow
     this.ownerWindow = undefined
     this.mode = 'hidden'
@@ -272,10 +374,13 @@ export class PlayerVideoWindow {
     const output = this.outputWindow
     this.outputWindow = undefined
     if (output && !output.isDestroyed()) output.destroy()
+    this.disposePromise = release
+    return this.disposePromise
   }
 
   private ensureView(): Promise<WebContentsView> {
     if (this.disposed) return Promise.reject(new Error('HOST_UNAVAILABLE'))
+    if (this.controlWebContents) return Promise.reject(new Error('INLINE_CONTROL_HOST_ACTIVE'))
     const currentView = this.view
     if (currentView && !currentView.webContents.isDestroyed() && !currentView.webContents.isCrashed()) {
       return this.hostRelease.then(() => {
@@ -377,6 +482,11 @@ export class PlayerVideoWindow {
       }
     }, () => this.options.onChange?.())
     return view
+  }
+
+  private getPlaybackWebContents(): WebContents | undefined {
+    const webContents = this.controlWebContents ?? this.view?.webContents
+    return webContents && !webContents.isDestroyed() && !webContents.isCrashed() ? webContents : undefined
   }
 
   private ensureNotDisposed(): void {

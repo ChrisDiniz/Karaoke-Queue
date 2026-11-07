@@ -49,6 +49,8 @@ class RecoveryTestHost implements PlayerPlaybackHost {
   readonly commands: PlayerPlaybackHostCommand[] = []
   onCommand: ((command: PlayerPlaybackHostCommand) => void) | undefined
   failNextStop: Error | undefined
+  stopAcknowledgement: Promise<void> | undefined
+  onStopCommandStarted: (() => void) | undefined
   terminateCalls = 0
   terminateResult = true
   private listeners = new Set<(event: PlayerPlaybackHostEvent) => void>()
@@ -61,6 +63,12 @@ class RecoveryTestHost implements PlayerPlaybackHost {
       const error = this.failNextStop
       this.failNextStop = undefined
       throw error
+    }
+    if (command.type === 'stop' && this.stopAcknowledgement) {
+      this.onStopCommandStarted?.()
+      await this.stopAcknowledgement
+      this.stopAcknowledgement = undefined
+      this.onStopCommandStarted = undefined
     }
     if (command.type === 'load') {
       this.emitMedia(command.attemptId, { type: 'loadedmetadata', duration: 20, videoWidth: 320, videoHeight: 240 })
@@ -426,6 +434,103 @@ test('confirmed shutdown retries bounded host containment for an uncertain attem
     assert.equal(context.store.read()?.playbackStatus, 'uncertain')
     assert.equal(context.playback.getState().status, 'disposed')
     assert.equal(context.playback.getState().containmentStatus, 'unconfirmed')
+  } finally { await context.cleanup() }
+})
+
+test('Main shutdown stop persists and verifies a terminal recovery transition before service disposal', async () => {
+  const context = await makeRecovery()
+  try {
+    const started = await context.manual.playByMusicCode('1001')
+    assert.equal(started.outcome, 'started')
+    const attemptId = started.state.attemptId!
+    const stopped = await context.playback.stopForShutdown(attemptId)
+    assert.equal(stopped.status, 'stopped')
+    assert.equal(stopped.attemptId, attemptId)
+    assert.equal(context.store.read()?.lastTransition, 'shutdown-confirmed')
+    assert.equal(context.store.read()?.status, 'stopped')
+    assert.deepEqual(context.coordinator.verifyPersistedState(), {
+      status: 'resolved', outcome: 'stopped', attemptId, musicCode: '01001', updatedAt: NOW
+    })
+  } finally { await context.cleanup() }
+})
+
+test('an EOF arriving while shutdown Stop awaits host acknowledgement cannot become a natural completion', async () => {
+  const context = await makeRecovery()
+  const naturalEnds: string[] = []
+  try {
+    const started = await context.manual.playByMusicCode('1001')
+    assert.equal(started.outcome, 'started')
+    const attemptId = started.state.attemptId!
+    let acknowledgeStop!: () => void
+    let signalStopStarted!: () => void
+    const stopAcknowledgement = new Promise<void>(resolve => { acknowledgeStop = resolve })
+    const stopStarted = new Promise<void>(resolve => { signalStopStarted = resolve })
+    context.host.stopAcknowledgement = stopAcknowledgement
+    context.host.onStopCommandStarted = signalStopStarted
+    context.playback.subscribe(event => {
+      if (event.type === 'natural-end-candidate') naturalEnds.push(event.attemptId)
+    })
+
+    const shutdown = context.playback.stopForShutdown(attemptId)
+    await stopStarted
+    assert.equal(context.store.read()?.lastTransition, 'shutdown-stop-intent',
+      'The shutdown intent must be durable before the Stop reaches its host.')
+    context.host.emitMedia(attemptId, { type: 'ended', currentTime: 20, duration: 20 })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.deepEqual(naturalEnds, [], 'A late ended event for the shutdown-owned attempt must be ignored.')
+    assert.equal(context.store.read()?.lastTransition, 'shutdown-stop-intent',
+      'The racing EOF must not overwrite the durable shutdown transition.')
+
+    acknowledgeStop()
+    const stopped = await shutdown
+    assert.equal(stopped.status, 'stopped')
+    assert.equal(context.store.read()?.lastTransition, 'shutdown-confirmed')
+    assert.equal(context.store.read()?.status, 'stopped')
+    assert.deepEqual(naturalEnds, [])
+  } finally { await context.cleanup() }
+})
+
+test('Main shutdown can retry uncertain containment while recovery and playback owners remain alive', async () => {
+  const context = await makeRecovery()
+  try {
+    const started = await context.manual.playByMusicCode('1001')
+    assert.equal(started.outcome, 'started')
+    context.host.failNextStop = new Error('simulated missing shutdown Stop acknowledgement')
+    context.host.terminateResult = false
+    await assert.rejects(context.playback.stopForShutdown(started.state.attemptId), /simulated missing shutdown Stop acknowledgement/)
+    assert.equal(context.playback.getState().status, 'uncertain')
+    assert.equal(context.playback.getState().containmentStatus, 'unconfirmed')
+    assert.equal(context.coordinator.verifyPersistedState().status, 'pending')
+
+    const retried = await context.playback.retryShutdownContainment()
+    assert.equal(retried.status, 'uncertain')
+    assert.equal(retried.containmentStatus, 'stop-acknowledged')
+    assert.equal(retried.errorCode, undefined)
+    assert.equal(context.store.read()?.lastTransition, 'containment-updated')
+    assert.equal(context.coordinator.verifyPersistedState().status, 'pending')
+  } finally { await context.cleanup() }
+})
+
+test('recovery read-back blocks shutdown when the previously confirmed record disappears', async () => {
+  const context = await makeRecovery(record({ status: 'playing', playbackStatus: 'playing',
+    lastTransition: 'playback-started' }))
+  try {
+    fs.unlinkSync(context.store.filePath)
+    const verified = context.coordinator.verifyPersistedState()
+    assert.deepEqual(verified, { status: 'unavailable', reason: 'WRITE_FAILED' })
+  } finally { await context.cleanup() }
+})
+
+test('recovery read-back blocks a valid same-attempt record with divergent confirmed contents', async () => {
+  const context = await makeRecovery(record({ status: 'playing', playbackStatus: 'playing',
+    lastTransition: 'playback-started' }))
+  try {
+    const confirmed = context.store.read()!
+    context.store.write({ ...confirmed, status: 'uncertain', playbackStatus: 'uncertain',
+      lastTransition: 'playback-uncertain' })
+    const verified = context.coordinator.verifyPersistedState()
+    assert.deepEqual(verified, { status: 'unavailable', reason: 'WRITE_FAILED' },
+      'matching attempt and revision do not prove that the confirmed recovery transition remains intact')
   } finally { await context.cleanup() }
 })
 

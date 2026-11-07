@@ -5,7 +5,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createKaraokeDatabase, createPlayerMusicCatalogDatabase } from '../database'
-import { MusicCatalogError, normalizeCatalogCodeForVideoMatch, parseMusicCatalogCsv } from '../src/music-catalog'
+import {
+  MusicCatalogError,
+  normalizeCatalogCodeForVideoMatch,
+  parseMusicCatalogCsv,
+  parseMusicCatalogCsvWithRecoverableIssues
+} from '../src/music-catalog'
 import { MusicCatalogService } from '../src/music-catalog-service'
 import { VideoLibraryService } from '../src/video-library-service'
 
@@ -107,6 +112,28 @@ test('normalizes supported CSV music codes without numeric conversion or changin
     assertCatalogError(() => normalizeCatalogCodeForVideoMatch(invalid))
   }
   assert.equal(parseMusicCatalogCsv('artista;numero;nome_musica\nA;1001;Always\n').records[0].musicNumber, '1001')
+})
+
+test('Standalone recovery skips only invalid music numbers while strict consumers still reject them', () => {
+  const parsed = parseMusicCatalogCsvWithRecoverableIssues(
+    'artista;numero;nome_musica\nQueen;1001;Always\nInválido;78952770;Não truncar\nABBA;1002;Dancing Queen\n')
+  assert.equal(parsed.recordCount, 2)
+  assert.deepEqual(parsed.records.map(record => record.musicNumber), ['1001', '1002'])
+  assert.deepEqual(parsed.issues, [{
+    rowNumber: 3,
+    field: 'numero',
+    value: '78952770',
+    code: 'INVALID_MUSIC_NUMBER',
+    reason: 'O código deve conter de 1 a 5 dígitos, sem zero inicial.'
+  }])
+  assertCatalogError(() => parseMusicCatalogCsv('artista;numero;nome_musica\nQueen;1001;Always\nInválido;78952770;Não truncar\n'),
+    'INVALID_MUSIC_NUMBER')
+  assertCatalogError(() => parseMusicCatalogCsvWithRecoverableIssues(
+    'artista;numero;nome_musica\nQueen;1001;Always;extra\n'))
+  assertCatalogError(() => parseMusicCatalogCsvWithRecoverableIssues(
+    'artista;numero;nome_musica\nInválido;78952770;Sem válidas\n'), 'EMPTY_CATALOG')
+  assertCatalogError(() => parseMusicCatalogCsvWithRecoverableIssues(
+    'artista;numero;nome_musica\nQueen;1001;Always\nOutro;1001;Duplicado\n'), 'DUPLICATE_MUSIC_NUMBER')
 })
 
 test('rejects invalid headers, duplicate codes, empty catalogs, malformed quotes and wrong column counts', () => {
@@ -704,7 +731,9 @@ test('Player-only catalog persists metadata in an isolated SQLite file without C
     try {
       const names = (tables.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string }[])
         .map(row => row.name)
-      assert.deepEqual(names, ['music_catalog', 'music_catalog_metadata'])
+      assert.deepEqual(names, [
+        'music_catalog', 'music_catalog_import_issues', 'music_catalog_import_state', 'music_catalog_metadata'
+      ])
       assert.equal(names.some(name => ['app_state', 'entries', 'sessions'].includes(name)), false)
     } finally { tables.close() }
     const imported = await service.importFile(source)
@@ -730,6 +759,40 @@ test('Player-only catalog persists metadata in an isolated SQLite file without C
     try { playerDatabase.close() } catch {}
     temp.cleanup()
   }
+})
+
+test('Player catalog schema v2 migrates transactionally to import-report storage', () => {
+  const temp = temporaryDirectory()
+  const databasePath = path.join(temp.directory, 'player-music-catalog.sqlite')
+  const old = new DatabaseSync(databasePath)
+  old.exec(`
+    CREATE TABLE music_catalog (
+      music_number TEXT PRIMARY KEY COLLATE BINARY CHECK (length(music_number) BETWEEN 1 AND 5),
+      video_code TEXT NOT NULL UNIQUE CHECK (length(video_code) = 5),
+      artist TEXT, title TEXT, normalized_artist TEXT NOT NULL, normalized_title TEXT NOT NULL
+    ) WITHOUT ROWID;
+    CREATE TABLE music_catalog_metadata (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      revision TEXT NOT NULL CHECK (length(revision) = 64),
+      imported_at TEXT NOT NULL,
+      record_count INTEGER NOT NULL CHECK (record_count > 0),
+      source_name TEXT CHECK (source_name IS NULL OR length(source_name) <= 255)
+    );
+    PRAGMA user_version = 2;
+  `)
+  old.close()
+  try {
+    const migrated = createPlayerMusicCatalogDatabase(temp.directory)
+    try {
+      const check = new DatabaseSync(migrated.databasePath, { readOnly: true })
+      try {
+        assert.equal((check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 3)
+        assert.deepEqual(migrated.getMusicCatalogImportIssuePage!(0, 10), {
+          catalogRevision: null, generation: 0, total: 0, offset: 0, issues: []
+        })
+      } finally { check.close() }
+    } finally { migrated.close() }
+  } finally { temp.cleanup() }
 })
 
 test('Standalone metadata preview is exact, inventory-independent, and invalidated only after catalog commit', async () => {

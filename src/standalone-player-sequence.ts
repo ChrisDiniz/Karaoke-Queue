@@ -32,6 +32,7 @@ import {
 const PLAYBACK_CONTROL_CONFIRMATION_TIMEOUT_MS = 15000
 export const STANDALONE_INITIAL_COUNTDOWN_MS = 5000
 export const STANDALONE_CELEBRATION_MS = 5000
+export const STANDALONE_PENDING_QUEUE_LIMIT = 30
 
 export interface StandaloneCountdownScheduler {
   now(): number
@@ -80,6 +81,7 @@ interface TransitionReservation {
   countdownTimer?: unknown
   countdownGeneration?: number
   countdownDisplayedSecond?: number
+  shutdownCountdownRemainingMs?: number
   celebrationMessage?: StandaloneCelebrationMessage
   celebrationRemainingMs?: number
   celebrationDeadlineMs?: number
@@ -89,6 +91,7 @@ interface TransitionReservation {
   celebrationDisplayedSecond?: number
   celebrationPendingAdmissions?: number
   celebrationExpired?: boolean
+  shutdownCelebrationRemainingMs?: number
 }
 
 /** Main-side owner of the Standalone V1 volatile sequence; it is not wired to Electron startup or IPC. */
@@ -109,7 +112,9 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
   private operationEpoch = 0
   private nextAdmissionTicket = 0
   private disposed = false
+  private shutdownAdmissionClosed = false
   private disposePromise: Promise<void> | undefined
+  private lastCommandContext: StandaloneCommandContext | undefined
 
   private constructor(private readonly options: StandalonePlayerSequenceOptions) {
     this.createEntryId = options.createEntryId ?? randomUUID
@@ -147,6 +152,71 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     return cloneSnapshot({ playbackCondition: 'ready', state: this.stableState })
   }
 
+  /** Fences countdown, EOF, and in-flight sequence effects before Main stops playback. */
+  async beginShutdown(): Promise<void> {
+    if (this.disposed) return
+    this.shutdownAdmissionClosed = true
+    const reservation = this.reservation
+    if (reservation && (reservation.countdownTimer !== undefined ||
+        reservation.startPhase === 'countdown' && !reservation.countdownPaused && reservation.countdownDeadlineMs !== undefined)) {
+      reservation.shutdownCountdownRemainingMs = this.remainingCountdownMs(reservation)
+      reservation.countdownDeadlineMs = undefined
+      this.cancelCountdownTimer(reservation)
+    }
+    if (reservation && (reservation.celebrationTimer !== undefined ||
+        reservation.kind === 'celebration' && !reservation.celebrationPaused && !reservation.celebrationExpired &&
+        reservation.celebrationDeadlineMs !== undefined)) {
+      reservation.shutdownCelebrationRemainingMs = this.remainingCelebrationMs(reservation)
+      reservation.celebrationDeadlineMs = undefined
+      this.cancelCelebrationTimer(reservation)
+    }
+
+    const composition = this.composition
+    if (composition) await composition.transitions.run(() => undefined)
+    await Promise.allSettled([...this.backgroundEffects])
+  }
+
+  /** Main-only rollback for a failed shutdown gate before playback Stop or resource disposal. */
+  async resumeAfterFailedShutdown(): Promise<void> {
+    if (this.disposed) throw new Error('STANDALONE_SEQUENCE_ALREADY_DISPOSED')
+    if (!this.shutdownAdmissionClosed) return
+    const composition = this.composition
+    if (!composition) throw new Error('STANDALONE_SEQUENCE_UNAVAILABLE')
+    const reservation = this.reservation
+    const needsCountdown = reservation?.shutdownCountdownRemainingMs !== undefined
+    const needsCelebration = reservation?.shutdownCelebrationRemainingMs !== undefined
+    const context = this.lastCommandContext
+    if ((needsCountdown || needsCelebration) && !context) {
+      throw new Error('STANDALONE_SHUTDOWN_TIMER_CONTEXT_UNAVAILABLE')
+    }
+
+    await composition.transitions.run(() => {
+      if (this.disposed) throw new Error('STANDALONE_SEQUENCE_ALREADY_DISPOSED')
+      this.shutdownAdmissionClosed = false
+      if (reservation && context) {
+        if (reservation.shutdownCountdownRemainingMs !== undefined && reservation.startPhase === 'countdown') {
+          const remainingMs = reservation.shutdownCountdownRemainingMs
+          delete reservation.shutdownCountdownRemainingMs
+          reservation.countdownRemainingMs = remainingMs
+          reservation.countdownDeadlineMs = this.countdownScheduler.now() + remainingMs
+          reservation.countdownPaused = false
+          reservation.countdownGeneration = (reservation.countdownGeneration ?? 0) + 1
+          this.armCountdownTimer(reservation, context)
+        }
+        if (reservation.shutdownCelebrationRemainingMs !== undefined && reservation.kind === 'celebration') {
+          const remainingMs = reservation.shutdownCelebrationRemainingMs
+          delete reservation.shutdownCelebrationRemainingMs
+          reservation.celebrationRemainingMs = remainingMs
+          reservation.celebrationDeadlineMs = this.countdownScheduler.now() + remainingMs
+          reservation.celebrationPaused = false
+          reservation.celebrationGeneration = (reservation.celebrationGeneration ?? 0) + 1
+          this.armCelebrationTimer(reservation, context)
+        }
+      }
+      this.publish()
+    })
+  }
+
   subscribe(listener: StandalonePlayerListener): () => void {
     if (this.disposed) return () => undefined
     this.listeners.add(listener)
@@ -156,12 +226,13 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
   execute(request: StandalonePlayerCommandRequest): Promise<StandalonePlayerCommandResult> {
     const composition = this.composition
     if (!composition || this.disposed) return Promise.resolve(rejected(request.operationId, 'DISPOSED', this.getSnapshot()))
+    if (this.shutdownAdmissionClosed) return Promise.resolve(rejected(request.operationId, 'DISPOSED', this.getSnapshot()))
     return composition.control.execute(request)
   }
 
   /** Main-only sample start used by the isolated manual/E2E harness; it is not exposed through Preload or IPC. */
   executeHarnessSampleStart(): Promise<StandalonePlayerCommandResult> {
-    if (this.harnessSeedOperationId || this.reservation ||
+    if (this.shutdownAdmissionClosed || this.harnessSeedOperationId || this.reservation ||
         this.stableState.operationalState !== 'idle') {
       return Promise.resolve(rejected('harness-seed-unavailable', 'INVALID_STATE', this.getSnapshot()))
     }
@@ -177,6 +248,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
 
   dispose(): Promise<void> {
     if (this.disposePromise) return this.disposePromise
+    this.shutdownAdmissionClosed = true
     this.disposed = true
     if (this.reservation) {
       this.cancelCountdownTimer(this.reservation)
@@ -202,6 +274,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
   }
 
   private prepareCommand(request: StandalonePlayerCommandRequest, context: StandaloneCommandContext) {
+    this.lastCommandContext = context
     if (this.disposed) return rejected(request.operationId, 'DISPOSED', this.getSnapshot())
     const snapshot = this.getSnapshot()
     if (snapshot.playbackCondition === 'blocked' || snapshot.playbackCondition === 'uncertain') {
@@ -249,6 +322,12 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     const preparedEpoch = this.operationEpoch
     if (this.reservation?.kind === 'start') {
       return rejected(request.operationId, 'INVALID_STATE', this.getSnapshot())
+    }
+    // entryOrder contains confirmed pending entries and admission slots reserved by requests
+    // whose media validation is still in flight. The current track is removed when its start
+    // is confirmed, so this serial check excludes it and prevents concurrent over-admission.
+    if (this.entryOrder.size >= STANDALONE_PENDING_QUEUE_LIMIT) {
+      return rejected(request.operationId, 'QUEUE_LIMIT_REACHED', this.getSnapshot())
     }
     const ticket = this.nextAdmissionTicket++
     const entry: StandaloneQueueEntry = { entryId: this.createEntryId(), musicCode: code }
@@ -438,6 +517,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
   }
 
   private remainingCelebrationMs(token: TransitionReservation): number {
+    if (token.shutdownCelebrationRemainingMs !== undefined) return Math.max(0, token.shutdownCelebrationRemainingMs)
     if (token.celebrationExpired) return 0
     if (token.celebrationPaused) return Math.max(0, token.celebrationRemainingMs ?? 0)
     if (token.celebrationDeadlineMs === undefined) return 0
@@ -463,7 +543,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
 
   private onCelebrationTimer(token: TransitionReservation, generation: number,
     context: StandaloneCommandContext): void {
-    if (this.disposed || this.unavailable || this.reservation !== token || token.kind !== 'celebration' ||
+    if (this.shutdownAdmissionClosed || this.disposed || this.unavailable || this.reservation !== token || token.kind !== 'celebration' ||
         token.celebrationPaused || token.celebrationExpired || generation !== token.celebrationGeneration) return
     token.celebrationTimer = undefined
     const remainingMs = this.remainingCelebrationMs(token)
@@ -539,6 +619,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
   }
 
   private remainingCountdownMs(token: TransitionReservation): number {
+    if (token.shutdownCountdownRemainingMs !== undefined) return Math.max(0, token.shutdownCountdownRemainingMs)
     if (token.countdownPaused) return Math.max(0, token.countdownRemainingMs ?? 0)
     if (token.countdownDeadlineMs === undefined) return 0
     return Math.max(0, token.countdownDeadlineMs - this.countdownScheduler.now())
@@ -562,7 +643,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
 
   private onCountdownTimer(token: TransitionReservation, generation: number,
     context: StandaloneCommandContext): void {
-    if (this.disposed || this.unavailable || this.reservation !== token || token.startPhase !== 'countdown' ||
+    if (this.shutdownAdmissionClosed || this.disposed || this.unavailable || this.reservation !== token || token.startPhase !== 'countdown' ||
         token.countdownPaused || generation !== token.countdownGeneration) return
     token.countdownTimer = undefined
     const remainingMs = this.remainingCountdownMs(token)
@@ -894,7 +975,8 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
   /** Called synchronously while A2.2's shared transition arbiter is held. */
   private onPlaybackEvent(event: StandalonePlaybackEvent, current: StandaloneCurrentEntry,
     context: StandaloneCommandContext): undefined {
-    if (this.disposed || this.unavailable) return undefined
+    this.lastCommandContext = context
+    if (this.shutdownAdmissionClosed || this.disposed || this.unavailable) return undefined
     if (event.type === 'state-changed') {
       const token = this.reservation
       if (token?.target && token.target.entryId === current.entryId && token.target.musicCode === current.musicCode &&
@@ -970,9 +1052,11 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
   }
 
   private async runReservedStart(token: TransitionReservation, context: StandaloneCommandContext): Promise<void> {
-    if (this.reservation !== token || this.unavailable || !token.target || token.startPhase === 'countdown') return
+    if (this.shutdownAdmissionClosed || this.reservation !== token || this.unavailable ||
+        !token.target || token.startPhase === 'countdown') return
     const start = await context.transitions.run(() => {
-      if (this.disposed || this.unavailable || this.reservation !== token || !token.target || token.startPhase === 'countdown') return undefined
+      if (this.shutdownAdmissionClosed || this.disposed || this.unavailable || this.reservation !== token ||
+          !token.target || token.startPhase === 'countdown') return undefined
       if (token.startPhase !== 'loading') {
         token.startPhase = 'loading'
         this.publish()
@@ -996,6 +1080,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     operationId: string, context: StandaloneCommandContext): Promise<StandaloneCommandExecutionResult> {
     type Decision = { readonly failure: StandaloneCommandExecutionResult } | { readonly target: StandaloneQueueEntry | undefined }
     const reserved = await context.transitions.run<Decision>(() => {
+      if (this.shutdownAdmissionClosed || this.disposed) return { failure: executionRejected(operationId, 'DISPOSED') }
       if (this.unavailable) return { failure: executionForUnavailable(operationId, this.unavailable) }
       if (this.reservation !== token) return { failure: executionRejected(operationId, 'INVALID_STATE') }
       token.kind = 'eof'
@@ -1009,7 +1094,8 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     if (reserved.target) {
       try {
         const start = await context.transitions.run(() => {
-          if (this.disposed || this.unavailable || this.reservation !== token || !token.target) return undefined
+          if (this.shutdownAdmissionClosed || this.disposed || this.unavailable ||
+              this.reservation !== token || !token.target) return undefined
           return { promise: context.playback.playImmediately(token.target.musicCode) }
         })
         if (!start) return executionRejected(operationId, 'SUPERSEDED')

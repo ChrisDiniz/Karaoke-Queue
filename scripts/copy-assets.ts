@@ -39,22 +39,35 @@ fs.writeFileSync(path.join(rendererOutput, 'welcome-renderer.bundle.js'),
 
 fs.writeFileSync(path.join(rendererOutput, 'standalone-player-renderer.bundle.js'),
   bundleCommonJsModules([
+    'standalone-player-ipc-contracts',
     'standalone-player-keyboard',
     'standalone-player-interaction',
     'standalone-player-interaction-transport',
     'standalone-player-metadata-preview',
+    'standalone-player-current-track-info',
     'standalone-player-renderer'
   ], './standalone-player-renderer'))
 
 // The isolated Standalone harness combines the existing restricted bridges
 // with the small contracts module used to validate celebration messages.
 // Bundle local CommonJS modules so the sandboxed preload only requires Electron itself.
-const preloadFactories = ['player-preload', 'standalone-player-preload', 'src/standalone-player-contracts'].map(name => {
-  const source = fs.readFileSync(path.join(projectRoot, 'build', `${name}.js`), 'utf8')
-  return `"./${name}": function(module, exports, require) {\n${source}\n}`
-}).join(',\n')
+function bundleSandboxPreload(moduleNames: readonly string[], entryModules: readonly string[]): string {
+  const factories = moduleNames.map(name => {
+    const source = fs.readFileSync(path.join(projectRoot, 'build', `${name}.js`), 'utf8')
+    return `"./${name}": function(module, exports, require) {\n${source}\n}`
+  }).join(',\n')
+  const entries = entryModules.map(name => `  require('./${name}', '')`).join('\n')
+  return `(function(externalRequire) {\n  const factories = {\n${factories}\n  };\n  const cache = {};\n  function resolve(parent, request) {\n    const parts = (parent ? parent.split('/').slice(0, -1) : []).concat(request.split('/'));\n    const resolved = [];\n    for (const part of parts) { if (!part || part === '.') continue; if (part === '..') resolved.pop(); else resolved.push(part); }\n    return './' + resolved.join('/');\n  }\n  function require(id, parent) {\n    const key = resolve(parent, id);\n    if (cache[key]) return cache[key].exports;\n    if (!factories[key]) return externalRequire(id);\n    const module = { exports: {} };\n    cache[key] = module;\n    factories[key](module, module.exports, request => require(request, key));\n    return module.exports;\n  }\n${entries}\n})(require);\n`
+}
+
 fs.writeFileSync(path.join(projectRoot, 'build', 'standalone-player-ui-preload.js'),
-  `(function(externalRequire) {\n  const factories = {\n${preloadFactories}\n  };\n  const cache = {};\n  function resolve(parent, request) {\n    const parts = (parent ? parent.split('/').slice(0, -1) : []).concat(request.split('/'));\n    const resolved = [];\n    for (const part of parts) { if (!part || part === '.') continue; if (part === '..') resolved.pop(); else resolved.push(part); }\n    return './' + resolved.join('/');\n  }\n  function require(id, parent) {\n    const key = resolve(parent, id);\n    if (cache[key]) return cache[key].exports;\n    if (!factories[key]) return externalRequire(id);\n    const module = { exports: {} };\n    cache[key] = module;\n    factories[key](module, module.exports, request => require(request, key));\n    return module.exports;\n  }\n  require('./player-preload', '');\n  require('./standalone-player-preload', '');\n})(require);\n`)
+  bundleSandboxPreload(['player-preload', 'standalone-player-preload', 'src/standalone-player-contracts'],
+    ['player-preload', 'standalone-player-preload']))
+// Production Standalone composes the restricted playback bridge with its own UI bridge;
+// it does not expose the separate legacy Player control API.
+fs.writeFileSync(path.join(projectRoot, 'build', 'standalone-player-preload.bundle.js'),
+  bundleSandboxPreload(['player-preload', 'standalone-player-preload', 'src/standalone-player-contracts'],
+    ['player-preload', 'standalone-player-preload']))
 
 // The renderer loads app.js as a classic script (index.html is intentionally
 // unchanged). Bundle its small CommonJS rule modules into that script without

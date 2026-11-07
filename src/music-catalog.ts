@@ -22,6 +22,9 @@ export type MusicCatalogErrorCode =
   | 'FILE_CHANGED'
   | 'FILE_READ_FAILED'
   | 'DATABASE_FAILURE'
+  | 'CATALOG_IMPORT_BUSY'
+  | 'CATALOG_CHANGED_DURING_CONFIRMATION'
+  | 'CATALOG_REPORT_STALE'
   | 'CATALOG_CLOSED'
 
 export class MusicCatalogError extends Error {
@@ -53,6 +56,22 @@ export interface MusicCatalogWarning {
   field: 'artista' | 'nome_musica'
 }
 
+export interface MusicCatalogImportIssue {
+  readonly rowNumber: number
+  readonly field: 'numero'
+  readonly value: string
+  readonly code: 'INVALID_MUSIC_NUMBER'
+  readonly reason: string
+}
+
+export interface MusicCatalogImportIssuePage {
+  readonly catalogRevision: string | null
+  readonly generation: number
+  readonly total: number
+  readonly offset: number
+  readonly issues: MusicCatalogImportIssue[]
+}
+
 export interface ParsedMusicCatalog {
   records: MusicCatalogRecord[]
   delimiter: MusicCatalogDelimiter
@@ -62,6 +81,10 @@ export interface ParsedMusicCatalog {
   missingTitleCount: number
   recordCount: number
   revision: string
+}
+
+export interface ParsedMusicCatalogWithIssues extends ParsedMusicCatalog {
+  readonly issues: MusicCatalogImportIssue[]
 }
 
 export interface MusicCatalogMetadata {
@@ -97,6 +120,15 @@ export interface MusicCatalogRepository {
     metadata: MusicCatalogMetadata
     record: MusicCatalogRecord | null
   }
+  /** Present only for isolated Standalone catalog databases. */
+  replaceMusicCatalogWithImportIssues?(
+    records: readonly MusicCatalogRecord[],
+    metadata: { revision: string; importedAt: string; sourceName?: string | null },
+    issues: readonly MusicCatalogImportIssue[],
+    expectedGeneration: number
+  ): void
+  /** Reads a bounded page and its revision/count from one SQLite read transaction. */
+  getMusicCatalogImportIssuePage?(offset: number, limit: number): MusicCatalogImportIssuePage
 }
 
 export const MAX_MUSIC_CATALOG_FILE_BYTES = 32 * 1024 * 1024
@@ -155,7 +187,7 @@ function decodeCsvInput(input: Uint8Array | string): string {
     }
     try {
       text = new TextDecoder('utf-8', { fatal: true }).decode(input)
-    } catch {
+    } catch (error) {
       throw new MusicCatalogError('INVALID_UTF8', 'O arquivo CSV precisa usar UTF-8 válido.')
     }
   } else {
@@ -334,7 +366,10 @@ export function calculateMusicCatalogRevision(records: readonly MusicCatalogReco
   return crypto.createHash('sha256').update(JSON.stringify(semanticRows)).digest('hex')
 }
 
-export function parseMusicCatalogCsv(input: Uint8Array | string): ParsedMusicCatalog {
+function parseMusicCatalogCsvInternal(
+  input: Uint8Array | string,
+  recoverInvalidMusicNumbers: boolean
+): ParsedMusicCatalogWithIssues {
   const text = decodeCsvInput(input)
   if (text.trim().length === 0) {
     throw new MusicCatalogError('EMPTY_CATALOG', 'O arquivo CSV está vazio.')
@@ -350,6 +385,7 @@ export function parseMusicCatalogCsv(input: Uint8Array | string): ParsedMusicCat
   const records: MusicCatalogRecord[] = []
   const seenNumbers = new Map<string, number>()
   const warnings: MusicCatalogWarning[] = []
+  const issues: MusicCatalogImportIssue[] = []
   let warningCount = 0
   let missingArtistCount = 0
   let missingTitleCount = 0
@@ -363,7 +399,21 @@ export function parseMusicCatalogCsv(input: Uint8Array | string): ParsedMusicCat
     try {
       videoCode = normalizeCatalogCodeForVideoMatch(musicNumber)
     } catch {
-      throw new MusicCatalogError('INVALID_MUSIC_NUMBER', 'O número da música deve conter de 1 a 5 dígitos ASCII e não pode começar com zero.', row.rowNumber, 'numero')
+      const issue = new MusicCatalogError(
+        'INVALID_MUSIC_NUMBER',
+        'O número da música deve conter de 1 a 5 dígitos ASCII e não pode começar com zero.',
+        row.rowNumber,
+        'numero'
+      )
+      if (!recoverInvalidMusicNumbers) throw issue
+      issues.push({
+        rowNumber: row.rowNumber,
+        field: 'numero',
+        value: musicNumber,
+        code: 'INVALID_MUSIC_NUMBER',
+        reason: 'O código deve conter de 1 a 5 dígitos, sem zero inicial.'
+      })
+      continue
     }
     const previousRow = seenNumbers.get(musicNumber)
     if (previousRow !== undefined) {
@@ -402,6 +452,18 @@ export function parseMusicCatalogCsv(input: Uint8Array | string): ParsedMusicCat
     missingArtistCount,
     missingTitleCount,
     recordCount: records.length,
-    revision: calculateMusicCatalogRevision(records)
+    revision: calculateMusicCatalogRevision(records),
+    issues
   }
+}
+
+/** Strict parser retained for consumers that require every row to be valid. */
+export function parseMusicCatalogCsv(input: Uint8Array | string): ParsedMusicCatalog {
+  const { issues: _issues, ...parsed } = parseMusicCatalogCsvInternal(input, false)
+  return parsed
+}
+
+/** Standalone import parser: only invalid music-number rows are recoverable. */
+export function parseMusicCatalogCsvWithRecoverableIssues(input: Uint8Array | string): ParsedMusicCatalogWithIssues {
+  return parseMusicCatalogCsvInternal(input, true)
 }

@@ -113,7 +113,9 @@ test('C2 entry scope uses the shared B2 parser and submits only Enter/P without 
   assert.equal(controller.handleEntryKeyStroke({ key: 'Escape' }).recognized, true)
   assert.deepEqual(controller.getSnapshot(), { numericPanelOpen: false, enteredCode: '', menuScreen: 'closed' })
   assert.equal(controller.handleEntryKeyStroke({ key: 'Escape' }).recognized, true)
-  assert.equal(controller.getSnapshot().menuScreen, 'closed', 'entry-only Esc does not open the C7 menu')
+  assert.equal(controller.getSnapshot().menuScreen, 'main', 'a second Esc opens the C7 menu after numeric entry closes.')
+  assert.equal(controller.handleEntryKeyStroke({ key: 'Escape' }).recognized, true)
+  assert.equal(controller.getSnapshot().menuScreen, 'closed', 'Esc closes the main menu.')
   controller.dispose()
 })
 
@@ -305,6 +307,26 @@ test('Esc opens the main menu only when no panel or menu is open, then closes it
   controller.dispose()
 })
 
+test('Esc closes hidden code entry and opens the menu during countdown or celebration', () => {
+  const { controller, scheduler } = build()
+  stroke(controller, '1')
+  const entryTimer = scheduler.latest()
+
+  const result = controller.handleEntryKeyStroke(
+    { key: 'Escape' }, false, true, false, false, false, true
+  )
+
+  assert.equal(result.recognized, true)
+  assert.equal(result.intent, undefined)
+  assert.deepEqual(controller.getSnapshot(), {
+    numericPanelOpen: false,
+    enteredCode: '',
+    menuScreen: 'main'
+  })
+  assert.equal(entryTimer.cancelled, true, 'closing the hidden numeric panel cancels its local inactivity timer.')
+  controller.dispose()
+})
+
 test('Esc from a submenu returns to the main menu', () => {
   const { controller } = build()
   stroke(controller, 'Escape')
@@ -347,6 +369,44 @@ test('exit confirmation can be canceled or emits only an exit intent after confi
   const intent = controller.resolveExitConfirmation(true)
   assert.deepEqual(intent, { type: 'request-application-exit' })
   assert.equal(controller.getSnapshot().menuScreen, 'closed')
+  assert.equal(controller.resolveExitConfirmation(true), undefined,
+    'a repeated confirmation cannot emit a second application-exit intent.')
+  controller.dispose()
+})
+
+test('a Main-originated close confirmation restores the screen that was open before the request', () => {
+  const closed = build().controller
+  closed.showExitConfirmation()
+  assert.equal(closed.getSnapshot().menuScreen, 'exit-confirmation')
+  assert.equal(closed.resolveExitConfirmation(false, 'closed'), undefined)
+  assert.equal(closed.getSnapshot().menuScreen, 'closed')
+  closed.dispose()
+
+  const options = build().controller
+  stroke(options, 'Escape')
+  options.selectMenuAction('options')
+  options.showExitConfirmation()
+  assert.equal(options.resolveExitConfirmation(false, 'options'), undefined)
+  assert.equal(options.getSnapshot().menuScreen, 'options')
+  options.dispose()
+})
+
+test('Escape from exit confirmation returns to the main menu and other Player shortcuts are consumed', () => {
+  const { controller, operationNumber } = build()
+  stroke(controller, 'Escape')
+  controller.selectMenuAction('exit')
+
+  for (const key of ['5', 'P', 'Enter', ' ', 'R', 'Backspace', 'i']) {
+    assert.equal(stroke(controller, key), undefined, `${key} does not create a Player action under exit confirmation.`)
+  }
+  assert.equal(controller.getSnapshot().menuScreen, 'exit-confirmation')
+  assert.equal(controller.getSnapshot().numericPanelOpen, false)
+  assert.equal(operationNumber, 0)
+
+  stroke(controller, 'Escape')
+  assert.equal(controller.getSnapshot().menuScreen, 'main', 'the first Esc cancels the topmost confirmation.')
+  assert.equal(controller.getSnapshot().numericPanelOpen, false)
+  assert.equal(operationNumber, 0)
   controller.dispose()
 })
 
@@ -357,9 +417,44 @@ test('while a menu is open, keyboard playback and code-entry shortcuts are ignor
   controller.selectMenuAction('options')
   for (const key of ['1', 'Enter', 'P', ' ', 'R', 'Backspace']) assert.equal(stroke(controller, key), undefined)
   assert.equal(stroke(controller, 'ArrowRight', { ctrlKey: true }), undefined)
+  assert.equal(stroke(controller, ' ', { ctrlKey: true }), undefined)
+  assert.equal(stroke(controller, 'i'), undefined)
   assert.equal(controller.getSnapshot().menuScreen, 'options')
   assert.equal(controller.getSnapshot().enteredCode, '')
   assert.equal(fixture.operationNumber, 0)
+  controller.dispose()
+})
+
+test('I is owned by the current-track panel only during confirmed playback and Esc closes it first', () => {
+  const { controller } = build()
+  assert.deepEqual(controller.handleEntryKeyStroke({ key: 'i' }, false, false, false, true).intent,
+    { type: 'show-current-track-info' })
+  assert.deepEqual(controller.handleEntryKeyStroke({ key: 'I' }, false, false, false, true).intent,
+    { type: 'show-current-track-info' }, 'uppercase and lowercase I share the B2 keyboard parser.')
+  assert.deepEqual(controller.handleEntryKeyStroke({ key: 'i' }), { recognized: true },
+    'idle, countdown, loading, celebration, and unavailable states consume I without opening a panel.')
+  assert.deepEqual(controller.handleEntryKeyStroke({ key: 'Escape' }, false, false, false, true, true).intent,
+    { type: 'close-current-track-info' }, 'Esc closes the information panel before it can open the menu.')
+  assert.equal(controller.getSnapshot().menuScreen, 'closed')
+  controller.dispose()
+})
+
+test('I does not take ownership from numeric entry, stop confirmation, or an open menu', () => {
+  const { controller } = build()
+  controller.handleEntryKeyStroke({ key: '1' }, false, false, false, true)
+  assert.deepEqual(controller.handleEntryKeyStroke({ key: 'i' }, false, false, false, true), { recognized: true })
+  assert.equal(controller.getSnapshot().enteredCode, '1')
+
+  const modal = controller.handleEntryKeyStroke({ key: ' ', ctrlKey: true }, false, false, false, true)
+  assert.equal(modal.intent?.type, 'open-stop-confirmation')
+  assert.deepEqual(controller.handleEntryKeyStroke({ key: 'i' }, false, false, true, true), { recognized: true })
+
+  controller.handleEntryKeyStroke({ key: 'Escape' }, false, false, true, true)
+  controller.handleEntryKeyStroke({ key: 'Escape' }, false, false, false, true)
+  controller.handleKeyStroke({ key: 'Escape' })
+  controller.selectMenuAction('commands')
+  assert.deepEqual(controller.handleEntryKeyStroke({ key: 'i' }, false, false, false, true), { recognized: true })
+  assert.equal(controller.getSnapshot().menuScreen, 'commands')
   controller.dispose()
 })
 
@@ -499,6 +594,9 @@ test('keyboard interpreter recognizes only V1 actions and keypad digits', () => 
   assert.equal(interpretStandaloneKeyboardStroke({ key: ' ', code: 'Space', ctrlKey: true, shiftKey: true }), undefined)
   assert.equal(interpretStandaloneKeyboardStroke({ key: ' ', code: 'Space', ctrlKey: true, repeat: true }), undefined)
   assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'R' }), { type: 'restart' })
+  assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'i' }), { type: 'show-current-track-info' })
+  assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'I' }), { type: 'show-current-track-info' })
+  assert.equal(interpretStandaloneKeyboardStroke({ key: 'I', ctrlKey: true }), undefined)
   assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'Backspace' }), { type: 'backspace' })
   assert.deepEqual(interpretStandaloneKeyboardStroke({ key: 'Escape' }), { type: 'escape' })
   assert.equal(interpretStandaloneKeyboardStroke({ key: 'S' }), undefined)

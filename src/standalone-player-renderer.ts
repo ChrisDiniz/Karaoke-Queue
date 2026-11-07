@@ -1,7 +1,20 @@
-import type { StandalonePlayerRendererApi, StandalonePlayerSnapshotEnvelope, StandalonePlayerSubscriptionRef } from './standalone-player-ipc-contracts'
+import type {
+  StandaloneCatalogImportIssuesPage,
+  StandalonePlayerOptionsActionReply,
+  StandalonePlayerOptionsSnapshot,
+  StandalonePlayerRendererApi,
+  StandalonePlayerSnapshotEnvelope,
+  StandalonePlayerSubscriptionRef
+} from './standalone-player-ipc-contracts'
+import { isNewerStandalonePlayerOptionsSnapshot } from './standalone-player-ipc-contracts'
 import type { StandaloneTransitioningSnapshot } from './standalone-player-contracts'
+import type { StandalonePlayerSnapshot } from './standalone-player-contracts'
 import { StandalonePlayerInteractionController } from './standalone-player-interaction'
-import type { StandaloneCodeSubmissionStatus, StandalonePlayerInteractionIntent } from './standalone-player-interaction'
+import type {
+  StandaloneCodeSubmissionStatus,
+  StandalonePlayerInteractionIntent,
+  StandalonePlayerMenuScreen
+} from './standalone-player-interaction'
 import { StandalonePlayerInteractionTransport } from './standalone-player-interaction-transport'
 import type { StandaloneKeyboardStroke } from './standalone-player-keyboard'
 import {
@@ -10,6 +23,11 @@ import {
   type StandaloneMetadataPreviewSnapshot,
   type StandaloneTransitionMetadataSnapshot
 } from './standalone-player-metadata-preview'
+import {
+  StandaloneCurrentTrackInfoController,
+  type StandaloneCurrentTrackIdentity,
+  type StandaloneCurrentTrackInfoSnapshot
+} from './standalone-player-current-track-info'
 
 declare global {
   interface Window {
@@ -19,6 +37,9 @@ declare global {
 
 const ENTRY_PANEL_INACTIVITY_MS = 5_000
 const TEMPORARY_FEEDBACK_MS = 3_500
+const CATALOG_ISSUES_PAGE_SIZE = 50
+
+type CatalogDialogMode = 'closed' | 'confirmation' | 'issues'
 
 class StandalonePlayerRenderer {
   private readonly api = window.standalonePlayer
@@ -26,11 +47,22 @@ class StandalonePlayerRenderer {
   private readonly transport: StandalonePlayerInteractionTransport
   private readonly metadata: StandalonePlayerMetadataPreviewController
   private readonly transitionMetadata: StandaloneTransitionMetadataPreviewController
+  private readonly currentTrackInfo: StandaloneCurrentTrackInfoController
   private readonly unsubscribeInteraction: () => void
   private readonly unsubscribeMetadata: () => void
   private readonly unsubscribeTransitionMetadata: () => void
+  private readonly unsubscribeCurrentTrackInfo: () => void
   private readonly unsubscribeCatalogRevision: () => void
-  private readonly onResize = (): void => this.renderQueueProjection()
+  private readonly unsubscribeOptions: () => void
+  private readonly unsubscribeExitConfirmation: () => void
+  private readonly onResize = (): void => {
+    this.renderQueueProjection()
+    this.syncPlaybackSurface(true)
+  }
+  private optionsSnapshot: StandalonePlayerOptionsSnapshot | undefined
+  private optionsToastTimer: number | undefined
+  private optionsToastGeneration = 0
+  private lastMenuScreen: StandalonePlayerMenuScreen = 'closed'
   private snapshotSubscription: StandalonePlayerSubscriptionRef | undefined
   private latestSnapshot: StandalonePlayerSnapshotEnvelope | undefined
   private lastNumericPanelOpen = false
@@ -42,9 +74,50 @@ class StandalonePlayerRenderer {
   private feedbackStatus: StandaloneCodeSubmissionStatus | undefined
   private stopConfirmationOpen = false
   private stopConfirmationStatus = ''
+  private catalogDialogMode: CatalogDialogMode = 'closed'
+  private catalogConfirmation: NonNullable<StandalonePlayerOptionsActionReply['confirmation']> | undefined
+  private catalogConfirmationBusy = false
+  private catalogDialogStatus = ''
+  private catalogIssuesPageNumber = 0
+  private catalogIssuesPage: StandaloneCatalogImportIssuesPage | undefined
+  private catalogIssuesRequestGeneration = 0
+  private catalogDialogReturnFocus: HTMLElement | undefined
+  private exitConfirmationReturnFocus: HTMLElement | undefined
+  private exitConfirmationReturnMenuScreen: Exclude<StandalonePlayerMenuScreen, 'exit-confirmation'> = 'main'
+  private exitConfirmationRequestId: string | undefined
+  private exitResolutionPending = false
   private resumeFeedbackTimer: number | undefined
   private resumeFeedbackGeneration = 0
+  private playbackSurfaceVisible = false
+  private playbackSurfaceGeneration = 0
   private disposed = false
+  private readonly onOpenMenuCommands = (): void => {
+    if (this.interaction.getSnapshot().menuScreen === 'main') this.interaction.selectMenuAction('commands')
+  }
+  private readonly onOpenMenuOptions = (): void => {
+    if (this.interaction.getSnapshot().menuScreen === 'main') this.interaction.selectMenuAction('options')
+  }
+  private readonly onOpenMenuExit = (event: MouseEvent): void => {
+    if (this.interaction.getSnapshot().menuScreen !== 'main') return
+    const action = event.currentTarget
+    this.exitConfirmationReturnFocus = action instanceof HTMLButtonElement
+      ? action : document.getElementById('menu-item-exit') ?? undefined
+    void this.requestExitConfirmationFromMenu()
+  }
+  private readonly onCancelExitConfirmation = (): void => {
+    void this.resolveExitConfirmation('cancel')
+  }
+  private readonly onConfirmExitConfirmation = (): void => {
+    void this.resolveExitConfirmation('confirm')
+  }
+  private readonly onChangeVideoFolder = (): void => { void this.runOptionsAction(() => this.api?.selectVideoFolder(), 'library') }
+  private readonly onRefreshVideoLibrary = (): void => { void this.runOptionsAction(() => this.api?.refreshVideoLibrary(), 'library') }
+  private readonly onImportMusicCatalog = (): void => { void this.runOptionsAction(() => this.api?.importMusicCatalog(), 'catalog') }
+  private readonly onViewCatalogIssues = (): void => { void this.openCatalogIssues() }
+  private readonly onCatalogDialogCancel = (): void => { this.closeCatalogDialog(true) }
+  private readonly onCatalogDialogConfirm = (): void => { void this.confirmCatalogImport() }
+  private readonly onCatalogIssuesPrevious = (): void => { void this.loadCatalogIssuesPage(this.catalogIssuesPageNumber - 1) }
+  private readonly onCatalogIssuesNext = (): void => { void this.loadCatalogIssuesPage(this.catalogIssuesPageNumber + 1) }
 
   constructor() {
     if (!this.api) throw new Error('STANDALONE_IPC_UNAVAILABLE')
@@ -63,7 +136,22 @@ class StandalonePlayerRenderer {
     this.transitionMetadata = new StandaloneTransitionMetadataPreviewController({
       lookupMetadata: code => this.api?.lookupMetadata(code) ?? Promise.reject(new Error('STANDALONE_IPC_UNAVAILABLE'))
     })
+    this.currentTrackInfo = new StandaloneCurrentTrackInfoController({
+      scheduler: {
+        schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+        cancel: handle => window.clearTimeout(handle as number)
+      },
+      lookupCurrentTrack: () => this.api?.getCurrentTrackMetadata() ?? Promise.reject(new Error('STANDALONE_IPC_UNAVAILABLE')),
+      getCurrentTrack: async () => {
+        const envelope = await this.api?.getSnapshot()
+        return envelope ? currentTrackFromSnapshot(envelope.snapshot) : null
+      }
+    })
+    this.unsubscribeExitConfirmation = this.api.onExitConfirmationRequested(requestId => {
+      this.showExitConfirmation(requestId)
+    })
     this.unsubscribeInteraction = this.interaction.subscribe(snapshot => {
+      if (snapshot.numericPanelOpen && this.currentTrackInfo.getSnapshot().open) this.currentTrackInfo.close()
       if (!snapshot.numericPanelOpen && this.lastNumericPanelOpen && this.isActivePlayback()) {
         if (this.feedbackOutcome === 'confirmed' || this.feedbackOutcome === 'rejected') {
           this.cancelFeedbackTimer()
@@ -75,22 +163,50 @@ class StandalonePlayerRenderer {
       this.metadata.updateEntry(snapshot.numericPanelOpen, snapshot.enteredCode)
       this.renderFeedback(snapshot.lastSubmission)
       this.renderStopConfirmation()
+      this.renderMenu(snapshot.menuScreen)
       this.renderQueueProjection()
     })
     this.unsubscribeMetadata = this.metadata.subscribe(snapshot => this.renderMetadata(snapshot))
     this.unsubscribeTransitionMetadata = this.transitionMetadata.subscribe(snapshot => this.renderTransitionMetadata(snapshot))
+    this.unsubscribeCurrentTrackInfo = this.currentTrackInfo.subscribe(snapshot => {
+      this.renderCurrentTrackInfo(snapshot)
+      this.renderQueueProjection()
+      this.syncPlaybackSurface()
+    })
     this.unsubscribeCatalogRevision = this.api.onCatalogRevisionChanged(revision => {
       this.metadata.catalogChanged(revision)
       this.transitionMetadata.catalogChanged(revision)
+      this.currentTrackInfo.catalogChanged(revision)
+    })
+    this.unsubscribeOptions = this.api.onOptionsChanged(snapshot => {
+      this.applyOptionsSnapshot(snapshot)
     })
     window.addEventListener('keydown', this.onKeyDown, true)
     window.addEventListener('resize', this.onResize)
     window.addEventListener('pagehide', this.dispose, { once: true })
     document.getElementById('stop-confirmation-cancel')?.addEventListener('click', this.onCancelStopConfirmation)
     document.getElementById('stop-confirmation-confirm')?.addEventListener('click', this.onConfirmStopAll)
+    document.getElementById('menu-item-commands')?.addEventListener('click', this.onOpenMenuCommands)
+    document.getElementById('menu-item-options')?.addEventListener('click', this.onOpenMenuOptions)
+    document.getElementById('menu-item-exit')?.addEventListener('click', this.onOpenMenuExit)
+    document.getElementById('exit-confirmation-cancel')?.addEventListener('click', this.onCancelExitConfirmation)
+    document.getElementById('exit-confirmation-confirm')?.addEventListener('click', this.onConfirmExitConfirmation)
+    document.getElementById('options-change-folder')?.addEventListener('click', this.onChangeVideoFolder)
+    document.getElementById('options-refresh-library')?.addEventListener('click', this.onRefreshVideoLibrary)
+    document.getElementById('options-import-catalog')?.addEventListener('click', this.onImportMusicCatalog)
+    document.getElementById('options-catalog-view-issues')?.addEventListener('click', this.onViewCatalogIssues)
+    document.getElementById('options-catalog-dialog-cancel')?.addEventListener('click', this.onCatalogDialogCancel)
+    document.getElementById('options-catalog-dialog-confirm')?.addEventListener('click', this.onCatalogDialogConfirm)
+    document.getElementById('options-catalog-issues-previous')?.addEventListener('click', this.onCatalogIssuesPrevious)
+    document.getElementById('options-catalog-issues-next')?.addEventListener('click', this.onCatalogIssuesNext)
     document.body.focus()
     this.renderEntry(false, '')
     this.renderMetadata(this.metadata.getSnapshot())
+    this.renderMenu(this.interaction.getSnapshot().menuScreen)
+    void this.api.getOptionsSnapshot().then(snapshot => {
+      if (this.disposed) return
+      this.applyOptionsSnapshot(snapshot)
+    }).catch(() => this.showOptionsToast('Não foi possível carregar as opções.', 'error'))
     void this.api.subscribe(envelope => this.renderSnapshot(envelope)).then(subscription => {
       if (this.disposed) void this.api?.unsubscribe(subscription)
       else this.snapshotSubscription = subscription
@@ -105,10 +221,19 @@ class StandalonePlayerRenderer {
       event.stopImmediatePropagation()
       return
     }
+    if (this.catalogDialogMode !== 'closed') {
+      this.handleCatalogDialogKeyDown(event)
+      return
+    }
     if (!this.stopConfirmationOpen && this.isEditableTarget(event.target)) return
     if (event.repeat) {
       event.preventDefault()
       event.stopImmediatePropagation()
+      return
+    }
+    const menuScreen = this.interaction.getSnapshot().menuScreen
+    if (menuScreen !== 'closed' && !this.stopConfirmationOpen) {
+      this.handleMenuKeyDown(event, menuScreen)
       return
     }
     const stroke: StandaloneKeyboardStroke = {
@@ -120,8 +245,9 @@ class StandalonePlayerRenderer {
       altKey: event.altKey,
       metaKey: event.metaKey
     }
-    const result = this.interaction.handleEntryKeyStroke(stroke, this.canSubmit(), this.isInitialCountdown(),
-      this.stopConfirmationOpen, this.canUsePlaybackControls())
+    const result = this.interaction.handleEntryKeyStroke(stroke, this.canSubmit(), this.isCountdownOrCelebration(),
+      this.stopConfirmationOpen, this.canUsePlaybackControls(), this.currentTrackInfo.getSnapshot().open,
+      this.isCountdownOrCelebration())
     if (result.recognized) {
       event.preventDefault()
       event.stopImmediatePropagation()
@@ -130,6 +256,14 @@ class StandalonePlayerRenderer {
   }
 
   private dispatch(intent: StandalonePlayerInteractionIntent): void {
+    if (intent.type === 'show-current-track-info') {
+      this.currentTrackInfo.show()
+      return
+    }
+    if (intent.type === 'close-current-track-info') {
+      this.currentTrackInfo.close()
+      return
+    }
     if (intent.type === 'open-stop-confirmation') {
       this.stopConfirmationOpen = true
       this.stopConfirmationStatus = ''
@@ -202,6 +336,570 @@ class StandalonePlayerRenderer {
       status.textContent = this.stopConfirmationStatus
       status.hidden = this.stopConfirmationStatus.length === 0
     }
+    this.syncPlaybackSurface()
+  }
+
+  private renderMenu(menuScreen: StandalonePlayerMenuScreen): void {
+    const mainMenu = document.getElementById('standalone-main-menu')
+    const commands = document.getElementById('standalone-commands-screen')
+    const options = document.getElementById('standalone-options-screen')
+    const exitConfirmation = document.getElementById('standalone-exit-confirmation')
+    const showingExitConfirmation = menuScreen === 'exit-confirmation'
+    if (mainMenu) {
+      mainMenu.hidden = menuScreen !== 'main' && !showingExitConfirmation
+      mainMenu.inert = showingExitConfirmation
+      if (showingExitConfirmation) mainMenu.setAttribute('aria-hidden', 'true')
+      else mainMenu.removeAttribute('aria-hidden')
+    }
+    if (commands) commands.hidden = menuScreen !== 'commands'
+    if (options) options.hidden = menuScreen !== 'options'
+    if (exitConfirmation) exitConfirmation.hidden = !showingExitConfirmation
+    for (const id of ['exit-confirmation-cancel', 'exit-confirmation-confirm']) {
+      const button = document.getElementById(id) as HTMLButtonElement | null
+      if (button) button.disabled = this.exitResolutionPending
+    }
+    document.body.dataset.menuScreen = menuScreen
+    this.syncPlaybackSurface()
+    if (menuScreen === this.lastMenuScreen) return
+
+    const previous = this.lastMenuScreen
+    this.lastMenuScreen = menuScreen
+    window.requestAnimationFrame(() => {
+      if (this.disposed || this.interaction.getSnapshot().menuScreen !== menuScreen) return
+      if (menuScreen === 'main') {
+        const returnTarget = previous === 'exit-confirmation' ? this.exitConfirmationReturnFocus : undefined
+        this.exitConfirmationReturnFocus = undefined
+        const fallbackId = previous === 'options' ? 'menu-item-options'
+          : previous === 'exit-confirmation' ? 'menu-item-commands' : 'menu-item-commands'
+        const button = returnTarget instanceof HTMLButtonElement && returnTarget.isConnected && !returnTarget.disabled
+          ? returnTarget : document.getElementById(fallbackId) as HTMLButtonElement | null
+        if (button && !button.disabled) button.focus()
+      } else if (menuScreen === 'exit-confirmation') {
+        document.getElementById('exit-confirmation-cancel')?.focus()
+      } else if (menuScreen === 'commands') {
+        document.getElementById('commands-screen-title')?.focus()
+      } else if (menuScreen === 'options') {
+        const button = document.getElementById('options-change-folder') as HTMLButtonElement | null
+        if (button && !button.disabled) button.focus()
+      } else if (menuScreen === 'closed' && previous !== 'closed') {
+        this.exitConfirmationReturnFocus = undefined
+        document.body.focus()
+      }
+    })
+  }
+
+  private async requestExitConfirmationFromMenu(): Promise<void> {
+    try {
+      const request = await this.api?.requestExitConfirmation()
+      if (this.disposed || request?.outcome !== 'pending') return
+      this.showExitConfirmation(request.requestId)
+    } catch {
+      // A failed Main request cannot open a local-only confirmation or imply that exit was authorized.
+    }
+  }
+
+  private showExitConfirmation(requestId: string): void {
+    if (this.disposed || this.exitConfirmationRequestId && this.exitConfirmationRequestId !== requestId) return
+    if (!this.exitConfirmationRequestId) {
+      const current = this.interaction.getSnapshot().menuScreen
+      this.exitConfirmationReturnMenuScreen = current === 'exit-confirmation' ? 'main' : current
+      if (current !== 'main') this.exitConfirmationReturnFocus = undefined
+      this.exitConfirmationRequestId = requestId
+    }
+    const current = this.interaction.getSnapshot().menuScreen
+    if (current === 'main') this.interaction.selectMenuAction('exit')
+    else if (current !== 'exit-confirmation') this.interaction.showExitConfirmation()
+  }
+
+  private async resolveExitConfirmation(decision: 'confirm' | 'cancel'): Promise<void> {
+    const requestId = this.exitConfirmationRequestId
+    if (!requestId || this.exitResolutionPending || this.disposed) return
+    this.exitResolutionPending = true
+    this.renderMenu(this.interaction.getSnapshot().menuScreen)
+    try {
+      const result = await this.api?.resolveExitConfirmation({ requestId, decision })
+      if (this.disposed) return
+      const expectedOutcome = decision === 'confirm' ? 'confirmed' : 'cancelled'
+      if (result?.requestId !== requestId || result.outcome !== expectedOutcome) {
+        this.exitResolutionPending = false
+        this.renderMenu(this.interaction.getSnapshot().menuScreen)
+        return
+      }
+      this.exitConfirmationRequestId = undefined
+      this.exitResolutionPending = false
+      const intent = this.interaction.resolveExitConfirmation(decision === 'confirm', this.exitConfirmationReturnMenuScreen)
+      this.exitConfirmationReturnMenuScreen = 'main'
+      if (intent) this.dispatch(intent)
+    } catch {
+      if (this.disposed) return
+      this.exitResolutionPending = false
+      this.renderMenu(this.interaction.getSnapshot().menuScreen)
+      // Keep the modal and its Main-issued request identity when settlement is uncertain.
+    }
+  }
+
+  private renderOptionsSnapshot(snapshot: StandalonePlayerOptionsSnapshot): void {
+    const folder = document.getElementById('options-video-folder-name')
+    if (folder) folder.textContent = snapshot.library.folderName ?? 'Nenhuma pasta selecionada'
+
+    const libraryState = document.getElementById('options-library-state')
+    const libraryCount = document.getElementById('options-library-count')
+    const libraryUnconfirmed = document.getElementById('options-library-unconfirmed')
+    const indexing = document.getElementById('options-library-indexing')
+    const refresh = document.getElementById('options-refresh-library') as HTMLButtonElement | null
+    const isScanning = snapshot.library.scanStatus === 'scanning'
+    const isReady = snapshot.library.scanStatus === 'ready' && snapshot.library.folderName !== null
+    const isDegraded = snapshot.library.scanStatus === 'degraded'
+
+    if (libraryState) {
+      libraryState.textContent = isDegraded ? 'Pasta indisponível' : 'Pasta disponível'
+      libraryState.hidden = !isReady && !isDegraded
+      libraryState.classList.toggle('degraded', isDegraded)
+    }
+    if (libraryCount) {
+      libraryCount.textContent = `${new Intl.NumberFormat('pt-BR').format(snapshot.library.indexedFiles ?? 0)} vídeos indexados`
+      libraryCount.hidden = !isReady
+    }
+    if (libraryUnconfirmed) {
+      libraryUnconfirmed.textContent = 'A disponibilidade da pasta não pôde ser confirmada.'
+      libraryUnconfirmed.hidden = !isDegraded
+    }
+    if (indexing) indexing.hidden = !isScanning
+    if (refresh) refresh.disabled = isScanning || snapshot.library.folderName === null
+
+    const catalogHasData = snapshot.catalog.fileName !== null
+    const catalogFile = document.getElementById('options-catalog-file-name')
+    const catalogAction = document.getElementById('options-catalog-action-label')
+    const catalogState = document.getElementById('options-catalog-state')
+    const catalogCount = document.getElementById('options-catalog-count')
+    const catalogImportedAt = document.getElementById('options-catalog-imported-at')
+    if (catalogFile) catalogFile.textContent = snapshot.catalog.fileName ?? 'Nenhum catálogo importado'
+    if (catalogAction) catalogAction.textContent = catalogHasData ? 'Alterar CSV' : 'Importar CSV'
+    if (catalogState) {
+      catalogState.textContent = 'CSV importado'
+      catalogState.hidden = !catalogHasData
+    }
+    if (catalogCount) {
+      catalogCount.replaceChildren()
+      if (catalogHasData) {
+        const count = document.createElement('strong')
+        count.textContent = new Intl.NumberFormat('pt-BR').format(snapshot.catalog.recordCount)
+        catalogCount.append(count, document.createTextNode(snapshot.catalog.recordCount === 1
+          ? ' música cadastrada' : ' músicas cadastradas'))
+      }
+      catalogCount.hidden = !catalogHasData
+    }
+    if (catalogImportedAt) {
+      catalogImportedAt.textContent = snapshot.catalog.importedAt
+        ? `Última importação: ${formatCatalogImportDate(snapshot.catalog.importedAt)}`
+        : ''
+      catalogImportedAt.hidden = !catalogHasData || snapshot.catalog.importedAt === null
+    }
+    const catalogIssues = document.getElementById('options-catalog-issues')
+    const catalogIssueCount = document.getElementById('options-catalog-issues-count')
+    const catalogImportButton = document.getElementById('options-import-catalog') as HTMLButtonElement | null
+    if (catalogIssues) catalogIssues.hidden = snapshot.catalog.importIssueCount === 0
+    if (catalogIssueCount) {
+      const count = new Intl.NumberFormat('pt-BR').format(snapshot.catalog.importIssueCount)
+      catalogIssueCount.textContent = snapshot.catalog.importIssueCount === 1
+        ? `${count} registro ignorado —`
+        : `${count} registros ignorados —`
+    }
+    if (catalogImportButton) catalogImportButton.disabled = this.catalogDialogMode === 'confirmation'
+  }
+
+  private applyOptionsSnapshot(snapshot: StandalonePlayerOptionsSnapshot): boolean {
+    if (!isNewerStandalonePlayerOptionsSnapshot(this.optionsSnapshot, snapshot)) return false
+    this.optionsSnapshot = snapshot
+    this.renderOptionsSnapshot(snapshot)
+    return true
+  }
+
+  private async runOptionsAction(
+    action: () => Promise<StandalonePlayerOptionsActionReply> | undefined,
+    operation: 'library' | 'catalog'
+  ): Promise<void> {
+    if (!this.api) return
+    try {
+      const pending = action()
+      if (!pending) return
+      const reply = await pending
+      if (this.disposed) return
+      const snapshotApplied = this.applyOptionsSnapshot(reply.snapshot)
+      if (reply.outcome === 'confirmation-required' && reply.confirmation) {
+        this.openCatalogConfirmation(reply.confirmation)
+        return
+      }
+      if (reply.outcome === 'cancelled' || reply.outcome === 'confirmed') {
+        if (snapshotApplied && operation === 'library' && reply.outcome === 'confirmed' &&
+            reply.snapshot.library.scanStatus === 'degraded') {
+          this.showOptionsToast('A pasta não está acessível. A configuração foi mantida; tente atualizar ou escolher outra pasta.', 'error')
+        }
+        return
+      }
+      const message = reply.code === 'PLAYER_NOT_IDLE'
+        ? 'Só é possível alterar a biblioteca com o Player ocioso.'
+        : reply.code === 'LIBRARY_BUSY'
+          ? 'A biblioteca está sendo atualizada. Tente novamente ao final.'
+          : reply.code === 'OPTIONS_BUSY'
+            ? 'Já existe uma operação de catálogo em andamento.'
+            : reply.code === 'CATALOG_IMPORT_FAILED'
+              ? 'Não foi possível importar o CSV. O catálogo anterior foi mantido.'
+              : 'Não foi possível atualizar a biblioteca.'
+      this.showOptionsToast(message, 'error')
+    } catch {
+      if (!this.disposed) this.showOptionsToast('Não foi possível concluir a operação.', 'error')
+    }
+  }
+
+  private openCatalogConfirmation(confirmation: NonNullable<StandalonePlayerOptionsActionReply['confirmation']>): void {
+    this.catalogConfirmation = { ...confirmation }
+    this.catalogConfirmationBusy = false
+    this.catalogDialogStatus = ''
+    this.catalogDialogMode = 'confirmation'
+    this.catalogDialogReturnFocus = document.getElementById('options-import-catalog') ?? undefined
+    this.renderCatalogDialog()
+    this.syncPlaybackSurface()
+    window.requestAnimationFrame(() => document.getElementById('options-catalog-dialog-cancel')?.focus())
+  }
+
+  private async confirmCatalogImport(): Promise<void> {
+    const confirmation = this.catalogConfirmation
+    if (!confirmation || this.catalogConfirmationBusy || !this.api) return
+    this.catalogConfirmationBusy = true
+    this.catalogDialogStatus = 'Importando os registros válidos…'
+    this.renderCatalogDialog()
+    try {
+      const reply = await this.api.confirmMusicCatalogImport(confirmation.token)
+      if (this.disposed) return
+      this.applyOptionsSnapshot(reply.snapshot)
+      if (reply.outcome === 'confirmed') {
+        this.catalogConfirmation = undefined
+        this.catalogConfirmationBusy = false
+        this.closeCatalogDialog(false)
+        return
+      }
+      if (reply.code === 'CATALOG_CONFIRMATION_STALE') {
+        this.catalogConfirmation = undefined
+        this.catalogConfirmationBusy = false
+        this.closeCatalogDialog(false)
+        this.showOptionsToast('O catálogo mudou durante a confirmação. Revise o estado atual antes de importar novamente.', 'error')
+        return
+      }
+      this.catalogDialogStatus = 'Não foi possível salvar o catálogo. O catálogo anterior foi mantido; você pode tentar novamente ou cancelar.'
+    } catch {
+      if (!this.disposed) this.catalogDialogStatus = 'Não foi possível confirmar a importação. O catálogo anterior foi mantido; tente novamente ou cancele.'
+    } finally {
+      if (!this.disposed) {
+        this.catalogConfirmationBusy = false
+        this.renderCatalogDialog()
+      }
+    }
+  }
+
+  private async openCatalogIssues(): Promise<void> {
+    const revision = this.optionsSnapshot?.catalog.revision
+    if (!this.api || !revision || this.catalogDialogMode !== 'closed') return
+    this.catalogDialogMode = 'issues'
+    this.catalogConfirmation = undefined
+    this.catalogIssuesPageNumber = 0
+    this.catalogIssuesPage = undefined
+    this.catalogDialogStatus = 'Carregando problemas…'
+    this.catalogDialogReturnFocus = document.getElementById('options-catalog-view-issues') ?? undefined
+    this.renderCatalogDialog()
+    this.syncPlaybackSurface()
+    window.requestAnimationFrame(() => document.getElementById('options-catalog-dialog-cancel')?.focus())
+    await this.loadCatalogIssuesPage(0, revision, this.optionsSnapshot?.catalog.importGeneration)
+  }
+
+  private async loadCatalogIssuesPage(pageNumber: number, expectedRevision?: string, expectedGeneration?: number): Promise<void> {
+    if (!this.api || this.catalogDialogMode !== 'issues' || !Number.isSafeInteger(pageNumber) || pageNumber < 0) return
+    const revision = expectedRevision ?? this.optionsSnapshot?.catalog.revision
+    const reportGeneration = expectedGeneration ?? this.optionsSnapshot?.catalog.importGeneration
+    if (!revision || reportGeneration === undefined) return
+    const requestGeneration = ++this.catalogIssuesRequestGeneration
+    this.catalogDialogStatus = 'Carregando problemas…'
+    this.renderCatalogDialog()
+    try {
+      const page = await this.api.getCatalogImportIssuesPage(revision, reportGeneration,
+        pageNumber * CATALOG_ISSUES_PAGE_SIZE)
+      if (this.disposed || requestGeneration !== this.catalogIssuesRequestGeneration || this.catalogDialogMode !== 'issues') return
+      if (page.catalogRevision !== revision || page.generation !== reportGeneration ||
+          this.optionsSnapshot?.catalog.revision !== revision ||
+          this.optionsSnapshot?.catalog.importGeneration !== reportGeneration) {
+        this.closeCatalogDialog(false)
+        this.showOptionsToast('O catálogo foi atualizado. Abra novamente os problemas da importação atual.', 'error')
+        return
+      }
+      this.catalogIssuesPage = page
+      this.catalogIssuesPageNumber = pageNumber
+      this.catalogDialogStatus = page.total === 0 ? 'Não há problemas registrados para este catálogo.' : ''
+    } catch {
+      if (!this.disposed && requestGeneration === this.catalogIssuesRequestGeneration) {
+        this.catalogDialogStatus = 'Não foi possível carregar os problemas deste catálogo.'
+      }
+    }
+    if (!this.disposed) this.renderCatalogDialog()
+  }
+
+  private renderCatalogDialog(): void {
+    const dialog = document.getElementById('options-catalog-dialog')
+    const title = document.getElementById('options-catalog-dialog-title')
+    const description = document.getElementById('options-catalog-dialog-description')
+    const summary = document.getElementById('options-catalog-confirmation-summary')
+    const status = document.getElementById('options-catalog-dialog-status')
+    const listWrap = document.getElementById('options-catalog-issues-list-wrap')
+    const list = document.getElementById('options-catalog-issues-list')
+    const actions = document.getElementById('options-catalog-dialog-actions')
+    const close = document.getElementById('options-catalog-dialog-cancel') as HTMLButtonElement | null
+    const confirm = document.getElementById('options-catalog-dialog-confirm') as HTMLButtonElement | null
+    const previous = document.getElementById('options-catalog-issues-previous') as HTMLButtonElement | null
+    const next = document.getElementById('options-catalog-issues-next') as HTMLButtonElement | null
+    const pageLabel = document.getElementById('options-catalog-issues-page')
+    const isConfirmation = this.catalogDialogMode === 'confirmation'
+    const isIssues = this.catalogDialogMode === 'issues'
+    if (dialog) dialog.hidden = !isConfirmation && !isIssues
+    if (title) title.textContent = isConfirmation ? 'Substituir catálogo?' : 'Problemas na importação'
+    if (description) {
+      description.textContent = isConfirmation
+        ? 'O catálogo anterior só será substituído depois da sua confirmação. Cancelar mantém os dados atuais.'
+        : ` ${new Intl.NumberFormat('pt-BR').format(this.catalogIssuesPage?.total ?? this.optionsSnapshot?.catalog.importIssueCount ?? 0)} ${
+          (this.catalogIssuesPage?.total ?? this.optionsSnapshot?.catalog.importIssueCount ?? 0) === 1
+            ? 'registro foi ignorado durante a importação.' : 'registros foram ignorados durante a importação.'}`.trim()
+    }
+    const confirmation = this.catalogConfirmation
+    if (summary) {
+      summary.hidden = !isConfirmation || !confirmation
+      summary.textContent = confirmation
+        ? `${new Intl.NumberFormat('pt-BR').format(confirmation.recordCount)} músicas válidas serão importadas e ${new Intl.NumberFormat('pt-BR').format(confirmation.issueCount)} ${confirmation.issueCount === 1 ? 'registro será ignorado' : 'registros serão ignorados'}. ${confirmation.currentRecordCount > 0
+          ? `O catálogo atual, com ${new Intl.NumberFormat('pt-BR').format(confirmation.currentRecordCount)} ${confirmation.currentRecordCount === 1 ? 'música' : 'músicas'}, será substituído.`
+          : 'Um novo catálogo será criado.'}`
+        : ''
+    }
+    if (status) {
+      status.textContent = this.catalogDialogStatus
+      status.hidden = this.catalogDialogStatus.length === 0
+    }
+    if (listWrap) listWrap.hidden = !isIssues || !this.catalogIssuesPage || this.catalogIssuesPage.total === 0
+    if (list) {
+      list.replaceChildren()
+      for (const issue of this.catalogIssuesPage?.issues ?? []) {
+        const item = document.createElement('li')
+        item.className = 'catalog-issue-item'
+        const line = document.createElement('div')
+        line.textContent = `Linha ${issue.rowNumber}`
+        const field = document.createElement('div')
+        field.textContent = `Campo: ${issue.field}`
+        const value = document.createElement('div')
+        value.textContent = `Valor: ${issue.value}`
+        const reason = document.createElement('div')
+        reason.textContent = `Motivo: ${issue.reason}`
+        item.append(line, field, value, reason)
+        list.append(item)
+      }
+    }
+    const total = this.catalogIssuesPage?.total ?? 0
+    const pageCount = Math.max(1, Math.ceil(total / CATALOG_ISSUES_PAGE_SIZE))
+    if (pageLabel) {
+      const first = total === 0 ? 0 : this.catalogIssuesPageNumber * CATALOG_ISSUES_PAGE_SIZE + 1
+      const last = Math.min(total, (this.catalogIssuesPageNumber + 1) * CATALOG_ISSUES_PAGE_SIZE)
+      pageLabel.textContent = total === 0 ? '' : `Registros ${first}–${last} de ${new Intl.NumberFormat('pt-BR').format(total)}`
+    }
+    if (previous) previous.disabled = !isIssues || this.catalogIssuesPageNumber <= 0 || this.catalogDialogStatus.length > 0
+    if (next) next.disabled = !isIssues || this.catalogIssuesPageNumber + 1 >= pageCount || this.catalogDialogStatus.length > 0
+    if (previous) previous.hidden = !isIssues
+    if (next) next.hidden = !isIssues
+    if (pageLabel) pageLabel.hidden = !isIssues
+    if (actions) actions.classList.toggle('catalog-confirmation-actions', isConfirmation)
+    if (close) {
+      close.textContent = isConfirmation ? 'Cancelar' : 'Fechar'
+      close.disabled = this.catalogConfirmationBusy
+    }
+    if (confirm) {
+      confirm.hidden = !isConfirmation
+      confirm.disabled = this.catalogConfirmationBusy
+      confirm.textContent = this.catalogConfirmationBusy ? 'Importando…' : 'Importar válidas'
+    }
+    const importButton = document.getElementById('options-import-catalog') as HTMLButtonElement | null
+    if (importButton) importButton.disabled = isConfirmation
+  }
+
+  private closeCatalogDialog(cancelPending: boolean): void {
+    if (this.catalogDialogMode === 'closed' || (this.catalogConfirmationBusy && cancelPending)) return
+    const token = cancelPending && this.catalogDialogMode === 'confirmation'
+      ? this.catalogConfirmation?.token : undefined
+    this.catalogIssuesRequestGeneration++
+    this.catalogDialogMode = 'closed'
+    this.catalogConfirmation = undefined
+    this.catalogConfirmationBusy = false
+    this.catalogDialogStatus = ''
+    this.catalogIssuesPage = undefined
+    this.renderCatalogDialog()
+    this.syncPlaybackSurface()
+    if (token) void this.api?.cancelMusicCatalogImport(token).catch(() => undefined)
+    const restore = this.catalogDialogReturnFocus
+    this.catalogDialogReturnFocus = undefined
+    window.requestAnimationFrame(() => {
+      if (!this.disposed && restore?.isConnected) restore.focus()
+    })
+  }
+
+  private handleCatalogDialogKeyDown(event: KeyboardEvent): void {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    if (event.repeat) return
+    if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      if (this.catalogConfirmationBusy) {
+        this.catalogDialogStatus = 'A importação já está sendo confirmada.'
+        this.renderCatalogDialog()
+      } else {
+        this.closeCatalogDialog(true)
+      }
+      return
+    }
+    if (event.key === 'Tab' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      const focusable = [...(document.getElementById('options-catalog-dialog')
+        ?.querySelectorAll<HTMLButtonElement>('button:not(:disabled):not([hidden])') ?? [])]
+      if (focusable.length === 0) return
+      const current = focusable.indexOf(document.activeElement as HTMLButtonElement)
+      const next = event.shiftKey
+        ? (current <= 0 ? focusable.length - 1 : current - 1)
+        : (current < 0 || current === focusable.length - 1 ? 0 : current + 1)
+      focusable[next].focus()
+      return
+    }
+    if ((event.key === 'Enter' || event.key === ' ') && event.target instanceof HTMLButtonElement && !event.target.disabled) {
+      event.target.click()
+    }
+  }
+
+  private showOptionsToast(message: string, kind: 'error'): void {
+    this.showToast('options-toast', message, kind)
+  }
+
+  private showQueueLimitToast(): void {
+    this.showToast('queue-limit-toast', 'Fila cheia. O limite é de 30 músicas aguardando.', 'info')
+  }
+
+  private showToast(toastId: 'options-toast' | 'queue-limit-toast', message: string, kind: 'error' | 'info'): void {
+    const toast = document.getElementById(toastId)
+    const text = toast?.querySelector('span')
+    if (!toast || !text) return
+    this.clearOptionsToastTimer()
+    for (const otherId of ['options-toast', 'queue-limit-toast'] as const) {
+      if (otherId !== toastId) {
+        const otherToast = document.getElementById(otherId)
+        if (otherToast) otherToast.hidden = true
+      }
+    }
+    toast.dataset.kind = kind
+    text.textContent = message
+    toast.hidden = false
+    const generation = this.optionsToastGeneration
+    this.optionsToastTimer = window.setTimeout(() => {
+      if (this.disposed || generation !== this.optionsToastGeneration) return
+      toast.hidden = true
+      this.optionsToastTimer = undefined
+      this.optionsToastGeneration++
+    }, TEMPORARY_FEEDBACK_MS)
+  }
+
+  private clearOptionsToastTimer(): void {
+    this.optionsToastGeneration++
+    if (this.optionsToastTimer !== undefined) window.clearTimeout(this.optionsToastTimer)
+    this.optionsToastTimer = undefined
+  }
+
+  private clearOptionsToast(): void {
+    this.clearOptionsToastTimer()
+    for (const toastId of ['options-toast', 'queue-limit-toast'] as const) {
+      const toast = document.getElementById(toastId)
+      if (toast) toast.hidden = true
+    }
+  }
+
+  private handleMenuKeyDown(event: KeyboardEvent, menuScreen: StandalonePlayerMenuScreen): void {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+
+    if (menuScreen === 'exit-confirmation') {
+      this.handleExitConfirmationKeyDown(event)
+      return
+    }
+
+    if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      const result = this.interaction.handleEntryKeyStroke({
+        key: event.key,
+        code: event.code,
+        shiftKey: event.shiftKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        metaKey: event.metaKey
+      }, this.canSubmit(), this.isCountdownOrCelebration(), false, this.canUsePlaybackControls(),
+      this.currentTrackInfo.getSnapshot().open)
+      if (result.intent) this.dispatch(result.intent)
+      return
+    }
+
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') &&
+        !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {
+      this.moveMenuFocus(event.key === 'ArrowDown' ? 1 : -1, menuScreen)
+      return
+    }
+    if (event.key === 'Tab' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      this.moveMenuFocus(event.shiftKey ? -1 : 1, menuScreen)
+      return
+    }
+    if (event.key === 'Enter' && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      const active = document.activeElement
+      if (active instanceof HTMLButtonElement && !active.disabled &&
+          (active.closest('[data-menu-screen="main"]') || active.closest('#standalone-options-screen'))) {
+        active.click()
+      }
+    }
+  }
+
+  private handleExitConfirmationKeyDown(event: KeyboardEvent): void {
+    if (event.ctrlKey || event.altKey || event.metaKey) return
+    if (event.key === 'Escape') {
+      this.onCancelExitConfirmation()
+      return
+    }
+    if (event.key === 'Enter') {
+      this.onConfirmExitConfirmation()
+      return
+    }
+    if (event.key !== 'Tab') return
+
+    const focusable = [...(document.getElementById('standalone-exit-confirmation')
+      ?.querySelectorAll<HTMLButtonElement>('button:not(:disabled):not([hidden])') ?? [])]
+    if (focusable.length === 0) return
+    const current = focusable.indexOf(document.activeElement as HTMLButtonElement)
+    const next = event.shiftKey
+      ? (current <= 0 ? focusable.length - 1 : current - 1)
+      : (current < 0 || current === focusable.length - 1 ? 0 : current + 1)
+    focusable[next].focus()
+  }
+
+  private getMenuFocusableElements(menuScreen: StandalonePlayerMenuScreen): HTMLButtonElement[] {
+    const selector = menuScreen === 'main'
+      ? '#standalone-main-menu button:not(:disabled)'
+      : menuScreen === 'options'
+        ? '#standalone-options-screen button:not(:disabled)'
+        : '#standalone-commands-screen button:not(:disabled)'
+    return [...document.querySelectorAll<HTMLButtonElement>(selector)]
+  }
+
+  private moveMenuFocus(direction: -1 | 1, menuScreen: StandalonePlayerMenuScreen): void {
+    const focusable = this.getMenuFocusableElements(menuScreen)
+    if (focusable.length === 0) {
+      document.getElementById(menuScreen === 'main' ? 'main-menu-dialog'
+        : menuScreen === 'options' ? 'options-screen-title' : 'commands-screen-title')?.focus()
+      return
+    }
+    const current = focusable.indexOf(document.activeElement as HTMLButtonElement)
+    const next = current < 0 ? 0 : (current + direction + focusable.length) % focusable.length
+    focusable[next].focus()
   }
 
   private readonly dispose = (): void => {
@@ -212,15 +910,28 @@ class StandalonePlayerRenderer {
     window.removeEventListener('pagehide', this.dispose)
     document.getElementById('stop-confirmation-cancel')?.removeEventListener('click', this.onCancelStopConfirmation)
     document.getElementById('stop-confirmation-confirm')?.removeEventListener('click', this.onConfirmStopAll)
+    document.getElementById('menu-item-commands')?.removeEventListener('click', this.onOpenMenuCommands)
+    document.getElementById('menu-item-options')?.removeEventListener('click', this.onOpenMenuOptions)
+    document.getElementById('menu-item-exit')?.removeEventListener('click', this.onOpenMenuExit)
+    document.getElementById('exit-confirmation-cancel')?.removeEventListener('click', this.onCancelExitConfirmation)
+    document.getElementById('exit-confirmation-confirm')?.removeEventListener('click', this.onConfirmExitConfirmation)
+    document.getElementById('options-change-folder')?.removeEventListener('click', this.onChangeVideoFolder)
+    document.getElementById('options-refresh-library')?.removeEventListener('click', this.onRefreshVideoLibrary)
+    document.getElementById('options-import-catalog')?.removeEventListener('click', this.onImportMusicCatalog)
     this.unsubscribeInteraction()
     this.unsubscribeMetadata()
     this.unsubscribeTransitionMetadata()
+    this.unsubscribeCurrentTrackInfo()
     this.unsubscribeCatalogRevision()
+    this.unsubscribeOptions()
+    this.unsubscribeExitConfirmation()
     this.interaction.dispose()
     this.metadata.dispose()
     this.transitionMetadata.dispose()
+    this.currentTrackInfo.dispose()
     this.cancelFeedbackTimer()
     this.cancelResumeFeedbackTimer()
+    this.clearOptionsToast()
     const subscription = this.snapshotSubscription
     this.snapshotSubscription = undefined
     if (subscription) void this.api?.unsubscribe(subscription).catch(() => undefined)
@@ -278,6 +989,7 @@ class StandalonePlayerRenderer {
       ? this.latestSnapshot.snapshot.phase : undefined
     this.latestSnapshot = envelope
     const snapshot = envelope.snapshot
+    this.currentTrackInfo.setCurrentTrack(currentTrackFromSnapshot(snapshot))
     const state = snapshot.playbackCondition === 'ready' ? snapshot.state : snapshot.lastConfirmedState
     const isPlaying = state.operationalState === 'playing' || state.operationalState === 'paused'
     const transition = snapshot.playbackCondition === 'transitioning' ? snapshot : undefined
@@ -352,6 +1064,41 @@ class StandalonePlayerRenderer {
     document.body.dataset.operationalState = state.operationalState
     this.renderFeedback(this.feedbackStatus)
     this.renderStopConfirmation()
+    this.syncPlaybackSurface()
+  }
+
+  private syncPlaybackSurface(updateBounds = false): void {
+    const api = this.api
+    if (!api) return
+    const snapshot = this.latestSnapshot?.snapshot
+    const state = snapshot?.playbackCondition === 'ready' ? snapshot.state : snapshot?.lastConfirmedState
+    // Playback and controls share one document. Dialogs and panels overlay that
+    // compositor; they must never detach or hide the active MP4.
+    const shouldShow = state !== undefined &&
+      (state.operationalState === 'playing' || state.operationalState === 'paused')
+
+    if (!shouldShow) {
+      if (this.playbackSurfaceVisible) {
+        this.playbackSurfaceVisible = false
+        this.playbackSurfaceGeneration++
+        void api.hidePlaybackSurface().catch(() => undefined)
+      }
+      return
+    }
+    if (this.playbackSurfaceVisible && !updateBounds) return
+    this.playbackSurfaceVisible = true
+    const generation = ++this.playbackSurfaceGeneration
+    const stage = document.getElementById('playback-stage')
+    if (!stage) return
+    const bounds = stage.getBoundingClientRect()
+    void api.showPlaybackSurface({
+      x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height
+    }).then(shown => {
+      if (this.disposed || generation !== this.playbackSurfaceGeneration) return
+      if (!shown) this.playbackSurfaceVisible = false
+    }).catch(() => {
+      if (generation === this.playbackSurfaceGeneration) this.playbackSurfaceVisible = false
+    })
   }
 
   private renderQueue(entries: readonly { readonly musicCode: string }[]): void {
@@ -393,7 +1140,8 @@ class StandalonePlayerRenderer {
 
     const resumeIndicator = document.getElementById('standalone-resuming-indicator')
     const visible = snapshot.playbackCondition === 'ready' && state.operationalState === 'playing' &&
-      pendingEntries.length > 0 && !this.interaction.getSnapshot().numericPanelOpen && resumeIndicator?.hidden !== false
+      pendingEntries.length > 0 && !this.interaction.getSnapshot().numericPanelOpen &&
+      !this.currentTrackInfo.getSnapshot().open && resumeIndicator?.hidden !== false
     queuePanel.hidden = !visible
     if (visible) this.updateQueueGlide()
   }
@@ -484,6 +1232,29 @@ class StandalonePlayerRenderer {
     }
   }
 
+  private renderCurrentTrackInfo(snapshot: StandaloneCurrentTrackInfoSnapshot): void {
+    const panel = document.getElementById('standalone-current-track-info')
+    if (panel) panel.hidden = !snapshot.open
+    const number = document.getElementById('current-track-info-number')
+    if (number) {
+      const code = snapshot.musicCode.replace(/^0+(?=\d)/, '')
+      const displayed = code ? [...code] : []
+      number.classList.toggle('has-value', Boolean(snapshot.title || snapshot.artist))
+      number.replaceChildren()
+      displayed.forEach((digit, index) => {
+        const span = document.createElement('span')
+        span.textContent = digit
+        number.append(span)
+        if (index < displayed.length - 1) number.append(document.createTextNode(' '))
+      })
+      number.setAttribute('aria-label', code ? `Número atual: ${code}` : 'Nenhum número atual')
+    }
+    const title = document.getElementById('current-track-info-title')
+    if (title) title.textContent = snapshot.title || 'Dados indisponíveis'
+    const artist = document.getElementById('current-track-info-artist')
+    if (artist) artist.textContent = snapshot.artist || 'Dados indisponíveis'
+  }
+
   private canSubmit(): boolean {
     const snapshot = this.latestSnapshot?.snapshot
     // C2 can validate idle media to show an authoritative missing-video result, but Sequence has a Main-side
@@ -492,7 +1263,7 @@ class StandalonePlayerRenderer {
       (snapshot?.playbackCondition === 'transitioning' && snapshot.phase === 'celebration' && snapshot.remainingMs > 0)
   }
 
-  private isInitialCountdown(): boolean {
+  private isCountdownOrCelebration(): boolean {
     const snapshot = this.latestSnapshot?.snapshot
     return snapshot?.playbackCondition === 'transitioning' &&
       (snapshot.phase === 'countdown' || snapshot.phase === 'celebration')
@@ -525,9 +1296,14 @@ class StandalonePlayerRenderer {
           this.feedbackVisible = !this.isActivePlayback() || this.lastNumericPanelOpen
           if (this.feedbackVisible) this.armFeedbackTimer(status.operationId)
         } else if (status.outcome === 'rejected') {
+          if (status.errorCode === 'QUEUE_LIMIT_REACHED') {
+            this.feedbackVisible = false
+            this.showQueueLimitToast()
+          }
           // A valid idle submission is intentionally deferred to C3; keep its entry visible without inventing a
           // rejection screen. Physically missing media still receives the approved idle error feedback.
-          if (status.errorCode === 'INVALID_STATE' || (this.isActivePlayback() && !this.lastNumericPanelOpen)) this.feedbackVisible = false
+          if (status.errorCode === 'QUEUE_LIMIT_REACHED' || status.errorCode === 'INVALID_STATE' ||
+              (this.isActivePlayback() && !this.lastNumericPanelOpen)) this.feedbackVisible = false
           else {
             this.feedbackVisible = true
             this.armFeedbackTimer(status.operationId)
@@ -618,6 +1394,26 @@ class StandalonePlayerRenderer {
     if (idle) idle.hidden = true
     if (playing) playing.hidden = true
   }
+}
+
+function currentTrackFromSnapshot(snapshot: StandalonePlayerSnapshot): StandaloneCurrentTrackIdentity | null {
+  if (snapshot.playbackCondition !== 'ready' || snapshot.state.operationalState === 'idle') return null
+  return {
+    entryId: snapshot.state.current.entryId,
+    attemptId: snapshot.state.current.attemptId,
+    musicCode: snapshot.state.current.musicCode
+  }
+}
+
+function formatCatalogImportDate(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  const time = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' }).format(date)
+  const now = new Date()
+  if (date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()) {
+    return `Hoje, ${time}`
+  }
+  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date)
 }
 
 new StandalonePlayerRenderer()

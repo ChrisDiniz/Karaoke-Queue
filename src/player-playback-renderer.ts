@@ -58,14 +58,17 @@ class ChromiumPlaybackRenderer {
     document.getElementById('player-window-tip-dismiss')?.addEventListener('change', event => {
       if ((event.currentTarget as HTMLInputElement).checked) dismissTip(true)
     })
+    // Register before the Standalone interaction listener. Standalone reserves
+    // fullscreen changes for F11; Esc remains available to its menu/panels.
+    const standaloneF11Only = document.body.dataset.fullscreenExitShortcut === 'f11'
     window.addEventListener('keydown', event => {
       if (event.key === 'F11') {
         event.preventDefault()
         void this.bridge.toggleFullScreen().catch(() => undefined)
-      } else if (event.key === 'Escape') {
+      } else if (event.key === 'Escape' && !standaloneF11Only) {
         void this.bridge.exitFullScreen().catch(() => undefined)
       }
-    })
+    }, true)
     void this.bridge.ready().catch(() => undefined)
   }
 

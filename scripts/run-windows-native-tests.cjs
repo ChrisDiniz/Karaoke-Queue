@@ -29,6 +29,13 @@ function fail(message, exitCode = 1) {
   throw error
 }
 
+function observeWorkerInputErrors(stream, cancellationRequested, onUnexpectedError) {
+  stream.on('error', error => {
+    if (cancellationRequested() && error && error.code === 'EPIPE') return
+    onUnexpectedError(error)
+  })
+}
+
 function run(executable, args, options = {}) {
   const result = spawnSync(executable, args, {
     cwd: options.cwd,
@@ -709,6 +716,9 @@ function generatedBuildPaths(manifests) {
       if (file.path === 'standalone-player-preload.ts' || file.path === 'player-preload.ts') {
         expected.add('build/standalone-player-ui-preload.js')
       }
+      if (file.path === 'standalone-player-preload.ts') {
+        expected.add('build/standalone-player-preload.bundle.js')
+      }
       if (file.path.startsWith('src/assets/')) expected.add('build/' + file.path)
     }
   }
@@ -804,7 +814,9 @@ function requiresWindowFocus(playbackMode) {
     '--standalone-playback',
     '--standalone-integration',
     '--player-recovery',
-    '--player-control'
+    '--player-control',
+    '--standalone-options',
+    '--standalone-production'
   ].includes(playbackMode)
 }
 
@@ -815,6 +827,8 @@ function selectWindowsTestSuites(playbackMode) {
   const focusedStandaloneIntegration = playbackMode === '--standalone-integration'
   const focusedPlayerRecovery = playbackMode === '--player-recovery'
   const focusedPlayerControl = playbackMode === '--player-control'
+  const focusedStandaloneOptions = playbackMode === '--standalone-options'
+  const focusedStandaloneProduction = playbackMode === '--standalone-production'
   if (focusedPlayerRecovery) return [
     { name: 'player-playback-recovery-unit', script: 'build/tests/player-playback-recovery.test.js' },
     { name: 'player-playback-recovery-electron', script: 'build/tests/player-playback-recovery-electron.js' }
@@ -843,6 +857,22 @@ function selectWindowsTestSuites(playbackMode) {
     { name: 'standalone-player-integration-electron', script: 'build/tests/standalone-player-integration-electron.js' }
   ]
   if (focusedPlayerControl) return [{ name: 'player-control-electron', script: 'build/tests/player-control-electron.js' }]
+  if (focusedStandaloneOptions) return [
+    { name: 'standalone-player-options-unit', script: 'build/tests/standalone-player-options.test.js' },
+    { name: 'standalone-player-ipc-unit', script: 'build/tests/standalone-player-ipc.test.js' },
+    { name: 'standalone-player-metadata-preview-unit', script: 'build/tests/standalone-player-metadata-preview.test.js' },
+    { name: 'music-catalog-unit', script: 'build/tests/music-catalog.test.js' },
+    { name: 'standalone-options-electron', script: 'build/tests/standalone-player-ui-electron.js' }
+  ]
+  if (focusedStandaloneProduction) return [
+    { name: 'standalone-player-contracts-unit', script: 'build/tests/standalone-player-contracts.test.js' },
+    { name: 'standalone-player-runtime-unit', script: 'build/tests/standalone-player-runtime.test.js' },
+    { name: 'standalone-player-sequence-unit', script: 'build/tests/standalone-player-sequence.test.js' },
+    { name: 'standalone-player-ipc-unit', script: 'build/tests/standalone-player-ipc.test.js' },
+    { name: 'player-playback-unit', script: 'build/tests/player-playback.test.js' },
+    { name: 'player-recovery-unit', script: 'build/tests/player-playback-recovery.test.js' },
+    { name: 'standalone-player-production-electron', script: 'build/tests/standalone-player-production-electron.js' }
+  ]
   if (focusedChromium) return [{ name: 'playback-harness-unit', script: 'scripts/playback-engine-evaluation.test.cjs' }]
   return [
     { name: 'database-migration-unit', script: 'build/tests/database-migration.test.js' },
@@ -1026,6 +1056,8 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
     const focusedStandaloneIntegration = playbackMode === '--standalone-integration'
     const focusedPlayerRecovery = playbackMode === '--player-recovery'
     const focusedPlayerControl = playbackMode === '--player-control'
+    const focusedStandaloneOptions = playbackMode === '--standalone-options'
+    const focusedStandaloneProduction = playbackMode === '--standalone-production'
     if (focusedPlayerPlayback && !process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
       fail('O modo player-playback requer KQ_PLAYER_TEST_MEDIA_DIR com os vídeos de teste de leitura.')
     }
@@ -1041,6 +1073,24 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
     if (focusedPlayerControl && !process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
       fail('O modo player-control requer KQ_PLAYER_TEST_MEDIA_DIR com os vídeos de teste de leitura.')
     }
+    if (focusedStandaloneProduction) {
+      const mediaPath = process.env.KQ_PLAYER_TEST_MEDIA_DIR
+      if (!mediaPath || !path.isAbsolute(mediaPath) || !fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isDirectory() ||
+          !fs.existsSync(path.join(mediaPath, '01001.mp4')) || !fs.statSync(path.join(mediaPath, '01001.mp4')).isFile()) {
+        fail('O modo standalone-production requer KQ_PLAYER_TEST_MEDIA_DIR com 01001.mp4 real no Windows.')
+      }
+    }
+    if (focusedStandaloneOptions) {
+      if (!process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
+        fail('O modo standalone-options requer KQ_PLAYER_TEST_MEDIA_DIR com o MP4 real de teste e a biblioteca local.')
+      }
+      for (const variable of ['KQ_STANDALONE_C8_REPRO_ORIGINAL_CSV', 'KQ_STANDALONE_C8_REPRO_REPLACEMENT_CSV']) {
+        const value = process.env[variable]
+        if (!value || !path.isAbsolute(value) || !fs.existsSync(value) || !fs.statSync(value).isFile()) {
+          fail('O modo standalone-options requer ' + variable + ' como caminho absoluto para arquivo regular Windows.')
+        }
+      }
+    }
     process.stdout.write(focusedChromium
       ? 'TEST START isolated Chromium playback harness; interactive Windows desktop\n'
       : focusedPlayerPlayback ? 'TEST START production Chromium service in isolated Electron host\n'
@@ -1048,7 +1098,10 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       : focusedStandaloneIntegration ? 'TEST START isolated Standalone B2/Preload/IPC/Main/Chromium integration with real MP4; no production Main wiring\n'
       : focusedPlayerRecovery ? 'TEST START production Player recovery in isolated Electron processes; Windows desktop\n'
       : focusedPlayerControl ? 'TEST START isolated Player control UI through production Main/Preload/IPC and Chromium host\n'
+      : focusedStandaloneOptions ? 'TEST START focused C8 options/catalog UI in real Electron + Playwright + SQLite + MP4; Windows paths supplied read-only\n'
+      : focusedStandaloneProduction ? 'TEST START C9 production Standalone Main/Preload/IPC/shutdown with real Electron, MP4 and isolated SQLite\n'
       : 'TEST START Electron real + Playwright + SQLite temporário; sessão gráfica Windows\n')
+    if (focusedStandaloneOptions) env.KQ_STANDALONE_C8_ONLY = '1'
     const suiteResults = []
     let suites = selectWindowsTestSuites(playbackMode)
     if (playbackEvaluation || focusedChromium) {
@@ -1091,6 +1144,8 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       : focusedStandaloneIntegration ? 'TEST PASS focused Standalone B2/IPC/Chromium/MP4 integration; unrelated Controller/Combined suites not run by request\n'
       : focusedPlayerRecovery ? 'TEST PASS production Player recovery Electron integration; unrelated regression suites not run by request\n'
       : focusedPlayerControl ? 'TEST PASS production Player control UI and playback integration; unrelated regression suites not run by request\n'
+      : focusedStandaloneOptions ? 'TEST PASS focused C8 options/catalog UI through real Electron, Playwright, IPC, SQLite and MP4; native file-picker window is represented by the test-only dialog port\n'
+      : focusedStandaloneProduction ? 'TEST PASS production C9 Standalone Electron lifecycle with real MP4 and recovery; unrelated Controller/Combined suites not run by request\n'
       : 'TEST PASS database migration, operating-mode, video-library and music-catalog unit; multi-instance, operating-modes, video-library and music-catalog Electron suites\n')
     restorePreviousBuild(root, buildState, [marker, manifest])
     buildState = null
@@ -1140,7 +1195,7 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
 }
 
 function powershellLauncher(stagePath, runId, playbackEvaluation = false, playbackMode = null) {
-  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--player-control'].includes(playbackMode)) {
+  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--player-control', '--standalone-options', '--standalone-production'].includes(playbackMode)) {
     fail('Modo de playback não permitido para o worker Windows.')
   }
   const data = Buffer.from(JSON.stringify({ stagePath, runId, playbackEvaluation, playbackMode }), 'utf8').toString('base64')
@@ -1173,6 +1228,8 @@ function powershellLauncher(stagePath, runId, playbackEvaluation = false, playba
     '    elseif ($payload.playbackMode -eq "--standalone-integration") { $workerArgs += "--standalone-integration" }',
     '    elseif ($payload.playbackMode -eq "--player-recovery") { $workerArgs += "--player-recovery" }',
     '    elseif ($payload.playbackMode -eq "--player-control") { $workerArgs += "--player-control" }',
+    '    elseif ($payload.playbackMode -eq "--standalone-options") { $workerArgs += "--standalone-options" }',
+    '    elseif ($payload.playbackMode -eq "--standalone-production") { $workerArgs += "--standalone-production" }',
     '    & node.exe $worker @workerArgs',
     '    $workerExit = $LASTEXITCODE',
     '  } finally { Pop-Location }',
@@ -1347,14 +1404,44 @@ function powershellCancellation(runId, recoveryOnly = false) {
   ].join('\n')
 }
 
-function recoverWindowsCancellation(runId) {
-  const script = Buffer.from(powershellCancellation(runId, true), 'utf16le').toString('base64')
-  const result = spawnSync('powershell.exe', [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', script
-  ], { encoding: 'utf8', shell: false })
+function runWindowsCancellation(runId, recoveryOnly) {
+  const result = spawnPowerShellScript(powershellCancellation(runId, recoveryOnly))
   if (result.stdout) process.stdout.write(result.stdout)
   if (result.stderr) process.stderr.write(result.stderr)
-  if (result.status !== 0) fail('A recuperação do cancelamento Windows não foi confirmada.', result.status || 1)
+  if (result.status !== 0) {
+    fail(recoveryOnly
+      ? 'A recuperação do cancelamento Windows não foi confirmada.'
+      : 'O cancelamento do runner Windows não foi confirmado.', result.status || 1)
+  }
+}
+
+function recoverWindowsCancellation(runId) {
+  return runWindowsCancellation(runId, true)
+}
+
+function spawnPowerShellScript(script) {
+  const env = { ...process.env }
+  if (process.platform === 'linux' && typeof env.PATH === 'string') {
+    env.PATH = env.PATH.split(path.delimiter)
+      .map(entry => entry.replace(/\/+$/, '') || '/')
+      .join(path.delimiter)
+  }
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-queue-windows-runner-ps-'))
+  try {
+    const scriptPath = path.join(temporaryDirectory, 'runner.ps1')
+    fs.writeFileSync(scriptPath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(script, 'utf8')]),
+      { flag: 'wx', mode: 0o600 })
+    const convertedPath = spawnSync('wslpath', ['-w', scriptPath], { encoding: 'utf8', shell: false, env })
+    if (convertedPath.error || convertedPath.status !== 0) {
+      const detail = convertedPath.stderr || convertedPath.error?.message || String(convertedPath.status)
+      throw new Error('Não foi possível preparar o caminho NTFS do script PowerShell temporário: ' + detail)
+    }
+    return spawnSync('powershell.exe', [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', convertedPath.stdout.trim()
+    ], { encoding: 'utf8', shell: false, env })
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true })
+  }
 }
 function sourceRoot() {
   const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', shell: false })
@@ -1447,11 +1534,11 @@ async function approveUntracked(files) {
 async function runOrchestrator() {
   if (process.platform === 'win32') fail('Este comando precisa ser iniciado no WSL2; ele sincroniza e valida o checkout Windows.', 2)
   const unexpectedArguments = process.argv.slice(2).filter(argument =>
-    !['--approve-untracked', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--player-control'].includes(argument)
+    !['--approve-untracked', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--player-control', '--standalone-options', '--standalone-production'].includes(argument)
   )
   if (unexpectedArguments.length) fail('Argumento não permitido: ' + unexpectedArguments.join(' '))
   const playbackModes = process.argv.slice(2).filter(argument =>
-    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--player-control'].includes(argument)
+    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--player-control', '--standalone-options', '--standalone-production'].includes(argument)
   )
   if (playbackModes.length > 1) fail('Escolha apenas um modo de avaliação de playback.')
   const playbackEvaluation = process.argv.includes('--playback-evaluation')
@@ -1484,6 +1571,11 @@ async function runOrchestrator() {
   let output = ''
   let cancellationRequested = false
   let cancellationPromise = null
+  let workerInputError
+  observeWorkerInputErrors(child.stdin, () => cancellationRequested, error => {
+    workerInputError = workerInputError || error
+    process.stderr.write('WORKER INPUT ERROR: ' + String(error && (error.stack || error)) + '\n')
+  })
   const approvedGates = new Set()
   const lines = readline.createInterface({ input: child.stdout })
   lines.on('line', line => {
@@ -1518,11 +1610,10 @@ async function runOrchestrator() {
     process.stderr.write('CANCEL requested (' + signal + '); stopping only the worker identified by this runId.\n')
     try { child.stdin.write('ABORT\n') } catch {}
     try { child.stdin.end() } catch {}
-    const cancellation = Buffer.from(powershellCancellation(runId), 'utf16le').toString('base64')
     cancellationPromise = new Promise(resolve => {
-      const stopped = spawnSync('powershell.exe', [
-        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', cancellation
-      ], { encoding: 'utf8', shell: false, stdio: 'inherit' })
+      const stopped = spawnPowerShellScript(powershellCancellation(runId))
+      if (stopped.stdout) process.stdout.write(stopped.stdout)
+      if (stopped.stderr) process.stderr.write(stopped.stderr)
       if (stopped.status !== 0) {
         process.stderr.write('CANCEL WARNING: worker tree was not confirmed stopped; inspect the runner lock and processes before retrying.\n')
         if (!child.killed) child.kill('SIGTERM')
@@ -1543,6 +1634,7 @@ async function runOrchestrator() {
     process.removeListener('SIGINT', onSigint)
     process.removeListener('SIGTERM', onSigterm)
     if (cancellationRequested) fail('Execução cancelada; status Windows não é PASS.', 130)
+    if (workerInputError) fail('Falha ao enviar controle ao worker Windows: ' + String(workerInputError.message || workerInputError))
     const finalFingerprint = readSourceSnapshot(root).fingerprint
     if (!approvedGates.has('SYNC')) fail('O Windows não confirmou SYNC/VERIFY; build e teste não são válidos.')
     if (finalFingerprint !== manifest.fingerprint) fail('SYNC STALE: a origem mudou durante build/test; resultado inválido.')
@@ -1581,6 +1673,12 @@ async function divergenceSelfTest() {
 }
 
 async function main() {
+  const cancellationIndex = process.argv.indexOf('--cancel-windows-run')
+  if (cancellationIndex >= 0) {
+    const args = process.argv.slice(cancellationIndex)
+    if (cancellationIndex !== 2 || args.length !== 2) fail('Uso: --cancel-windows-run <runId>.')
+    return runWindowsCancellation(args[1], false)
+  }
   const recoveryIndex = process.argv.indexOf('--recover-windows-cancel')
   if (recoveryIndex >= 0) {
     const args = process.argv.slice(recoveryIndex)
@@ -1593,11 +1691,11 @@ async function main() {
     const stage = process.argv[worker + 2]
     if (!root || !stage) fail('Worker requer checkout e staging.')
     const workerArguments = process.argv.slice(worker + 3)
-    if (workerArguments.some(argument => !['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--player-control'].includes(argument))) {
+    if (workerArguments.some(argument => !['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--player-control', '--standalone-options', '--standalone-production'].includes(argument))) {
       fail('O worker recebeu argumentos não permitidos.')
     }
     const playbackModes = workerArguments.filter(argument =>
-      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--player-control'].includes(argument)
+      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--player-control', '--standalone-options', '--standalone-production'].includes(argument)
     )
     if (playbackModes.length > 1) fail('O worker recebeu modos de playback conflitantes.')
     const playbackMode = playbackModes.find(argument => argument !== '--playback-evaluation') || null
@@ -1616,6 +1714,7 @@ if (require.main === module) {
 
 module.exports = {
   approveUntracked,
+  observeWorkerInputErrors,
   generatedBuildPaths,
   isExcludedPath,
   isSensitivePath,

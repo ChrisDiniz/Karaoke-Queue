@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import {
+  MusicCatalogError,
   calculateMusicCatalogRevision,
   normalizeCatalogCodeForVideoMatch,
   normalizeMusicCatalogText
@@ -9,6 +10,8 @@ import {
 import type {
   MusicCatalogDatabasePage,
   MusicCatalogDatabaseQuery,
+  MusicCatalogImportIssue,
+  MusicCatalogImportIssuePage,
   MusicCatalogMetadata,
   MusicCatalogRecord,
   MusicCatalogRepository
@@ -518,7 +521,7 @@ function validateMusicCatalogRecords(records: readonly MusicCatalogRecord[]): Mu
   })
 }
 
-function createMusicCatalogRepository(database: DatabaseSync): MusicCatalogRepository {
+function createMusicCatalogRepository(database: DatabaseSync, options: { persistImportIssues?: boolean } = {}): MusicCatalogRepository {
   const readMetadata = (): MusicCatalogMetadata => {
     const row = database.prepare(
       'SELECT revision, imported_at, record_count, source_name FROM music_catalog_metadata WHERE singleton = 1'
@@ -531,8 +534,29 @@ function createMusicCatalogRepository(database: DatabaseSync): MusicCatalogRepos
     return readMetadata()
   }
 
-  const replaceMusicCatalog = (inputRecords: readonly MusicCatalogRecord[], metadata: { revision: string; importedAt: string; sourceName?: string | null }): void => {
+  const validateImportIssues = (issues: readonly MusicCatalogImportIssue[]): MusicCatalogImportIssue[] => {
+    if (!Array.isArray(issues) || issues.length > 100_000) throw new Error('Catalog import issue report is invalid.')
+    let previousRow = 0
+    return issues.map(issue => {
+      if (!issue || issue.code !== 'INVALID_MUSIC_NUMBER' || issue.field !== 'numero' ||
+          !Number.isSafeInteger(issue.rowNumber) || issue.rowNumber <= previousRow ||
+          typeof issue.value !== 'string' || issue.value.length > 4096 ||
+          typeof issue.reason !== 'string' || issue.reason.length > 512 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(issue.value + issue.reason)) {
+        throw new Error('Catalog import issue report is invalid.')
+      }
+      previousRow = issue.rowNumber
+      return { ...issue }
+    })
+  }
+
+  const replaceMusicCatalogCore = (
+    inputRecords: readonly MusicCatalogRecord[],
+    metadata: { revision: string; importedAt: string; sourceName?: string | null },
+    inputIssues: readonly MusicCatalogImportIssue[] = [],
+    expectedGeneration?: number
+  ): void => {
     const records = validateMusicCatalogRecords(inputRecords)
+    const issues = options.persistImportIssues ? validateImportIssues(inputIssues) : []
     if (!metadata || typeof metadata.revision !== 'string' || !/^[a-f0-9]{64}$/.test(metadata.revision) ||
         typeof metadata.importedAt !== 'string' || !Number.isFinite(Date.parse(metadata.importedAt)) ||
         new Date(metadata.importedAt).toISOString() !== metadata.importedAt ||
@@ -543,6 +567,22 @@ function createMusicCatalogRepository(database: DatabaseSync): MusicCatalogRepos
     }
     if (database.isTransaction) throw new Error('SQLite transaction is unresolved; catalog replacement is blocked.')
     transaction(database, () => {
+      let nextImportGeneration: number | undefined
+      if (options.persistImportIssues) {
+        const state = database.prepare('SELECT generation FROM music_catalog_import_state WHERE singleton = 1')
+          .get() as { generation: number } | undefined
+        if (!state || !Number.isSafeInteger(state.generation) || state.generation < 0) {
+          throw new Error('Standalone catalog import state is invalid.')
+        }
+        if (expectedGeneration !== undefined && state.generation !== expectedGeneration) {
+          throw new MusicCatalogError(
+            'CATALOG_CHANGED_DURING_CONFIRMATION',
+            'O catálogo mudou enquanto a confirmação estava aberta. Revise a importação antes de tentar novamente.'
+          )
+        }
+        if (state.generation >= Number.MAX_SAFE_INTEGER) throw new Error('Standalone catalog import generation is exhausted.')
+        nextImportGeneration = state.generation + 1
+      }
       database.exec('DELETE FROM music_catalog;')
       const insertRecord = database.prepare(`
         INSERT INTO music_catalog (
@@ -553,17 +593,85 @@ function createMusicCatalogRepository(database: DatabaseSync): MusicCatalogRepos
         insertRecord.run(record.musicNumber, record.videoCode, record.artist, record.title,
           record.normalizedArtist, record.normalizedTitle)
       }
-      database.prepare(`
-        INSERT INTO music_catalog_metadata (singleton, revision, imported_at, record_count, source_name)
-        VALUES (1, ?, ?, ?, ?)
-        ON CONFLICT(singleton) DO UPDATE SET
-          revision = excluded.revision,
-          imported_at = excluded.imported_at,
-          record_count = excluded.record_count,
-          source_name = excluded.source_name
-      `).run(metadata.revision, metadata.importedAt, records.length, metadata.sourceName ?? null)
+      if (options.persistImportIssues) {
+        database.exec('DELETE FROM music_catalog_import_issues;')
+        const insertIssue = database.prepare(`
+          INSERT INTO music_catalog_import_issues (issue_order, row_number, field, value, code, reason)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `)
+        issues.forEach((issue, index) => insertIssue.run(index, issue.rowNumber, issue.field,
+          issue.value, issue.code, issue.reason))
+        database.prepare('UPDATE music_catalog_import_state SET generation = ?, issue_count = ? WHERE singleton = 1')
+          .run(nextImportGeneration!, issues.length)
+        database.prepare(`
+          INSERT INTO music_catalog_metadata (singleton, revision, imported_at, record_count, source_name)
+          VALUES (1, ?, ?, ?, ?)
+          ON CONFLICT(singleton) DO UPDATE SET
+            revision = excluded.revision,
+            imported_at = excluded.imported_at,
+            record_count = excluded.record_count,
+            source_name = excluded.source_name
+        `).run(metadata.revision, metadata.importedAt, records.length, metadata.sourceName ?? null)
+      } else {
+        database.prepare(`
+          INSERT INTO music_catalog_metadata (singleton, revision, imported_at, record_count, source_name)
+          VALUES (1, ?, ?, ?, ?)
+          ON CONFLICT(singleton) DO UPDATE SET
+            revision = excluded.revision,
+            imported_at = excluded.imported_at,
+            record_count = excluded.record_count,
+            source_name = excluded.source_name
+        `).run(metadata.revision, metadata.importedAt, records.length, metadata.sourceName ?? null)
+      }
     })
   }
+
+  const replaceMusicCatalog = (inputRecords: readonly MusicCatalogRecord[], metadata: { revision: string; importedAt: string; sourceName?: string | null }): void => {
+    replaceMusicCatalogCore(inputRecords, metadata)
+  }
+
+  const replaceMusicCatalogWithImportIssues = options.persistImportIssues
+    ? (
+        inputRecords: readonly MusicCatalogRecord[],
+        metadata: { revision: string; importedAt: string; sourceName?: string | null },
+        issues: readonly MusicCatalogImportIssue[],
+        expectedGeneration: number
+      ): void => replaceMusicCatalogCore(inputRecords, metadata, issues, expectedGeneration)
+    : undefined
+
+  const getMusicCatalogImportIssuePage = options.persistImportIssues
+    ? (offset: number, limit: number): MusicCatalogImportIssuePage => {
+        if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100_000 ||
+            !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+          throw new Error('Catalog import issue page is invalid.')
+        }
+        if (database.isTransaction) throw new Error('SQLite transaction is unresolved; catalog import issues cannot be read.')
+        return readTransaction(database, () => {
+          const metadata = readMetadata()
+          const row = database.prepare('SELECT generation, issue_count FROM music_catalog_import_state WHERE singleton = 1')
+            .get() as { generation: number; issue_count: number } | undefined
+          const issues = database.prepare(`
+            SELECT row_number, field, value, code, reason
+            FROM music_catalog_import_issues ORDER BY issue_order LIMIT ? OFFSET ?
+          `).all(limit, offset) as Array<{
+            row_number: number; field: string; value: string; code: string; reason: string
+          }>
+          return {
+            catalogRevision: metadata.revision,
+            generation: row?.generation ?? 0,
+            total: row?.issue_count ?? 0,
+            offset,
+            issues: issues.map(issue => ({
+              rowNumber: issue.row_number,
+              field: issue.field as 'numero',
+              value: issue.value,
+              code: issue.code as 'INVALID_MUSIC_NUMBER',
+              reason: issue.reason
+            }))
+          }
+        })
+      }
+    : undefined
 
   const searchMusicCatalog = (query: MusicCatalogDatabaseQuery): MusicCatalogDatabasePage => {
     if (!query || typeof query !== 'object' ||
@@ -611,11 +719,18 @@ function createMusicCatalogRepository(database: DatabaseSync): MusicCatalogRepos
       return { metadata, record: row ? mapMusicCatalogRecord(row) : null }
     })
   }
-  return { getMusicCatalogMetadata, replaceMusicCatalog, searchMusicCatalog, getMusicCatalogRecordByVideoCode }
+  return {
+    getMusicCatalogMetadata,
+    replaceMusicCatalog,
+    searchMusicCatalog,
+    getMusicCatalogRecordByVideoCode,
+    ...(replaceMusicCatalogWithImportIssues ? { replaceMusicCatalogWithImportIssues } : {}),
+    ...(getMusicCatalogImportIssuePage ? { getMusicCatalogImportIssuePage } : {})
+  }
 }
 
 const PLAYER_MUSIC_CATALOG_FILENAME = 'player-music-catalog.sqlite'
-const PLAYER_CATALOG_SCHEMA_VERSION = 2
+const PLAYER_CATALOG_SCHEMA_VERSION = 3
 
 function sameDatabaseFile(first: fs.BigIntStats, second: fs.BigIntStats): boolean {
   return first.dev === second.dev && first.ino === second.ino
@@ -690,13 +805,32 @@ export function createPlayerMusicCatalogDatabase(userDataPath: string): PlayerMu
       throw new Error('Player music catalog database changed identity while it was opened.')
     }
     database.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;')
-    const version = Number(database.prepare('PRAGMA user_version').get()?.user_version ?? 0)
+    let version = Number(database.prepare('PRAGMA user_version').get()?.user_version ?? 0)
     if (version > PLAYER_CATALOG_SCHEMA_VERSION) throw new Error('Player music catalog database version is newer than this application.')
     if (version === 1) transaction(database, () => {
       database.exec(`ALTER TABLE music_catalog_metadata ADD COLUMN source_name TEXT
         CHECK (source_name IS NULL OR length(source_name) <= 255);`)
+      database.exec('PRAGMA user_version = 2;')
+    })
+    if (version === 1) version = 2
+    if (version === 2) transaction(database, () => {
+      database.exec(`CREATE TABLE music_catalog_import_issues (
+        issue_order INTEGER PRIMARY KEY CHECK (issue_order >= 0),
+        row_number INTEGER NOT NULL CHECK (row_number > 0),
+        field TEXT NOT NULL CHECK (field = 'numero'),
+        value TEXT NOT NULL CHECK (length(value) <= 4096),
+        code TEXT NOT NULL CHECK (code = 'INVALID_MUSIC_NUMBER'),
+        reason TEXT NOT NULL CHECK (length(reason) <= 512)
+      );`)
+      database.exec(`CREATE TABLE music_catalog_import_state (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        generation INTEGER NOT NULL CHECK (generation >= 0 AND generation <= 9007199254740991),
+        issue_count INTEGER NOT NULL CHECK (issue_count >= 0 AND issue_count <= 100000)
+      );
+      INSERT INTO music_catalog_import_state (singleton, generation, issue_count) VALUES (1, 0, 0);`)
       database.exec(`PRAGMA user_version = ${PLAYER_CATALOG_SCHEMA_VERSION};`)
     })
+    if (version === 2) version = 3
     if (version === 0) transaction(database, () => {
       database.exec(`
         CREATE TABLE music_catalog (
@@ -712,14 +846,29 @@ export function createPlayerMusicCatalogDatabase(userDataPath: string): PlayerMu
           imported_at TEXT NOT NULL, record_count INTEGER NOT NULL CHECK (record_count > 0),
           source_name TEXT CHECK (source_name IS NULL OR length(source_name) <= 255)
         );
+        CREATE TABLE music_catalog_import_issues (
+          issue_order INTEGER PRIMARY KEY CHECK (issue_order >= 0),
+          row_number INTEGER NOT NULL CHECK (row_number > 0),
+          field TEXT NOT NULL CHECK (field = 'numero'),
+          value TEXT NOT NULL CHECK (length(value) <= 4096),
+          code TEXT NOT NULL CHECK (code = 'INVALID_MUSIC_NUMBER'),
+          reason TEXT NOT NULL CHECK (length(reason) <= 512)
+        );
+        CREATE TABLE music_catalog_import_state (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          generation INTEGER NOT NULL CHECK (generation >= 0 AND generation <= 9007199254740991),
+          issue_count INTEGER NOT NULL CHECK (issue_count >= 0 AND issue_count <= 100000)
+        );
+        INSERT INTO music_catalog_import_state (singleton, generation, issue_count) VALUES (1, 0, 0);
         PRAGMA user_version = ${PLAYER_CATALOG_SCHEMA_VERSION};
       `)
+      version = PLAYER_CATALOG_SCHEMA_VERSION
     })
   } catch (error) {
     database.close()
     throw error
   }
-  return { databasePath, ...createMusicCatalogRepository(database), close: () => database.close() }
+  return { databasePath, ...createMusicCatalogRepository(database, { persistImportIssues: true }), close: () => database.close() }
 }
 
 export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {

@@ -71,22 +71,44 @@ function launch(profile) {
   })
 }
 
-async function waitForEmbeddedPlayer(page) {
-  return page.evaluate(() => new Promise((resolve, reject) => {
-    const bridge = window.karaokePlayer
-    if (!bridge) { reject(new Error('Player bridge is unavailable.')); return }
-    const isReady = snapshot => snapshot.videoWindow.open && snapshot.videoWindow.location === 'inline' && snapshot.videoWindow.ready
-    let unsubscribe = () => {}
-    const timeout = window.setTimeout(() => finish(new Error('Embedded Player surface did not become ready.')), 15000)
-    const finish = (error, snapshot) => {
-      window.clearTimeout(timeout)
-      unsubscribe()
-      if (error) reject(error)
-      else resolve(snapshot)
-    }
-    unsubscribe = bridge.onSnapshot(snapshot => { if (isReady(snapshot)) finish(undefined, snapshot) })
-    void bridge.getSnapshot().then(snapshot => { if (isReady(snapshot)) finish(undefined, snapshot) }, finish)
-  }))
+async function getStandaloneControlPage(app) {
+  const pages = await app.windows()
+  const page = pages.find(candidate => candidate.url().includes('/standalone-player.html'))
+  assert.ok(page, `Standalone control Renderer must be attached; pages=${JSON.stringify(pages.map(candidate => candidate.url()))}`)
+  return page
+}
+
+async function readStandaloneSnapshot(page) {
+  await page.waitForFunction(() => typeof window.standalonePlayer?.getSnapshot === 'function')
+  const envelope = await page.evaluate(() => window.standalonePlayer.getSnapshot())
+  return envelope.snapshot
+}
+
+async function closeStandalone(app, page) {
+  const closed = page.waitForEvent('close', { timeout: 15000 })
+  await app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find(candidate =>
+      candidate.webContents.getURL().includes('standalone-player.html'))
+    if (!window) throw new Error('The Standalone BrowserWindow is not available for the shutdown test.')
+    window.close()
+  })
+  await page.locator('#standalone-exit-confirmation').waitFor({ state: 'visible' })
+  await page.locator('#exit-confirmation-confirm').click()
+  await closed
+  await app.close()
+}
+
+async function closeStandaloneForCleanup(app, page) {
+  if (!app) return
+  try {
+    const cleanupPage = page ?? await getStandaloneControlPage(app).catch(() => undefined)
+    if (cleanupPage) await closeStandalone(app, cleanupPage)
+    else await app.close()
+  } catch (error) {
+    process.stderr.write(`STANDALONE_TEST_CLEANUP_FAILED ${error instanceof Error ? error.message : String(error)}\n`)
+    app.process().kill('SIGKILL')
+    await app.close().catch(() => {})
+  }
 }
 
 function readLogRecords(profile) {
@@ -182,6 +204,7 @@ async function runPlayerUsesIsolatedCatalogDatabase() {
   writeMode(profile, 'player')
   writeVideoLibraryConfiguration(profile.userData, [mediaRoot])
   let app
+  let controlPage
   try {
     app = await launch(profile)
     const ready = await waitForRecord(profile, 'APP_READY')
@@ -196,22 +219,31 @@ async function runPlayerUsesIsolatedCatalogDatabase() {
     try {
       const tables = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all()
         .map(row => row.name)
-      assert.deepEqual(tables, ['music_catalog', 'music_catalog_metadata'],
+      assert.deepEqual(tables, ['music_catalog', 'music_catalog_import_issues', 'music_catalog_import_state', 'music_catalog_metadata'],
         'Player catalog persistence must not contain Controller operational tables')
     } finally { database.close() }
-    const controlPage = await app.firstWindow()
+    controlPage = await getStandaloneControlPage(app)
     await controlPage.waitForLoadState('domcontentloaded')
     const playerWindowUrls = await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows().map(window => window.webContents.getURL()))
     assert.equal(playerWindowUrls.length, 1, 'Player-only startup must open only the approved control shell')
-    assert.equal(playerWindowUrls.some(url => url.includes('player-control.html')), true)
+    assert.equal(playerWindowUrls.some(url => url.includes('standalone-player.html')), true,
+      `Player-only startup must open the Standalone control shell; windows=${JSON.stringify(playerWindowUrls)}`)
     assert.equal(playerWindowUrls.some(url => url.includes('player-playback.html')), false,
       'The video window must remain closed until an explicit operator action')
-    const snapshot = await waitForEmbeddedPlayer(controlPage)
-    assert.equal(snapshot.playback.status, 'idle', 'Player-only startup must not autoplay')
-    assert.equal(snapshot.videoWindow.open, true, 'Player-only startup must make the embedded video surface available')
-    assert.equal(snapshot.videoWindow.location, 'inline', 'Player-only startup must keep video embedded')
-  } finally { await app?.close().catch(() => {}) }
+    const snapshot = await readStandaloneSnapshot(controlPage)
+    assert.equal(snapshot.playbackCondition, 'ready')
+    assert.equal(snapshot.state.operationalState, 'idle', 'Player-only startup must not autoplay')
+    assert.equal(snapshot.state.current, null)
+    assert.deepEqual(snapshot.state.pending, [])
+    const options = await controlPage.evaluate(() => window.standalonePlayer.getOptionsSnapshot())
+    assert.equal(options.library.scanStatus, 'ready')
+    assert.equal(options.library.indexedFiles, 1)
+    assert.equal(options.catalog.recordCount, 0)
+    await closeStandalone(app, controlPage)
+    app = undefined
+    controlPage = undefined
+  } finally { await closeStandaloneForCleanup(app, controlPage) }
 }
 
 async function runCombinedCatalogAndLibraryComposition() {

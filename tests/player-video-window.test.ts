@@ -65,6 +65,7 @@ test('inline fullscreen transitions reject stale bounds and restore the surface 
     setVisible: visible => visibilityChanges.push(visible),
     webContents: {
       isDestroyed: () => false,
+      isCrashed: () => false,
       send: (channel, value) => publishedEvents.push([channel, value]),
       focus: () => { surfaceFocusCount++ }
     }
@@ -133,7 +134,8 @@ test('window tip state is scoped to the inline host and dismissal lasts for the 
   const owner = { isDestroyed: () => false, isFullScreen: () => fullScreen }
   const hostSender = {}
   const view = {
-    webContents: { isDestroyed: () => false, send: (channel, value) => publishedEvents.push([channel, value]) }
+    webContents: { isDestroyed: () => false, isCrashed: () => false,
+      send: (channel, value) => publishedEvents.push([channel, value]) }
   }
   const manager = Object.create(PlayerVideoWindow.prototype)
   Object.assign(manager, {

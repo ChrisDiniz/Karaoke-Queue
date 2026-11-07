@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="standalone-player.css">
   <title>Karaoke Queue · Player Only</title>
 </head>
-<body tabindex="-1">
+<body tabindex="-1" data-fullscreen-exit-shortcut="f11">
   <main id="playback-stage" aria-label="Player Only Standalone">
     <div id="playback-media-layer" aria-hidden="true"></div>
     <div id="standalone-paused-indicator" class="paused-status" aria-label="Reprodução pausada" hidden>
@@ -23,6 +23,7 @@
       <span class="queue-label">PRÓXIMAS</span>
       <div id="standalone-queue-window" class="queue-window" aria-live="polite"></div>
     </section>
+    <div id="player-fullscreen-hint" class="fullscreen-hint" role="status" aria-live="polite" hidden>Pressione F11 para sair da tela cheia</div>
     <div id="standalone-idle-art" class="idle-art" aria-hidden="true">
       <img src="assets/standalone-empty-stage.png" alt="">
     </div>
@@ -89,6 +90,13 @@
     </section>
     <footer id="standalone-idle-panel" class="entry-footer" aria-label="Entrada de música">
       <div class="entry-grid">
+        <section class="connection-card" aria-label="Conexão com controlador remoto">
+          <span class="connection-status">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3H5c-1.1 0-2 .9-2 2v4h2V5h14v14h-4v2h4c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"></path><path d="M3 17v1a3 3 0 0 1 3 3h2a5 5 0 0 0-5-4zM3 13v2a6 6 0 0 1 6 6h2a8 8 0 0 0-8-8zM3 9v2a10 10 0 0 1 10 10h2A12 12 0 0 0 3 9z"></path></svg>
+            <span>DESCONECTADO</span>
+          </span>
+          <small>Sem controlador remoto</small>
+        </section>
         <section class="idle-card" aria-label="Estado do Player">
           <span class="idle-status"><i aria-hidden="true"></i>LIVRE</span>
           <small>Nenhuma música na fila</small>
@@ -139,6 +147,26 @@
         <span></span>
       </div>
     </section>
+    <section id="standalone-current-track-info" class="top-menu" aria-label="Informações da faixa atual"
+      aria-live="polite" aria-atomic="true" hidden>
+      <div class="code-entry" aria-label="Número da faixa atual">
+        <span class="field-label">NUMERO</span>
+        <div class="code-line">
+          <div id="current-track-info-number" class="digits" aria-label="Nenhum número atual"></div>
+          <kbd class="keycap">0–9</kbd>
+        </div>
+      </div>
+      <div class="track-info" aria-label="Metadados da faixa atual">
+        <div class="track-field">
+          <span class="field-label">Música</span>
+          <strong id="current-track-info-title" class="track-value">Dados indisponíveis</strong>
+        </div>
+        <div class="track-field">
+          <span class="field-label">Artista</span>
+          <strong id="current-track-info-artist" class="track-value">Dados indisponíveis</strong>
+        </div>
+      </div>
+    </section>
     <section id="standalone-stop-confirmation" class="stop-confirmation-overlay" role="dialog"
       aria-modal="true" aria-labelledby="stop-confirmation-title"
       aria-describedby="stop-confirmation-description" hidden>
@@ -163,6 +191,225 @@
         <p id="stop-confirmation-status" class="stop-confirmation-status" role="status" aria-live="polite" hidden></p>
       </div>
     </section>
+    <section id="standalone-main-menu" class="menu-overlay" role="dialog" aria-modal="true"
+      aria-label="Menu principal" aria-labelledby="main-menu-title" data-menu-screen="main" hidden>
+      <div id="main-menu-dialog" class="menu-card" tabindex="-1">
+        <header class="menu-header">
+          <h1 id="main-menu-title">Menu principal</h1>
+          <p>Escolha o que deseja fazer.</p>
+        </header>
+        <nav class="menu-list" aria-label="Opções do Player Only">
+          <button id="menu-item-commands" class="menu-option" type="button" data-menu-action="commands">
+            <span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 9h2m3 0h2m3 0h0M7 13h2m3 0h2m3 0h0M8 16h8"></path></svg></span>
+            <span class="menu-copy"><span class="menu-title">Lista de comandos</span><span class="menu-description">Consulte os atalhos do Player Only</span></span>
+            <span class="menu-chevron" aria-hidden="true">›</span>
+          </button>
+          <button id="menu-item-options" class="menu-option" type="button" data-menu-action="options">
+            <span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"></path><circle cx="9" cy="6" r="2"></circle><circle cx="15" cy="12" r="2"></circle><circle cx="8" cy="18" r="2"></circle></svg></span>
+            <span class="menu-copy"><span class="menu-title">Opções</span><span class="menu-description">Acervo e catálogo</span></span>
+            <span class="menu-chevron" aria-hidden="true">›</span>
+          </button>
+          <div class="menu-divider" aria-hidden="true"></div>
+          <button id="menu-item-exit" class="menu-option exit" type="button"
+            aria-label="Sair">
+            <span class="menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 17l5-5-5-5M15 12H3"></path><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"></path></svg></span>
+            <span class="menu-copy"><span class="menu-title">Sair</span><span class="menu-description">Fechar o aplicativo</span></span>
+            <span class="menu-chevron" aria-hidden="true">›</span>
+          </button>
+        </nav>
+        <footer class="menu-footer"><kbd>Esc</kbd><span>Fechar menu</span></footer>
+      </div>
+    </section>
+    <section id="standalone-exit-confirmation" class="exit-confirmation-overlay" role="dialog"
+      aria-modal="true" aria-labelledby="exit-confirmation-title"
+      aria-describedby="exit-confirmation-description" hidden>
+      <div class="exit-confirmation-dialog">
+        <header class="exit-confirmation-heading">
+          <span class="exit-confirmation-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M10 17l5-5-5-5M15 12H3"></path><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"></path></svg>
+          </span>
+          <div class="exit-confirmation-copy">
+            <h2 id="exit-confirmation-title">Sair do Karaoke Queue?</h2>
+            <p id="exit-confirmation-description">O aplicativo será fechado. Se houver uma música em reprodução, ela será interrompida.</p>
+          </div>
+        </header>
+        <div class="exit-confirmation-actions" aria-label="Ações de confirmação">
+          <button id="exit-confirmation-cancel" class="exit-action exit-cancel" type="button">
+            <span>Cancelar</span><kbd class="exit-shortcut">Esc</kbd>
+          </button>
+          <button id="exit-confirmation-confirm" class="exit-action exit-quit" type="button">
+            <span>Sair do aplicativo</span><kbd class="exit-shortcut">Enter</kbd>
+          </button>
+        </div>
+      </div>
+    </section>
+    <section id="standalone-commands-screen" class="commands-overlay" role="dialog" aria-modal="true"
+      aria-label="Lista de comandos" aria-labelledby="commands-screen-title" hidden>
+      <div class="commands-content">
+        <header class="commands-header">
+          <div class="commands-heading">
+            <span class="commands-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 9h2m3 0h2m3 0h0M7 13h2m3 0h2m3 0h0M8 16h8"></path></svg></span>
+            <div class="commands-title-block"><h1 id="commands-screen-title" tabindex="-1">Lista de comandos</h1></div>
+          </div>
+        </header>
+        <div class="command-grid">
+          <section class="command-column" aria-label="Entrada e fila">
+            <h2 class="column-title">Entrada e fila</h2>
+            <div class="command-list">
+              <article class="command-card" id="command-digits">
+                <div class="key-wrap"><kbd>0–9</kbd></div>
+                <div class="command-copy"><h3 class="command-name">Digitar código</h3><p class="command-description">Abre a entrada e insere os dígitos do código.</p></div>
+              </article>
+              <article class="command-card" id="command-enter">
+                <div class="key-wrap"><kbd class="key-wide">Enter</kbd></div>
+                <div class="command-copy"><h3 class="command-name">Adicionar música</h3><p class="command-description">Ocioso: inicia. Em reprodução: vai ao fim da fila. Pausado: entra no fim sem retomar.</p></div>
+              </article>
+              <article class="command-card" id="command-priority">
+                <div class="key-wrap"><kbd>P</kbd></div>
+                <div class="command-copy"><h3 class="command-name">Priorizar música</h3><p class="command-description">Ocioso: inicia. Caso contrário, vai ao início da fila pendente; a última prioridade fica primeiro.</p></div>
+              </article>
+              <article class="command-card" id="command-backspace">
+                <div class="key-wrap"><kbd class="key-wide">Backspace</kbd></div>
+                <div class="command-copy"><h3 class="command-name">Apagar dígito</h3><p class="command-description">Apaga digitos.</p></div>
+              </article>
+            </div>
+          </section>
+          <section class="command-column" aria-label="Reprodução e navegação">
+            <h2 class="column-title">Reprodução e navegação</h2>
+            <div class="command-list">
+              <article class="command-card" id="command-space">
+                <div class="key-wrap"><kbd class="key-wide">Espaço</kbd></div>
+                <div class="command-copy"><h3 class="command-name">Pausar / continuar</h3><p class="command-description">Pause ou continue a reproducao de uma musica.</p></div>
+              </article>
+              <article class="command-card" id="command-next">
+                <div class="key-wrap"><kbd class="key-small">Ctrl</kbd><span class="key-plus">+</span><kbd class="key-symbol">→</kbd></div>
+                <div class="command-copy"><h3 class="command-name">Próxima música</h3><p class="command-description">Encerra a atual e inicia a próxima. Sem próxima, o Player fica ocioso.</p></div>
+              </article>
+              <article class="command-card" id="command-restart">
+                <div class="key-wrap"><kbd>R</kbd></div>
+                <div class="command-copy"><h3 class="command-name">Reiniciar música</h3><p class="command-description">Recomeça a música atual desde o início.</p></div>
+              </article>
+              <article class="command-card" id="command-current-track-info">
+                <div class="key-wrap"><kbd>I</kbd></div>
+                <div class="command-copy"><h3 class="command-name">Mostrar informações da música atual</h3><p class="command-description">Exibe o número, a música e o artista em reprodução.</p></div>
+              </article>
+              <article class="command-card" id="command-home">
+                <div class="key-wrap"><kbd class="key-small">Ctrl</kbd><span class="key-plus">+</span><kbd class="key-wide">Espaço</kbd></div>
+                <div class="command-copy"><h3 class="command-name">Encerrar reprodução e voltar ao início</h3><p class="command-description">Encerra a reprodução atual e volta ao início. A fila será perdida.</p></div>
+              </article>
+              <article class="command-card" id="command-escape">
+                <div class="key-wrap"><kbd>Esc</kbd></div>
+                <div class="command-copy"><h3 class="command-name">Navegar pelo menu</h3><p class="command-description">Fecha a entrada descartando o código; em submenus, volta ao nível anterior.</p></div>
+              </article>
+            </div>
+          </section>
+        </div>
+        <footer class="commands-footer" aria-label="Navegação pelo teclado">
+          <div class="commands-footer-left"><kbd>Esc</kbd><span class="commands-footer-text">Voltar ao menu anterior</span></div>
+        </footer>
+      </div>
+    </section>
+    <section id="standalone-options-screen" class="options-overlay" role="dialog" aria-modal="true"
+      aria-label="Opções" aria-labelledby="options-screen-title" hidden>
+      <div class="options-content">
+        <header class="options-page-header" data-doop-id="options-heading">
+          <div class="options-heading">
+            <span class="options-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"></path><circle cx="9" cy="6" r="2"></circle><circle cx="15" cy="12" r="2"></circle><circle cx="8" cy="18" r="2"></circle></svg></span>
+            <h1 id="options-screen-title" tabindex="-1">Opções</h1>
+          </div>
+        </header>
+        <main class="options-settings-grid">
+          <section class="options-panel options-library-panel" aria-label="Acervo e catálogo" data-doop-id="options-library-panel">
+            <div class="options-panel-heading">
+              <span class="options-panel-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2 2h9v8.8a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z"></path><path d="M3.5 7.5V5.8A1.8 1.8 0 0 1 5.3 4h4l2 2h7.4a1.8 1.8 0 0 1 1.8 1.8"></path></svg></span>
+              <div><h2 class="options-panel-title">Acervo e catálogo</h2><p class="options-panel-description">Configure os vídeos e os metadados das músicas.</p></div>
+            </div>
+            <div class="options-divider"></div>
+            <div class="options-assets-grid">
+            <section class="options-asset-section" aria-label="Biblioteca de vídeos">
+              <div class="options-panel-heading">
+                <span class="options-panel-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2 2h9v8.8a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z"></path><path d="M3.5 7.5V5.8A1.8 1.8 0 0 1 5.3 4h4l2 2h7.4a1.8 1.8 0 0 1 1.8 1.8"></path></svg></span>
+                <div><h3 class="options-panel-title">Biblioteca de vídeos</h3><p class="options-panel-description">Selecione a pasta que contém os vídeos usados na reprodução.</p></div>
+              </div>
+              <div class="options-section-tail">
+                <div class="options-subsection-label">Pasta dos vídeos</div>
+                <div class="options-path-row">
+                  <div class="options-path-box" data-doop-id="video-folder-path"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2 2h9v8.8a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z"></path><path d="M3.5 7.5V5.8A1.8 1.8 0 0 1 5.3 4h4l2 2h7.4a1.8 1.8 0 0 1 1.8 1.8"></path></svg><span id="options-video-folder-name" class="options-path-text">Nenhuma pasta selecionada</span></div>
+                  <button id="options-change-folder" class="options-action focused" type="button" data-doop-id="change-video-folder"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"></path></svg>Alterar pasta</button>
+                </div>
+                <div class="options-state-row">
+                  <span id="options-library-state" class="options-state-pill" hidden></span>
+                  <span id="options-library-count" class="options-indexed" hidden></span>
+                  <span id="options-library-unconfirmed" class="options-neutral-state" hidden></span>
+                  <span id="options-library-indexing" class="options-indexing-status" role="status" hidden><span class="options-index-spinner" aria-hidden="true"></span>Indexando biblioteca...</span>
+                  <button id="options-refresh-library" class="options-action" type="button" data-doop-id="refresh-video-library"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"></path><path d="M5.6 9a7 7 0 0 1 11.8-2L20 12M4 12l2.6 5a7 7 0 0 0 11.8-2"></path></svg>Atualizar biblioteca</button>
+                </div>
+              </div>
+            </section>
+            <section class="options-asset-section" aria-label="Catálogo CSV" data-doop-id="snz7f3">
+              <div class="options-panel-heading">
+                <span class="options-panel-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3.5h7l4.5 4.6v12.4H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z"></path><path d="M14 3.5v5h4.5M8.5 13h7M8.5 16.5h7"></path></svg></span>
+                <div><h3 class="options-panel-title">Catálogo de músicas</h3><p class="options-panel-description">Arquivo CSV opcional com títulos e artistas das músicas.</p></div>
+              </div>
+              <div class="options-section-tail">
+                <div class="options-subsection-label">Arquivo CSV</div>
+                <div class="options-path-row">
+                  <div class="options-path-box" data-doop-id="catalog-csv-path"><svg viewBox="0 0 24 24"><path d="M7 3.5h7l4.5 4.6v12.4H7a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z"></path><path d="M14 3.5v5h4.5"></path></svg><span id="options-catalog-file-name" class="options-path-text">Nenhum catálogo importado</span></div>
+                  <button id="options-import-catalog" class="options-action" type="button" data-doop-id="replace-catalog"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2 2h9v8.8a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7z"></path><path d="M3.5 7.5V5.8A1.8 1.8 0 0 1 5.3 4h4l2 2h7.4a1.8 1.8 0 0 1 1.8 1.8"></path></svg><span id="options-catalog-action-label">Importar CSV</span></button>
+                </div>
+                <div class="options-state-row">
+                  <span id="options-catalog-state" class="options-state-pill" hidden></span>
+                  <span id="options-catalog-count" class="options-indexed" hidden></span>
+                  <span id="options-catalog-imported-at" class="options-file-sub" hidden></span>
+                </div>
+                <div id="options-catalog-issues" class="options-catalog-issues" role="status" hidden>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 22 21H2z"></path><path d="M12 9v5m0 3h.01"></path></svg>
+                  <span id="options-catalog-issues-count"></span>
+                  <button id="options-catalog-view-issues" class="options-catalog-issues-link" type="button">Ver problemas</button>
+                </div>
+                <div class="options-catalog-note"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5m0-8h.01"></path></svg><span>O catálogo é opcional e fornece metadados. A reprodução por código funciona sem CSV.</span></div>
+              </div>
+            </section>
+            </div>
+          </section>
+        </main>
+        <footer class="options-footer" aria-label="Navegação pelo teclado">
+          <span class="options-hint"><kbd>↑</kbd><span>/</span><kbd>↓</kbd><span>Navegar</span></span>
+          <span class="options-hint"><kbd>Enter</kbd><span>Abrir / selecionar</span></span>
+          <span class="options-hint-spacer"></span>
+          <span class="options-hint"><kbd>Esc</kbd><span>Voltar ao menu</span></span>
+        </footer>
+      </div>
+      <div id="options-toast" class="options-toast entry-feedback" role="status" aria-live="polite" hidden>
+        <svg class="feedback-icon" viewBox="0 0 16 16" aria-hidden="true"><circle class="feedback-icon-ring" cx="8" cy="8" r="6.5"></circle><path class="feedback-icon-error" d="M8 4.5v4"></path><circle class="feedback-icon-error-dot" cx="8" cy="11.2" r=".45"></circle><path class="feedback-icon-success" d="M4.8 8.2 7 10.3l4.3-4.6"></path></svg>
+        <span></span>
+      </div>
+      <section id="options-catalog-dialog" class="catalog-dialog-overlay" role="dialog" aria-modal="true"
+        aria-labelledby="options-catalog-dialog-title" aria-describedby="options-catalog-dialog-description" hidden>
+        <div class="catalog-dialog">
+          <h2 id="options-catalog-dialog-title">Problemas na importação</h2>
+          <p id="options-catalog-dialog-description"></p>
+          <div id="options-catalog-confirmation-summary" class="catalog-confirmation-summary" hidden></div>
+          <p id="options-catalog-dialog-status" class="catalog-dialog-status" role="status" aria-live="polite" hidden></p>
+          <div id="options-catalog-issues-list-wrap" class="catalog-issues-list-wrap" hidden>
+            <ul id="options-catalog-issues-list" class="catalog-issues-list" aria-label="Registros ignorados"></ul>
+            <div class="catalog-issues-pagination" aria-label="Páginas de problemas">
+              <button id="options-catalog-issues-previous" class="stop-confirmation-button cancel" type="button">Anterior</button>
+              <span id="options-catalog-issues-page" aria-live="polite"></span>
+              <button id="options-catalog-issues-next" class="stop-confirmation-button cancel" type="button">Próxima</button>
+            </div>
+          </div>
+          <div id="options-catalog-dialog-actions" class="stop-confirmation-actions catalog-dialog-actions">
+            <button id="options-catalog-dialog-cancel" class="stop-confirmation-button cancel" type="button">Fechar</button>
+            <button id="options-catalog-dialog-confirm" class="stop-confirmation-button confirm" type="button" hidden>Importar válidas</button>
+          </div>
+        </div>
+      </section>
+    </section>
+    <div id="queue-limit-toast" class="options-toast queue-limit-toast entry-feedback" role="status" aria-live="polite" hidden>
+      <svg class="feedback-icon" viewBox="0 0 16 16" aria-hidden="true"><circle class="feedback-icon-ring" cx="8" cy="8" r="6.5"></circle><path class="feedback-icon-error" d="M8 4.5v4"></path><circle class="feedback-icon-error-dot" cx="8" cy="11.2" r=".45"></circle><path class="feedback-icon-success" d="M4.8 8.2 7 10.3l4.3-4.6"></path></svg>
+      <span></span>
+    </div>
   </main>
   <script src="player-playback.js"></script>
   <script src="standalone-player-renderer.bundle.js"></script>

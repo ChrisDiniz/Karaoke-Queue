@@ -29,12 +29,15 @@ if (process.env.KQ_STANDALONE_IPC_E2E_MAIN === '1') {
       width: 640,
       height: 400,
       webPreferences: {
-        preload: path.join(projectRoot, 'build/standalone-player-preload.js'),
+        preload: path.join(projectRoot, 'build/standalone-player-ui-preload.js'),
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
         webSecurity: true
       }
+    })
+    window.webContents.on('preload-error', (_event, preloadPath, error) => {
+      console.error('[Standalone IPC E2E preload-error]', preloadPath, error.message)
     })
     const bridge = installStandalonePlayerMainIpcBridge({
       ipcMain,
@@ -43,6 +46,7 @@ if (process.env.KQ_STANDALONE_IPC_E2E_MAIN === '1') {
       control: sequence
     })
     const gates = new Map()
+    const exitConfirmationRequests = []
     const testApi = {
       holdValidation: code => { gates.set(code, playback.holdValidation(code)); return true },
       waitValidationStarted: code => gates.get(code).started,
@@ -53,7 +57,34 @@ if (process.env.KQ_STANDALONE_IPC_E2E_MAIN === '1') {
       completeNaturally: () => playback.completeNaturally(),
       getStarts: () => [...playback.starts],
       getSnapshot: () => sequence.getSnapshot(),
+      waitForPlaybackAttempt: (previousAttemptId, musicCode) => new Promise((resolve, reject) => {
+        const matches = snapshot => snapshot.playbackCondition === 'ready' &&
+          snapshot.state.operationalState === 'playing' && snapshot.state.current.musicCode === musicCode &&
+          snapshot.state.current.attemptId !== previousAttemptId
+        const current = sequence.getSnapshot()
+        if (matches(current)) {
+          resolve(current)
+          return
+        }
+        let unsubscribe = () => undefined
+        const timeout = setTimeout(() => {
+          unsubscribe()
+          reject(new Error(`Timed out waiting for the fake playback attempt for ${musicCode}.`))
+        }, 10000)
+        unsubscribe = sequence.subscribe(snapshot => {
+          if (!matches(snapshot)) return
+          clearTimeout(timeout)
+          unsubscribe()
+          resolve(snapshot)
+        })
+      }),
       subscriberListenerCount: () => playback.listenerCount,
+      requestExitConfirmationFromMain: () => {
+        const request = bridge.requestExitConfirmationFromMain()
+        exitConfirmationRequests.push(request)
+        return exitConfirmationRequests.length - 1
+      },
+      waitExitConfirmation: index => exitConfirmationRequests[index],
       shutdown: async () => {
         bridge.dispose()
         await sequence.dispose()
@@ -68,6 +99,11 @@ if (process.env.KQ_STANDALONE_IPC_E2E_MAIN === '1') {
     app.exit(1)
   })
 } else {
+  async function callMain(app, method, ...args) {
+    return app.evaluate(async ({ app }, values) => await app.__kqStandaloneIpcTest[values[0]](...values.slice(1)),
+      [method, ...args])
+  }
+
   async function run(): Promise<void> {
   const projectRoot = path.resolve(__dirname, '../..')
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kq-standalone-ipc-e2e-'))
@@ -98,20 +134,75 @@ if (process.env.KQ_STANDALONE_IPC_E2E_MAIN === '1') {
       timeout: 30000
     })
     let page = await app.firstWindow()
+    page.on('pageerror', error => console.error('[Standalone IPC E2E pageerror]', error.message))
+    page.on('console', message => {
+      if (message.type() === 'error') console.error('[Standalone IPC E2E console]', message.text())
+    })
     await page.waitForLoadState('domcontentloaded')
     await page.waitForFunction(() => typeof window.standalonePlayer?.subscribe === 'function')
     const exposure = await page.evaluate(() => ({
       standalone: typeof window.standalonePlayer,
+      playback: typeof window.playerPlayback,
       legacyPlayer: typeof window.karaokePlayer,
       database: typeof window.karaokeDatabase,
       require: typeof window.require,
       ipcRenderer: typeof window.ipcRenderer
     }))
     assert.deepEqual(exposure, {
-      standalone: 'object', legacyPlayer: 'undefined', database: 'undefined', require: 'undefined', ipcRenderer: 'undefined'
-    }, 'the dedicated preload exposes only the narrow Standalone bridge')
+      standalone: 'object', playback: 'object', legacyPlayer: 'undefined', database: 'undefined',
+      require: 'undefined', ipcRenderer: 'undefined'
+    }, 'the production sandboxed preload exposes only the existing restricted Player and Standalone bridges')
     assert.deepEqual(await page.evaluate(() => Object.keys(window.standalonePlayer).sort()),
-      ['execute', 'getSnapshot', 'subscribe', 'unsubscribe'], 'the bridge exposes no generic IPC method')
+      ['cancelMusicCatalogImport', 'confirmMusicCatalogImport', 'execute', 'getCatalogImportIssuesPage',
+        'getCurrentTrackMetadata', 'getOptionsSnapshot', 'getSnapshot', 'hidePlaybackSurface', 'importMusicCatalog', 'lookupMetadata',
+        'onCatalogRevisionChanged', 'onExitConfirmationRequested', 'onOptionsChanged', 'refreshVideoLibrary',
+        'requestExitConfirmation', 'resolveExitConfirmation', 'selectVideoFolder', 'showPlaybackSurface', 'subscribe', 'unsubscribe'],
+    'the bridge exposes only its explicitly enumerated methods and no generic IPC method')
+
+    await page.evaluate(() => {
+      window.__exitRequests = []
+      window.__removeExitRequestListener = window.standalonePlayer.onExitConfirmationRequested(requestId => {
+        window.__exitRequests.push(requestId)
+      })
+    })
+    const firstMainExitRequest = await callMain(app, 'requestExitConfirmationFromMain')
+    const coalescedMainExitRequest = await callMain(app, 'requestExitConfirmationFromMain')
+    assert.notEqual(coalescedMainExitRequest, firstMainExitRequest,
+      'the harness keeps separate waiter indexes while the Main coordinator coalesces their confirmation')
+    await page.waitForFunction(() => window.__exitRequests.length === 1)
+    const firstExitId = await page.evaluate(() => window.__exitRequests[0])
+    assert.match(firstExitId, /^[0-9a-f-]{36}$/)
+    assert.deepEqual(await page.evaluate(() => window.standalonePlayer.requestExitConfirmation()),
+      { outcome: 'pending', requestId: firstExitId }, 'the Renderer joins the Main-created confirmation')
+    const cancelledExit = await page.evaluate(requestId =>
+      window.standalonePlayer.resolveExitConfirmation({ requestId, decision: 'cancel' }), firstExitId)
+    assert.deepEqual(cancelledExit, { requestId: firstExitId, outcome: 'cancelled' })
+    assert.equal(await callMain(app, 'waitExitConfirmation', firstMainExitRequest), false)
+    assert.equal(await callMain(app, 'waitExitConfirmation', coalescedMainExitRequest), false)
+
+    const confirmedMainExitRequest = await callMain(app, 'requestExitConfirmationFromMain')
+    await page.waitForFunction(() => window.__exitRequests.length === 2)
+    const confirmedExitId = await page.evaluate(() => window.__exitRequests[1])
+    assert.notEqual(confirmedExitId, firstExitId)
+    assert.deepEqual(await page.evaluate(requestId =>
+      window.standalonePlayer.resolveExitConfirmation({ requestId, decision: 'confirm' }), confirmedExitId),
+    { requestId: confirmedExitId, outcome: 'confirmed' })
+    assert.deepEqual(await page.evaluate(requestId =>
+      window.standalonePlayer.resolveExitConfirmation({ requestId, decision: 'cancel' }), confirmedExitId),
+    { requestId: confirmedExitId, outcome: 'confirmed' }, 'a late duplicate cannot reverse authorization')
+    assert.equal(await callMain(app, 'waitExitConfirmation', confirmedMainExitRequest), true)
+    assert.deepEqual(await page.evaluate(() => window.standalonePlayer.requestExitConfirmation()),
+      { outcome: 'authorized' }, 'the Main authorization prevents reentry')
+    await page.evaluate(() => window.__removeExitRequestListener())
+    assert.equal(page.isClosed(), false, 'confirmation authorization alone does not close Electron in C9.3')
+    if (process.env.KQ_STANDALONE_IPC_EXIT_ONLY === '1') {
+      const shutdown = await callMain(app, 'shutdown')
+      assert.equal(shutdown.disposeCount, 1)
+      assert.equal(shutdown.subscriptions, 0)
+      completed = true
+      console.log('PASS C9 Main-originated confirmation, Renderer cancellation/confirmation, coalescing, stale-response rejection, and authorization without shutdown.')
+      return
+    }
 
     const firstSubscription = await page.evaluate(async () => {
       window.__updates = []
@@ -147,8 +238,14 @@ if (process.env.KQ_STANDALONE_IPC_E2E_MAIN === '1') {
     const firstResult = await page.evaluate(value => window.standalonePlayer.execute(value), request)
     assert.equal(firstResult.operationId, request.operationId)
     assert.equal(firstResult.outcome, 'confirmed')
-    assert.equal(firstResult.attemptId, 'fake-attempt-1')
-    assert.equal(firstResult.envelope.snapshot.state.current.musicCode, '01001')
+    assert.equal(firstResult.attemptId, undefined,
+      'admitting the first song confirms queue state before the countdown confirms a playback attempt')
+    assert.equal(firstResult.envelope.snapshot.playbackCondition, 'transitioning')
+    assert.equal(firstResult.envelope.snapshot.phase, 'countdown')
+    assert.equal(firstResult.envelope.snapshot.target.musicCode, '01001')
+    const firstPlayback = await callMain(app, 'waitForPlaybackAttempt', null, '01001')
+    assert.equal(firstPlayback.state.current.attemptId, 'fake-attempt-1')
+    assert.equal((await page.evaluate(() => window.standalonePlayer.getSnapshot())).snapshot.state.current.musicCode, '01001')
     const detachedReplies = await page.evaluate(async value => {
       const reply = await window.standalonePlayer.execute(value)
       try { reply.envelope.snapshot.state.current.musicCode = '09999' } catch {}
@@ -276,9 +373,12 @@ if (process.env.KQ_STANDALONE_IPC_E2E_MAIN === '1') {
       return { accepted, updates: window.__updates.length }
     })
     assert.equal(unsubscribe.accepted, true)
-    await page.evaluate(() => window.standalonePlayer.execute({
+    const submittedAfterUnsubscribe = await page.evaluate(() => window.standalonePlayer.execute({
       operationId: 'electron-op-after-unsubscribe', command: { type: 'submit-code', enteredCode: '1005', priority: 'normal' }
     }))
+    assert.equal(submittedAfterUnsubscribe.outcome, 'confirmed')
+    assert.equal(submittedAfterUnsubscribe.envelope.snapshot.phase, 'countdown')
+    assert.equal(submittedAfterUnsubscribe.envelope.snapshot.target.musicCode, '01005')
     assert.equal(await page.evaluate(() => window.__updates.length), unsubscribe.updates,
       'unsubscribed Renderer callback receives no later state event')
 
@@ -288,9 +388,15 @@ if (process.env.KQ_STANDALONE_IPC_E2E_MAIN === '1') {
       return { subscription: window.__resubscription, updates: window.__resubscriptionUpdates }
     })
     assert.equal(resubscribed.updates.length, 1, 'a fresh subscription receives the latest state as its initial snapshot')
-    await page.evaluate(() => window.standalonePlayer.execute({
-      operationId: 'electron-op-after-resubscribe', command: { type: 'submit-code', enteredCode: '1006', priority: 'normal' }
+    const afterResubscribe = await page.evaluate(() => window.standalonePlayer.execute({
+      operationId: 'electron-op-after-resubscribe', command: { type: 'toggle-pause' }
     }))
+    assert.equal(afterResubscribe.outcome, 'confirmed')
+    assert.equal(afterResubscribe.envelope.snapshot.phase, 'countdown')
+    assert.equal(afterResubscribe.envelope.snapshot.paused, true,
+      'the valid command changes the active countdown so the restored subscription must receive a Main update')
+    assert.equal(afterResubscribe.envelope.snapshot.target.musicCode, '01005',
+      'resubscription observes the admitted target while the countdown is paused')
     assert.ok(await page.evaluate(() => window.__resubscriptionUpdates.length > 1),
       'preload can attach its state listener again after the last unsubscribe')
     await page.evaluate(() => window.standalonePlayer.unsubscribe(window.__resubscription))
@@ -298,7 +404,8 @@ if (process.env.KQ_STANDALONE_IPC_E2E_MAIN === '1') {
     const shutdown = await app.evaluate(({ app }) => app.__kqStandaloneIpcTest.shutdown())
     assert.equal(shutdown.disposeCount, 1)
     assert.equal(shutdown.subscriptions, 0)
-    assert.deepEqual(shutdown.starts, ['01001', '01111', '01002', '01003', '01004', '01005'], 'bridge operations never instantiate a second playback engine')
+    assert.deepEqual(shutdown.starts, ['01001', '01111', '01002', '01003', '01004'],
+      'bridge operations use one playback engine; 01005 remains in its paused countdown and has not started playback')
     assert.equal(fs.existsSync(path.join(profileRoot, 'karaoke.sqlite')), false, 'the harness never initializes Controller persistence')
     completed = true
     console.log('PASS Standalone Main/Preload IPC bridge; snapshots, V1 commands, attempt correlation, dedupe/conflict, pause, reload retry, Next/EOF arbitration, unsubscribe, and isolation verified.')

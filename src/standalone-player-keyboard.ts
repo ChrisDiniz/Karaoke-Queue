@@ -18,6 +18,7 @@ export type StandaloneKeyboardAction =
   | { readonly type: 'next' }
   | { readonly type: 'restart' }
   | { readonly type: 'confirm-stop-all' }
+  | { readonly type: 'show-current-track-info' }
   | { readonly type: 'backspace' }
   | { readonly type: 'escape' }
 
@@ -55,5 +56,6 @@ export function interpretStandaloneKeyboardStroke(
   const normalizedKey = stroke.key.toLowerCase()
   if (normalizedKey === 'p') return { type: 'confirm-priority' }
   if (normalizedKey === 'r') return { type: 'restart' }
+  if (normalizedKey === 'i') return { type: 'show-current-track-info' }
   return undefined
 }

@@ -530,7 +530,8 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
       assert.equal(initial.state.operationalState, 'idle')
       const result = await context.execute({ type: 'submit-code', enteredCode: '9998', priority: 'normal' },
         'standalone-known-invalid-media')
-      assert.equal(result.outcome, 'blocked', 'known Chromium media failure must remain distinct from idle')
+      assert.equal(result.outcome, 'confirmed',
+        'a readable library candidate is admitted before Chromium validates its media payload')
       const blocked = await context.waitForSnapshot({ playbackCondition: 'blocked', pendingCodes: ['09998'] })
       assert.equal(blocked.lastConfirmedState.operationalState, 'idle')
       await context.page.waitForFunction(() => {

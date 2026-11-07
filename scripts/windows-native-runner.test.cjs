@@ -10,6 +10,7 @@ const {
   isExcludedPath,
   isSensitivePath,
   lastNonEmptyLine,
+  observeWorkerInputErrors,
   makeFingerprint,
   normalizePath,
   generatedBuildPaths,
@@ -32,6 +33,22 @@ const { validateTemporaryStagePath } = require('./standalone-c1-windows-manual.c
 
 const head = '0123456789abcdef0123456789abcdef01234567'
 
+test('runner consumes only an EPIPE caused by its verified cancellation path', () => {
+  const { PassThrough } = require('node:stream')
+  const cancellingInput = new PassThrough()
+  let unexpected
+  observeWorkerInputErrors(cancellingInput, () => true, error => { unexpected = error })
+  cancellingInput.emit('error', Object.assign(new Error('worker pipe closed'), { code: 'EPIPE' }))
+  assert.equal(unexpected, undefined)
+
+  const activeInput = new PassThrough()
+  let activeError
+  observeWorkerInputErrors(activeInput, () => false, error => { activeError = error })
+  const pipeError = Object.assign(new Error('worker pipe closed unexpectedly'), { code: 'EPIPE' })
+  activeInput.emit('error', pipeError)
+  assert.equal(activeError, pipeError, 'an unexpected EPIPE remains a reported worker communication failure')
+})
+
 test('native playback evaluation is forwarded only as an explicit allowlisted worker mode', () => {
   function launcherPayload(script) {
     const match = script.match(/FromBase64String\('([^']+)'\)/)
@@ -48,6 +65,8 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   const standaloneIntegration = powershellLauncher('C:\\stage', 'run-standalone-integration', false, '--standalone-integration')
   const playerRecovery = powershellLauncher('C:\\stage', 'run-player-recovery', false, '--player-recovery')
   const playerControl = powershellLauncher('C:\\stage', 'run-player-control', false, '--player-control')
+  const standaloneOptions = powershellLauncher('C:\\stage', 'run-standalone-options', false, '--standalone-options')
+  const standaloneProduction = powershellLauncher('C:\\stage', 'run-standalone-production', false, '--standalone-production')
 
   assert.equal(launcherPayload(standard).playbackEvaluation, false)
   assert.equal(launcherPayload(evaluation).playbackEvaluation, true)
@@ -58,6 +77,8 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.equal(launcherPayload(standaloneIntegration).playbackMode, '--standalone-integration')
   assert.equal(launcherPayload(playerRecovery).playbackMode, '--player-recovery')
   assert.equal(launcherPayload(playerControl).playbackMode, '--player-control')
+  assert.equal(launcherPayload(standaloneOptions).playbackMode, '--standalone-options')
+  assert.equal(launcherPayload(standaloneProduction).playbackMode, '--standalone-production')
   assert.match(evaluation, /\$workerArgs \+= "--playback-evaluation"/)
   assert.match(chromiumFinal, /\$workerArgs \+= "--playback-chromium-final"/)
   assert.match(chromiumInteractive, /\$workerArgs \+= "--playback-chromium-interactive"/)
@@ -66,6 +87,8 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.match(standaloneIntegration, /\$workerArgs \+= "--standalone-integration"/)
   assert.match(playerRecovery, /\$workerArgs \+= "--player-recovery"/)
   assert.match(playerControl, /\$workerArgs \+= "--player-control"/)
+  assert.match(standaloneOptions, /\$workerArgs \+= "--standalone-options"/)
+  assert.match(standaloneProduction, /\$workerArgs \+= "--standalone-production"/)
   assert.match(evaluation, /& node\.exe \$worker @workerArgs/)
   assert.doesNotMatch(evaluation, /playback-engine-evaluation\.cjs/)
   assert.throws(() => powershellLauncher('C:\\stage', 'run-invalid', false, '--unknown-mode'), /não permitido/)
@@ -77,6 +100,8 @@ test('focused playback recovery harness does not require unrelated window-focus 
   assert.equal(requiresWindowFocus('--standalone-playback'), false)
   assert.equal(requiresWindowFocus('--standalone-integration'), false)
   assert.equal(requiresWindowFocus('--player-control'), false)
+  assert.equal(requiresWindowFocus('--standalone-options'), false)
+  assert.equal(requiresWindowFocus('--standalone-production'), false)
   assert.equal(requiresWindowFocus('--playback-chromium-final'), false)
   assert.equal(requiresWindowFocus(null), true)
 })
@@ -131,6 +156,22 @@ test('focused Windows Player recovery mode runs recovery unit coverage before re
   ])
   assert.deepEqual(selectWindowsTestSuites('--player-control').map(suite => suite.script), [
     'build/tests/player-control-electron.js'
+  ])
+  assert.deepEqual(selectWindowsTestSuites('--standalone-options').map(suite => suite.script), [
+    'build/tests/standalone-player-options.test.js',
+    'build/tests/standalone-player-ipc.test.js',
+    'build/tests/standalone-player-metadata-preview.test.js',
+    'build/tests/music-catalog.test.js',
+    'build/tests/standalone-player-ui-electron.js'
+  ])
+  assert.deepEqual(selectWindowsTestSuites('--standalone-production').map(suite => suite.script), [
+    'build/tests/standalone-player-contracts.test.js',
+    'build/tests/standalone-player-runtime.test.js',
+    'build/tests/standalone-player-sequence.test.js',
+    'build/tests/standalone-player-ipc.test.js',
+    'build/tests/player-playback.test.js',
+    'build/tests/player-playback-recovery.test.js',
+    'build/tests/standalone-player-production-electron.js'
   ])
 })
 
@@ -311,6 +352,7 @@ test('recognizes C1 HTML, CSS, renderer bundle, restricted preload, harness and 
   const generated = generatedBuildPaths([manifest])
   for (const filePath of [
     'build/standalone-player-ui-preload.js',
+    'build/standalone-player-preload.bundle.js',
     'build/src/standalone-player-renderer.bundle.js',
     'build/src/standalone-player.html',
     'build/src/standalone-player.css',

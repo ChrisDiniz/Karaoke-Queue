@@ -137,6 +137,7 @@ try {
     }
     Write-Host "Electron nativo confirmado: $electronExe"
     Write-Host "Código WSL: branch=$($snapshot.branch) HEAD=$($snapshot.head) fingerprint=$($snapshot.fingerprint)"
+    Write-Host 'AVISO: este launcher abre o harness visual C1 (standalone-player-ui-electron.js), nao o Main de producao build/main.js. Sair, X e Alt+F4 aqui nao validam o lifecycle C9.'
     Write-Host 'A janela fica aberta ate Alt+F4. C5: Space pausa/retoma; R reinicia; Ctrl+Right faz Next; Ctrl+Space abre confirmacao Stop All. F10 imprime snapshot autoritativo; F11 aproxima EOF natural.'
 
     $entryPoint = Join-Path $projectRoot 'build\tests\standalone-player-ui-electron.js'

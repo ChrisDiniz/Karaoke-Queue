@@ -38,6 +38,8 @@ export type StandalonePlayerMenuAction = 'commands' | 'options' | 'back' | 'exit
 
 export type StandalonePlayerInteractionIntent =
   | { readonly type: 'player-command'; readonly request: StandalonePlayerCommandRequest }
+  | { readonly type: 'show-current-track-info' }
+  | { readonly type: 'close-current-track-info' }
   | { readonly type: 'open-stop-confirmation' }
   | { readonly type: 'close-stop-confirmation' }
   /** The future application shell may handle this request after its own exit confirmation flow. */
@@ -112,8 +114,10 @@ export class StandalonePlayerInteractionController {
    * defaults even when that command belongs to a later UI round.
    */
   handleEntryKeyStroke(stroke: StandaloneKeyboardStroke, allowSubmission = false,
-    allowCountdownPause = false, confirmationOpen = false, allowPlaybackControls = false): StandalonePlayerEntryStrokeResult {
-    return this.handleStroke(stroke, true, allowSubmission, allowCountdownPause, confirmationOpen, allowPlaybackControls)
+    allowCountdownPause = false, confirmationOpen = false, allowPlaybackControls = false,
+    currentTrackInfoOpen = false, allowMenuOpenDuringTransition = false): StandalonePlayerEntryStrokeResult {
+    return this.handleStroke(stroke, true, allowSubmission, allowCountdownPause, confirmationOpen,
+      allowPlaybackControls, currentTrackInfoOpen, allowMenuOpenDuringTransition)
   }
 
   /** Creates the single Main-authoritative Stop All request for the current confirmation attempt. */
@@ -152,7 +156,9 @@ export class StandalonePlayerInteractionController {
     allowSubmission: boolean,
     allowCountdownPause = false,
     confirmationOpen = false,
-    allowPlaybackControls = false
+    allowPlaybackControls = false,
+    currentTrackInfoOpen = false,
+    allowMenuOpenDuringTransition = false
   ): StandalonePlayerEntryStrokeResult {
     if (this.disposed) return { recognized: false }
     const action = interpretStandaloneKeyboardStroke(stroke)
@@ -181,8 +187,12 @@ export class StandalonePlayerInteractionController {
           return { recognized: true, ...(allowSubmission ? { intent: this.submitCode('normal') } : {}) }
         case 'confirm-priority':
           return { recognized: true, ...(allowSubmission ? { intent: this.submitCode('priority') } : {}) }
+        case 'show-current-track-info':
+          if (!allowPlaybackControls || this.numericPanelOpen) return { recognized: true }
+          return { recognized: true, intent: { type: 'show-current-track-info' } }
         case 'escape':
-          if (this.numericPanelOpen) this.handleEscape()
+          if (currentTrackInfoOpen) return { recognized: true, intent: { type: 'close-current-track-info' } }
+          this.handleEscape(allowMenuOpenDuringTransition)
           return { recognized: true }
         case 'toggle-pause':
           if (!allowCountdownPause && !allowPlaybackControls) return { recognized: true }
@@ -209,6 +219,7 @@ export class StandalonePlayerInteractionController {
         return { recognized: true, intent: this.submitCode('normal') }
       case 'confirm-priority':
         return { recognized: true, intent: this.submitCode('priority') }
+      case 'show-current-track-info': return { recognized: true }
       case 'toggle-pause':
         this.refreshInputTimerForInteraction()
         return { recognized: true, intent: this.playerCommand({ type: 'toggle-pause' }) }
@@ -225,7 +236,7 @@ export class StandalonePlayerInteractionController {
     }
   }
 
-  /** Called by a future menu UI; no menu contents or visual behavior are implemented here. */
+  /** Applies an action selected by the Renderer menu without mutating playback state. */
   selectMenuAction(action: StandalonePlayerMenuAction): void {
     if (this.disposed) return
     if (this.menuScreen === 'main') {
@@ -244,11 +255,21 @@ export class StandalonePlayerInteractionController {
     }
   }
 
+  /** Opens the existing exit-confirmation state for a Main-originated request. */
+  showExitConfirmation(): void {
+    if (this.disposed || this.menuScreen === 'exit-confirmation') return
+    this.menuScreen = 'exit-confirmation'
+    this.publish()
+  }
+
   /** Resolves the UI-owned exit confirmation without closing the application in this module. */
-  resolveExitConfirmation(confirmed: boolean): StandalonePlayerInteractionIntent | undefined {
+  resolveExitConfirmation(
+    confirmed: boolean,
+    cancelTo: Exclude<StandalonePlayerMenuScreen, 'exit-confirmation'> = 'main'
+  ): StandalonePlayerInteractionIntent | undefined {
     if (this.disposed || this.menuScreen !== 'exit-confirmation') return undefined
     if (!confirmed) {
-      this.menuScreen = 'main'
+      this.menuScreen = cancelTo
       this.publish()
       return undefined
     }
@@ -378,10 +399,10 @@ export class StandalonePlayerInteractionController {
     return Object.freeze({ type: 'player-command', request })
   }
 
-  private handleEscape(): void {
+  private handleEscape(openMenuDuringTransition = false): void {
     if (this.numericPanelOpen) {
       this.closeNumericEntry()
-      return
+      if (!openMenuDuringTransition) return
     }
     if (this.menuScreen === 'closed') {
       this.menuScreen = 'main'

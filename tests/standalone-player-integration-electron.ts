@@ -121,6 +121,19 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
     const stopOriginal = playback.stop.bind(playback)
     let stopBarrier
     let startBarrier
+    let commandResponseBarrier
+    const originalSequenceExecute = sequence.execute.bind(sequence)
+    sequence.execute = async request => {
+      const result = await originalSequenceExecute(request)
+      const barrier = commandResponseBarrier
+      if (barrier?.operationId === request.operationId && !barrier.claimed) {
+        barrier.claimed = true
+        barrier.startedResolve(result)
+        await barrier.releasePromise
+        if (commandResponseBarrier === barrier) commandResponseBarrier = undefined
+      }
+      return result
+    }
     playback.stop = async expectedAttemptId => {
       const barrier = stopBarrier
       if (!barrier || barrier.claimed) return stopOriginal(expectedAttemptId)
@@ -141,7 +154,7 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       const window = new BrowserWindow({
         width: 640, height: 400, show: true,
         webPreferences: {
-          preload: path.join(projectRoot, 'build/standalone-player-preload.js'),
+          preload: path.join(projectRoot, 'build/standalone-player-preload.bundle.js'),
           contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true
         }
       })
@@ -329,6 +342,15 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       },
       waitForStart: () => startBarrier?.startedPromise ?? Promise.reject(new Error('No start barrier is active.')),
       releaseStart: () => { const current = startBarrier; startBarrier = undefined; current?.releaseResolve() },
+      holdCommandResponse: operationId => {
+        if (commandResponseBarrier) throw new Error('A command response barrier is already active.')
+        let releaseResolve, startedResolve
+        const releasePromise = new Promise(resolve => { releaseResolve = resolve })
+        const startedPromise = new Promise(resolve => { startedResolve = resolve })
+        commandResponseBarrier = { operationId, releasePromise, releaseResolve, startedPromise, startedResolve, claimed: false }
+      },
+      waitForCommandResponse: () => commandResponseBarrier?.startedPromise ?? Promise.reject(new Error('No command response barrier is active.')),
+      releaseCommandResponse: () => { const current = commandResponseBarrier; commandResponseBarrier = undefined; current?.releaseResolve() },
       closeControlWindow: async () => {
         const window = controlWindow
         const closed = controlWindowClosedPromise
@@ -355,8 +377,10 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
         shutdownPromise = (async () => {
           stopBarrier?.releaseResolve()
           startBarrier?.releaseResolve()
+          commandResponseBarrier?.releaseResolve()
           stopBarrier = undefined
           startBarrier = undefined
+          commandResponseBarrier = undefined
           for (const bridge of bridges) bridge.dispose()
           bridges.clear()
           unsubscribePlaybackEvents()
@@ -441,7 +465,19 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       await Promise.all(pages.map(page => page.waitForLoadState('domcontentloaded')))
       let controlPage = pages.find(page => page.url().includes(path.basename(controlHtml)))
       if (!controlPage) throw new Error('Expected isolated control window; attached=' + JSON.stringify(pages.map(page => page.url())))
-      await controlPage.waitForFunction(() => typeof window.standalonePlayer?.execute === 'function')
+      controlPage.on('pageerror', error => process.stderr.write(`CONTROL_RENDERER_ERROR ${error.message}\n`))
+      try {
+        await controlPage.waitForFunction(() => typeof window.standalonePlayer?.execute === 'function')
+      } catch (error) {
+        const diagnostic = await controlPage.evaluate(() => ({
+          readyState: document.readyState,
+          title: document.title,
+          bridgeType: typeof window.standalonePlayer,
+          preloadScripts: [...document.scripts].map(script => script.src ? new URL(script.src).pathname : 'inline')
+        })).catch(() => ({ evaluation: 'renderer unavailable' }))
+        process.stderr.write(`CONTROL_PRELOAD_DIAGNOSTIC ${JSON.stringify(diagnostic)}\n`)
+        throw error
+      }
       return { app, controlPage, scenario }
     } catch (error) { await app.close(); throw error }
   }
@@ -581,14 +617,15 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       assert.equal(first.retryReply.outcome, 'confirmed')
       assert.equal(first.retryReply.operationId, first.intent.request.operationId)
       assert.equal(first.status.outcome, 'confirmed')
-      assert.equal((await call(context.app, 'getPlaybackCalls')).filter(code => code === '01001').length, 1,
-        'same operationId retry across real IPC starts the initial attempt only once')
       const firstEnvelope = await waitSnapshot(context.controlPage, { playbackCondition: 'ready', operationalState: 'playing', musicCode: '01001' })
       const firstAttemptId = firstEnvelope.snapshot.state.current.attemptId
       const firstEntryId = firstEnvelope.snapshot.state.current.entryId
       const firstVideo = await waitVideoPlaying(context)
       assert.ok(firstVideo.duration > 0 && firstVideo.width > 0 && firstVideo.height > 0,
         'Chromium decodes the real 01001.mp4 without any CSV configuration')
+      const initialPlaybackCalls = await call(context.app, 'getPlaybackCalls')
+      assert.equal(initialPlaybackCalls.filter(code => code === '01001').length, 1,
+        `same operationId retry across real IPC starts the initial attempt only once; calls=${JSON.stringify(initialPlaybackCalls)}`)
 
       for (const [code, priority] of [['1002', 'normal'], ['1003', 'normal'], ['1004', 'priority'], ['1005', 'priority']]) {
         const added = await client.code(code, priority)
@@ -669,25 +706,26 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       assert.deepEqual(snapshot.state.pending, [])
       await call(context.app, 'waitForHostMediaCleared')
       const idleNext = await client.command({ key: 'ArrowRight', ctrlKey: true })
-      assert.equal(idleNext.reply.outcome, 'confirmed')
+      assert.equal(idleNext.reply.outcome, 'rejected')
+      if (idleNext.reply.outcome === 'rejected') assert.equal(idleNext.reply.error.code, 'INVALID_STATE')
       assert.equal((await call(context.app, 'getSequenceSnapshot')).state.operationalState, 'idle')
 
       await call(context.app, 'holdStart', '01008')
       for (const digit of '1008') client.key({ key: digit })
       const uncertainAckIntent = client.key({ key: 'Enter' })
       assert.ok(uncertainAckIntent?.type === 'player-command')
+      await call(context.app, 'holdCommandResponse', uncertainAckIntent.request.operationId)
       const lostAck = client.dispatch(uncertainAckIntent).then(
         value => ({ resolved: true, value }),
         error => ({ resolved: false, error })
       )
-      await call(context.app, 'waitForStart')
+      const heldResponse = await call(context.app, 'waitForCommandResponse')
+      assert.equal(heldResponse.outcome, 'confirmed', 'the sequence commits the command before its IPC response is held')
       await context.controlPage.close()
       const closed = await call(context.app, 'closeControlWindow')
       assert.equal(closed.bridgeCount, 0, 'destroying the control WebContents disposes the bridge and subscription owner only')
-      await call(context.app, 'releaseStart')
+      await call(context.app, 'releaseCommandResponse')
       assert.equal((await lostAck).resolved, false, 'closing the Renderer before ACK loses only the response channel')
-      snapshot = await call(context.app, 'waitForSnapshot', { playbackCondition: 'ready', operationalState: 'playing', musicCode: '01008' })
-      const startedDespiteLostAck = snapshot.state.current
 
       const newWindowPromise = context.app.waitForEvent('window')
       await call(context.app, 'recreateControlWindow')
@@ -696,12 +734,17 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       await newControlPage.waitForFunction(() => typeof window.standalonePlayer?.getSnapshot === 'function')
       context.controlPage = newControlPage
       const recoveredPageSnapshot = await subscribe(context.controlPage)
-      assert.equal(recoveredPageSnapshot.snapshot.state.current.attemptId, startedDespiteLostAck.attemptId)
-      assert.equal(recoveredPageSnapshot.snapshot.state.current.musicCode, '01008')
+      assert.equal(recoveredPageSnapshot.snapshot.playbackCondition, 'transitioning')
+      assert.deepEqual(recoveredPageSnapshot.snapshot.pending.map(entry => entry.musicCode), ['01008'],
+        'the accepted entry survives Renderer recreation while its held playback start is still pending')
       const retry = await client.dispatch(uncertainAckIntent)
       assert.equal(retry.outcome, 'confirmed')
       assert.equal(client.interaction.getSnapshot().lastSubmission?.outcome, 'confirmed',
         'retrying the original B2 operation after Renderer recreation settles the same interaction intent')
+      await call(context.app, 'waitForStart')
+      await call(context.app, 'releaseStart')
+      snapshot = await call(context.app, 'waitForSnapshot', { playbackCondition: 'ready', operationalState: 'playing', musicCode: '01008' })
+      const startedDespiteLostAck = snapshot.state.current
       assert.equal((await call(context.app, 'getPlaybackCalls')).filter(code => code === '01008').length, 1,
         'the lost ACK retry does not start a duplicate attempt')
 

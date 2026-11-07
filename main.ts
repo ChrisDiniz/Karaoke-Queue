@@ -19,6 +19,9 @@ import { PlayerPlaybackRecoveryStore } from './src/player-playback-recovery-stor
 import type { PlayerUiSnapshot, PlayerLibraryStatus } from './src/player-ui-contracts'
 import { isAuthorizedPlayerIpcSender } from './src/player-ui-contracts'
 import { PlayerVideoWindow, type PlayerVideoBounds } from './src/player-video-window'
+import { StandalonePlayerSequence } from './src/standalone-player-sequence'
+import { installStandalonePlayerMainIpcBridge, type StandalonePlayerMainIpcBridge } from './src/standalone-player-ipc'
+import { StandalonePlayerOptionsService } from './src/standalone-player-options'
 import {
   getOperatingModeCapabilities,
   isOperatingMode,
@@ -129,13 +132,21 @@ let playerPlaybackService: PlayerPlaybackService | undefined
 let manualPlaybackService: ManualPlaybackService | undefined
 let playerPlaybackRecovery: PlayerPlaybackRecoveryCoordinator | undefined
 let playerVideoWindow: PlayerVideoWindow | undefined
+let standaloneSequence: StandalonePlayerSequence | undefined
+let standaloneIpcBridge: StandalonePlayerMainIpcBridge | undefined
+let standaloneOptionsService: StandalonePlayerOptionsService | undefined
 let unsubscribePlayerUiEvents: (() => void) | undefined
 let unsubscribeManualUiEvents: (() => void) | undefined
+let unsubscribeStandalonePlaybackDisplayEvents: (() => void) | undefined
 let playerUiRevision = 0
 let catalogShutdownStarted = false
 let catalogShutdownComplete = false
 let playerShutdownStarted = false
 let playerShutdownComplete = false
+let standaloneQuitAuthorized = false
+let standaloneShutdownPromise: Promise<void> | undefined
+let standaloneShutdownFailed = false
+let standaloneShutdownTerminalFailure = false
 let uiScalePreference: UiScalePreference = 'auto'
 let sidebarDisplayName = DEFAULT_SIDEBAR_DISPLAY_NAME
 let uiScaleFilePath = ''
@@ -566,6 +577,304 @@ function createPlayerControlWindow(): BrowserWindow {
   return win
 }
 
+async function createStandalonePlayerWindow(): Promise<BrowserWindow> {
+  const documentPath = path.join(__dirname, 'src', 'standalone-player.html')
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    show: true,
+    title: 'Karaoke Queue · Reprodutor',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'standalone-player-preload.bundle.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true
+    }
+  })
+  mainWindow = win
+  win.on('close', event => {
+    if (standaloneQuitAuthorized) return
+    event.preventDefault()
+    if (startupInitializationComplete) requestStandaloneExitConfirmation()
+  })
+  win.on('closed', () => { if (mainWindow === win) mainWindow = null })
+  win.webContents.on('render-process-gone', (_event, details) => {
+    logger.error('renderer', 'STANDALONE_RENDERER_GONE', 'A interface Standalone terminou inesperadamente.', undefined, {
+      reason: details.reason, exitCode: details.exitCode
+    })
+  })
+  win.webContents.on('preload-error', (_event, preloadPath, error) => {
+    logger.error('renderer', 'STANDALONE_PRELOAD_FAILED', 'O contrato restrito do Player não pôde ser carregado.', error, {
+      preloadPath: path.basename(preloadPath)
+    })
+  })
+  const expectedDocumentUrl = pathToFileURL(documentPath).href
+  if (!standaloneSequence || !standaloneOptionsService || !musicCatalogService || !playerVideoWindow) {
+    throw new Error('STANDALONE_STARTUP_INCOMPLETE')
+  }
+  const playbackHostReady = playerVideoWindow.attachControlWindow(win, expectedDocumentUrl)
+  standaloneIpcBridge = installStandalonePlayerMainIpcBridge({
+    ipcMain,
+    webContents: win.webContents,
+    expectedDocumentUrl,
+    control: standaloneSequence,
+    metadataCatalog: musicCatalogService,
+    options: standaloneOptionsService,
+    videoSurface: {
+      show: async bounds => {
+        try {
+          const result = await playerVideoWindow!.showInline(bounds, false)
+          playerVideoWindow!.publishDisplayStatus(playerDisplayStatus())
+          if (result.location !== 'inline') {
+            logger.warn('player', 'STANDALONE_VIDEO_SURFACE_NOT_INLINE', 'A superfície Chromium não assumiu a área de playback Standalone.', {
+              location: result.location
+            })
+          }
+          return result.location === 'inline'
+        } catch (error) {
+          logger.error('player', 'STANDALONE_VIDEO_SURFACE_SHOW_FAILED', 'A superfície Chromium não pôde ser exibida no Player Standalone.', error)
+          return false
+        }
+      },
+      hide: () => playerVideoWindow?.setInlineVisible(false) ?? true
+    }
+  })
+  standaloneIpcBridge.onExitAuthorized(() => { void beginStandaloneShutdown() })
+  await win.loadFile(documentPath)
+  await playbackHostReady
+  return win
+}
+
+function requestStandaloneExitConfirmation(): void {
+  const bridge = standaloneIpcBridge
+  if (!bridge || standaloneQuitAuthorized) return
+  if (standaloneShutdownTerminalFailure) {
+    const options: Electron.MessageBoxOptions = {
+      type: 'error', title: 'Encerramento não recuperável',
+      message: 'O encerramento seguro falhou depois do início do descarte de recursos.',
+      detail: 'O processo permanece aberto e não tentará descartar os mesmos recursos novamente. Mantenha o aplicativo aberto e trate esta falha antes de encerrar o Windows.',
+      buttons: ['Voltar ao aplicativo'], defaultId: 0
+    }
+    const win = mainWindow
+    void (win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options))
+      .catch(() => undefined)
+    return
+  }
+  void bridge.requestExitConfirmationFromMain().then(confirmed => {
+    if (confirmed) void beginStandaloneShutdown()
+  }).catch(error => {
+    logger.error('player', 'STANDALONE_EXIT_CONFIRMATION_FAILED', 'Não foi possível confirmar a saída do Reprodutor.', error)
+    const win = mainWindow
+    const detail = error instanceof Error ? error.message : String(error)
+    const options: Electron.MessageBoxOptions = {
+      type: 'error', title: 'Não foi possível confirmar a saída',
+      message: 'O Reprodutor continuará aberto.', detail, buttons: ['Voltar ao Player'], defaultId: 0
+    }
+    void (win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options))
+      .catch(() => undefined)
+  })
+}
+
+function canFinishStandaloneShutdown(
+  recovery: ReturnType<PlayerPlaybackRecoveryCoordinator['getState']>,
+  playback: ReturnType<PlayerPlaybackService['getState']> | undefined
+): boolean {
+  if (recovery.status === 'unreadable' || recovery.status === 'unavailable') return false
+  if (!playback) return recovery.status === 'none' || recovery.status === 'pending' || recovery.status === 'resolved'
+  const hasAttempt = Boolean(playback.attemptId)
+  const confirmedContainment = ['stop-acknowledged', 'host-terminated'].includes(playback.containmentStatus ?? '')
+
+  if (['loading', 'starting', 'ready', 'playing', 'paused', 'stopping'].includes(playback.status)) return false
+  if (playback.status === 'uncertain') {
+    return confirmedContainment && playback.errorCode !== 'RECOVERY_PERSISTENCE_FAILED' &&
+      recovery.status === 'pending' && recovery.attemptId === playback.attemptId &&
+      ['host-terminated', 'containment-updated'].includes(recovery.lastTransition)
+  }
+  if (playback.status === 'disposed' && hasAttempt) {
+    if (recovery.status === 'resolved') {
+      return recovery.attemptId === playback.attemptId &&
+        (recovery.outcome === 'stopped' || recovery.outcome === 'completed' || recovery.outcome === 'failed')
+    }
+    return confirmedContainment && playback.errorCode !== 'RECOVERY_PERSISTENCE_FAILED' &&
+      recovery.status === 'pending' && recovery.attemptId === playback.attemptId &&
+      ['host-terminated', 'containment-updated'].includes(recovery.lastTransition)
+  }
+  if (playback.status === 'stopped' && hasAttempt) {
+    return confirmedContainment && recovery.status === 'resolved' && recovery.outcome === 'stopped' &&
+      recovery.attemptId === playback.attemptId
+  }
+  if (playback.status === 'completed' && hasAttempt) {
+    return recovery.status === 'resolved' && recovery.outcome === 'completed' && recovery.attemptId === playback.attemptId
+  }
+  if (playback.status === 'failed' && hasAttempt) {
+    return recovery.status === 'resolved' && recovery.outcome === 'failed' && recovery.attemptId === playback.attemptId
+  }
+  if (!hasAttempt) return recovery.status === 'none' || recovery.status === 'pending' || recovery.status === 'resolved'
+  return playback.status === 'disposed' && recovery.status === 'resolved' && recovery.attemptId === playback.attemptId
+}
+
+function beginStandaloneShutdown(): Promise<void> {
+  if (standaloneShutdownTerminalFailure) return Promise.resolve()
+  if (standaloneShutdownPromise) return standaloneShutdownPromise
+  const bridge = standaloneIpcBridge
+  const sequence = standaloneSequence
+  if (!bridge || !sequence) return Promise.reject(new Error('STANDALONE_SHUTDOWN_UNAVAILABLE'))
+
+  standaloneShutdownFailed = false
+  const deadline = Date.now() + 30_000
+  let irreversibleDisposalStarted = false
+  let shutdownStopStarted = false
+  let sequenceShutdownStarted = false
+  let sequenceShutdownCompleted = false
+  standaloneShutdownPromise = (async () => {
+    const recoveryBeforeShutdown = playerPlaybackRecovery?.verifyPersistedState() ?? { status: 'none' as const }
+    if (recoveryBeforeShutdown.status === 'unreadable' || recoveryBeforeShutdown.status === 'unavailable') {
+      throw new Error(`RECOVERY_PRESERVATION_UNVERIFIED:${recoveryBeforeShutdown.status}`)
+    }
+    await withShutdownDeadline(bridge.beginCloseAdmission(), deadline, 'IPC_DRAIN_TIMEOUT')
+    sequenceShutdownStarted = true
+    await withShutdownDeadline(sequence.beginShutdown(), deadline, 'SEQUENCE_DRAIN_TIMEOUT')
+    sequenceShutdownCompleted = true
+
+    const currentPlayback = playerPlaybackService?.getState()
+    if (currentPlayback?.attemptId &&
+        ['loading', 'starting', 'ready', 'playing', 'paused', 'stopping'].includes(currentPlayback.status)) {
+      shutdownStopStarted = true
+      try {
+        await withShutdownDeadline(playerPlaybackService!.stopForShutdown(currentPlayback.attemptId), deadline,
+          'PLAYBACK_STOP_TIMEOUT')
+      } catch (error) {
+        const afterStopFailure = playerPlaybackService!.getState()
+        if (afterStopFailure.status === 'uncertain' &&
+            !['stop-acknowledged', 'host-terminated'].includes(afterStopFailure.containmentStatus ?? '')) {
+          await withShutdownDeadline(playerPlaybackService!.retryShutdownContainment(), deadline,
+            'PLAYBACK_CONTAINMENT_RETRY_TIMEOUT').catch(() => undefined)
+        } else if (!['uncertain', 'completed', 'stopped', 'failed'].includes(afterStopFailure.status)) {
+          throw error
+        }
+      }
+    } else if (currentPlayback?.status === 'uncertain' &&
+        !['stop-acknowledged', 'host-terminated'].includes(currentPlayback.containmentStatus ?? '')) {
+      shutdownStopStarted = true
+      await withShutdownDeadline(playerPlaybackService!.retryShutdownContainment(), deadline,
+        'PLAYBACK_CONTAINMENT_RETRY_TIMEOUT')
+    }
+
+    const verifiedRecovery = playerPlaybackRecovery?.verifyPersistedState() ?? { status: 'none' as const }
+    const verifiedPlayback = playerPlaybackService?.getState()
+    if (!canFinishStandaloneShutdown(verifiedRecovery, verifiedPlayback)) {
+      const recoveryStatus = verifiedRecovery.status
+      const playbackStatus = verifiedPlayback?.status ?? 'unavailable'
+      const containment = verifiedPlayback?.containmentStatus ?? 'unavailable'
+      throw new Error(`RECOVERY_OR_CONTAINMENT_UNVERIFIED:${recoveryStatus}:${playbackStatus}:${containment}`)
+    }
+
+    irreversibleDisposalStarted = true
+    await withShutdownDeadline(sequence.dispose(), deadline, 'SEQUENCE_DISPOSE_TIMEOUT')
+    await withShutdownDeadline(playerVideoWindow?.dispose() ?? Promise.resolve(), deadline, 'VIDEO_HOST_DISPOSE_TIMEOUT')
+
+    const recovery = playerPlaybackRecovery?.verifyPersistedState() ?? { status: 'none' as const }
+    const playback = playerPlaybackService?.getState()
+    if (!canFinishStandaloneShutdown(recovery, playback)) {
+      throw new Error(`RECOVERY_OR_CONTAINMENT_UNVERIFIED_AFTER_DISPOSE:${recovery.status}:${playback?.status ?? 'unavailable'}`)
+    }
+
+    standaloneQuitAuthorized = true
+    standaloneShutdownFailed = false
+    playerQuitAllowed = true
+    playerVideoWindow?.allowWindowClose()
+    logger.info('player', 'STANDALONE_SHUTDOWN_CONFIRMED', 'A sequência, a reprodução e o estado de recuperação foram coordenados para saída.', {
+      recoveryStatus: recovery.status,
+      playbackStatus: playback?.status ?? 'unavailable'
+    })
+    app.quit()
+  })().catch(async error => {
+    standaloneShutdownFailed = true
+    if (irreversibleDisposalStarted) standaloneShutdownTerminalFailure = true
+    else standaloneShutdownPromise = undefined
+
+    let sequenceAdmissionRestored = false
+    if (!irreversibleDisposalStarted && sequenceShutdownCompleted && !shutdownStopStarted) {
+      let playbackKnownIdle = playerPlaybackService === undefined
+      try {
+        const playback = playerPlaybackService?.getState()
+        playbackKnownIdle = playback !== undefined && playback.status === 'idle' && !playback.attemptId
+      } catch { /* Keep the sequence fenced when the playback owner cannot confirm idle. */ }
+      if (playbackKnownIdle) {
+        try {
+          await withShutdownDeadline(sequence.resumeAfterFailedShutdown(), Date.now() + 5_000, 'SEQUENCE_RESUME_TIMEOUT')
+          bridge.resumeAdmissionAfterFailedShutdown()
+          sequenceAdmissionRestored = true
+        } catch (resumeError) {
+          logger.error('player', 'STANDALONE_SHUTDOWN_RESUME_FAILED',
+            'A sequência permaneceu protegida porque não foi possível restaurá-la após a falha de saída.', resumeError)
+        }
+      }
+    }
+    if (!irreversibleDisposalStarted && !sequenceShutdownStarted) {
+      try { bridge.resumeAdmissionAfterFailedShutdown() } catch { /* Preserve the confirmed close state if transport teardown already started. */ }
+    }
+    logger.error('player', 'STANDALONE_SHUTDOWN_FAILED', 'O Reprodutor permaneceu aberto porque o encerramento seguro não foi confirmado.', error)
+    if (!irreversibleDisposalStarted) {
+      try { bridge.resetExitConfirmationAfterFailedShutdown() } catch { /* Keep the process alive if a decision is still in flight. */ }
+    }
+    const detail = error instanceof Error ? error.message : String(error)
+    const win = mainWindow
+    const retryGuidance = irreversibleDisposalStarted
+      ? 'O descarte de recursos já começou. O aplicativo não foi considerado encerrado com segurança e não fará nova tentativa automática. Mantenha o processo aberto e trate esta falha antes de encerrar o Windows.'
+      : sequenceAdmissionRestored
+        ? 'A reprodução estava ociosa, então a sequência e suas admissões foram restauradas. Feche esta mensagem e solicite a saída novamente para repetir a coordenação.'
+        : 'O aplicativo permanece protegido. Se a causa for recuperável, solicite a saída novamente para repetir a coordenação.'
+    const options: Electron.MessageBoxOptions = {
+      type: 'error', title: 'Não foi possível encerrar com segurança',
+      message: 'O aplicativo permanecerá aberto. O estado de recuperação foi preservado ou não pôde ser confirmado.',
+      detail: `${detail}\n\n${retryGuidance}`,
+      buttons: ['Voltar ao Player'], defaultId: 0
+    }
+    await (win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options))
+      .catch(() => undefined)
+  })
+  return standaloneShutdownPromise
+}
+
+function withShutdownDeadline<T>(promise: Promise<T>, deadline: number, code: string): Promise<T> {
+  const remaining = deadline - Date.now()
+  if (remaining <= 0) return Promise.reject(new Error(code))
+  let timer: NodeJS.Timeout | undefined
+  return Promise.race([
+    promise,
+    new Promise<T>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(code)), remaining)
+    })
+  ]).finally(() => { if (timer) clearTimeout(timer) })
+}
+
+async function closeStandaloneAfterStartupFailure(): Promise<void> {
+  try {
+    standaloneIpcBridge?.dispose()
+    if (standaloneSequence) await standaloneSequence.dispose()
+    else {
+      await playerPlaybackService?.dispose()
+      playerPlaybackRecovery?.dispose()
+      standaloneOptionsService?.dispose()
+      await musicCatalogService?.close()
+      videoLibrary?.close()
+    }
+    await playerVideoWindow?.dispose()
+    standaloneQuitAuthorized = true
+    playerQuitAllowed = true
+    app.quit()
+  } catch (error) {
+    fatalMainFailure = true
+    logger.fatal('player', 'STANDALONE_STARTUP_CLEANUP_FAILED',
+      'O processo permaneceu aberto porque a limpeza após uma falha de inicialização não foi confirmada.', error)
+  }
+}
+
 function requirePlayerServices() {
   if (!modeCapabilities?.player || !playerPlaybackService || !manualPlaybackService || !videoLibrary || !playerPlaybackRecovery) {
     throw new Error('PLAYER_UNAVAILABLE')
@@ -825,7 +1134,8 @@ function registerPlayerIpcHandlers(): void {
   })
   ipcMain.handle('player-video:window-tip-dismissed', (event, permanentlyDismissed: unknown) => {
     const senderFrame = event.senderFrame
-    const expectedDocumentUrl = pathToFileURL(path.join(__dirname, 'src', 'player-playback.html')).href
+    const playbackDocumentName = operatingMode === 'player' ? 'standalone-player.html' : 'player-playback.html'
+    const expectedDocumentUrl = pathToFileURL(path.join(__dirname, 'src', playbackDocumentName)).href
     if (typeof permanentlyDismissed !== 'boolean' || !senderFrame || senderFrame !== event.sender.mainFrame ||
         senderFrame.url !== expectedDocumentUrl || !playerVideoWindow?.dismissWindowTip(event.sender)) {
       throw new Error('PLAYER_IPC_FORBIDDEN')
@@ -863,7 +1173,8 @@ function registerPlayerIpcHandlers(): void {
   ipcMain.handle('player-video:set-fullscreen', (event, action: unknown) => {
     if (!playerVideoWindow) return false
     const senderFrame = event.senderFrame
-    const expectedDocumentUrl = pathToFileURL(path.join(__dirname, 'src', 'player-playback.html')).href
+    const playbackDocumentName = operatingMode === 'player' ? 'standalone-player.html' : 'player-playback.html'
+    const expectedDocumentUrl = pathToFileURL(path.join(__dirname, 'src', playbackDocumentName)).href
     if (!senderFrame || senderFrame !== event.sender.mainFrame || senderFrame.url !== expectedDocumentUrl) {
       throw new Error('PLAYER_IPC_FORBIDDEN')
     }
@@ -930,6 +1241,18 @@ function registerPlayerIpcHandlers(): void {
   })
 }
 
+function registerStandalonePlaybackFullscreenIpcHandler(): void {
+  ipcMain.handle('player-video:set-fullscreen', (event, action: unknown) => {
+    const senderFrame = event.senderFrame
+    const expectedDocumentUrl = pathToFileURL(path.join(__dirname, 'src', 'standalone-player.html')).href
+    if (operatingMode !== 'player' || !playerVideoWindow || !senderFrame ||
+        senderFrame !== event.sender.mainFrame || senderFrame.url !== expectedDocumentUrl) {
+      throw new Error('PLAYER_IPC_FORBIDDEN')
+    }
+    return playerVideoWindow.setFullScreen(event.sender, action)
+  })
+}
+
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
   try {
     if (requiresFirstLaunchModeSelection(userDataDirectory)) {
@@ -965,16 +1288,18 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       playerPlaybackRecovery = new PlayerPlaybackRecoveryCoordinator(
         new PlayerPlaybackRecoveryStore(userDataDirectory)
       )
-      const recoveryState = playerPlaybackRecovery.initialize()
-      if (recoveryState.status === 'pending') {
-        logger.warn('player', 'PLAYER_RECOVERY_PENDING', 'Uma reprodução anterior não tem término confirmado; nenhuma mídia será iniciada automaticamente.', {
-          attemptId: recoveryState.attemptId, musicCode: recoveryState.musicCode,
-          lastTransition: recoveryState.lastTransition
-        })
-      } else if (recoveryState.status === 'unreadable' || recoveryState.status === 'unavailable') {
-        logger.error('player', 'PLAYER_RECOVERY_UNAVAILABLE', 'O estado de recuperação não pôde ser validado; o Player bloqueará novos comandos de mídia.', {
-          reason: recoveryState.reason
-        })
+      if (operatingMode !== 'player') {
+        const recoveryState = playerPlaybackRecovery.initialize()
+        if (recoveryState.status === 'pending') {
+          logger.warn('player', 'PLAYER_RECOVERY_PENDING', 'Uma reprodução anterior não tem término confirmado; nenhuma mídia será iniciada automaticamente.', {
+            attemptId: recoveryState.attemptId, musicCode: recoveryState.musicCode,
+            lastTransition: recoveryState.lastTransition
+          })
+        } else if (recoveryState.status === 'unreadable' || recoveryState.status === 'unavailable') {
+          logger.error('player', 'PLAYER_RECOVERY_UNAVAILABLE', 'O Player bloqueará novos comandos de mídia porque o estado de recuperação não pôde ser validado.', {
+            reason: recoveryState.reason
+          })
+        }
       }
       const libraryConfiguration = readVideoLibraryConfiguration(userDataDirectory)
       videoLibrary = new VideoLibraryService(libraryConfiguration.roots)
@@ -999,11 +1324,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       }
       playerMediaProtocol = new PlayerMediaProtocol(videoLibrary)
       playerMediaProtocol.install(protocol)
-      playerPlaybackService = new PlayerPlaybackService(videoLibrary, playerMediaProtocol, playerPlaybackRecovery)
-      manualPlaybackService = new ManualPlaybackService(playerPlaybackService, {
-        autoAdvanceOnNaturalEnd: operatingMode === 'player'
-      })
-      playerPlaybackRecovery.attach(playerPlaybackService, manualPlaybackService)
+      if (operatingMode !== 'player') {
+        playerPlaybackService = new PlayerPlaybackService(videoLibrary, playerMediaProtocol, playerPlaybackRecovery)
+        manualPlaybackService = new ManualPlaybackService(playerPlaybackService, {
+          autoAdvanceOnNaturalEnd: false
+        })
+        playerPlaybackRecovery.attach(playerPlaybackService, manualPlaybackService)
+      }
     }
 
     if (modeCapabilities!.controller) {
@@ -1102,7 +1429,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       })
     }
 
-    if (modeCapabilities!.player) {
+    if (modeCapabilities!.player && operatingMode !== 'player') {
       registerPlayerIpcHandlers()
       unsubscribePlayerUiEvents = playerPlaybackService!.subscribe(event => {
         const win = mainWindow
@@ -1118,13 +1445,73 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     }
 
     if (operatingMode === 'player') {
-      createPlayerControlWindow()
+      if (!videoLibrary || !playerMediaProtocol || !playerPlaybackRecovery || !musicCatalogService) {
+        throw new Error('STANDALONE_STARTUP_DEPENDENCY_UNAVAILABLE')
+      }
+      standaloneSequence = await StandalonePlayerSequence.create({
+        createPlayback: persistence => {
+          const playback = new PlayerPlaybackService(videoLibrary!, playerMediaProtocol!, persistence)
+          playerPlaybackService = playback
+          return playback
+        },
+        recovery: playerPlaybackRecovery,
+        catalog: musicCatalogService,
+        disposeResources: async () => {
+          standaloneOptionsService?.dispose()
+          await musicCatalogService?.close()
+          videoLibrary?.close()
+        },
+        onCoordinationError: error => logger.error('player', 'STANDALONE_COORDINATION_FAILED',
+          'A coordenação da sequência Standalone encontrou uma falha.', error)
+      })
+      const recoveryState = playerPlaybackRecovery.getState()
+      if (recoveryState.status === 'pending') {
+        logger.warn('player', 'PLAYER_RECOVERY_PENDING', 'Uma reprodução anterior não tem término confirmado; nenhuma mídia será iniciada automaticamente.', {
+          attemptId: recoveryState.attemptId, musicCode: recoveryState.musicCode,
+          lastTransition: recoveryState.lastTransition
+        })
+      } else if (recoveryState.status === 'unreadable' || recoveryState.status === 'unavailable') {
+        logger.error('player', 'PLAYER_RECOVERY_UNAVAILABLE', 'O Player bloqueará novos comandos de mídia porque o estado de recuperação não pôde ser validado.', {
+          reason: recoveryState.status === 'unreadable' ? recoveryState.reason : recoveryState.reason
+        })
+      }
       playerVideoWindow = new PlayerVideoWindow({
         ipcMain,
         playback: playerPlaybackService!,
         getControlWindow: () => mainWindow ?? undefined,
-        onChange: () => publishPlayerSnapshot()
+        onChange: () => undefined
       })
+      registerStandalonePlaybackFullscreenIpcHandler()
+      unsubscribeStandalonePlaybackDisplayEvents = playerPlaybackService!.subscribe(event => {
+        if (event.type === 'state-changed') {
+          playerVideoWindow?.publishDisplayStatus(playerDisplayStatus())
+        }
+      })
+      standaloneOptionsService = new StandalonePlayerOptionsService({
+        library: videoLibrary,
+        catalog: musicCatalogService,
+        userDataDirectory,
+        dialogs: {
+          chooseVideoFolder: async () => {
+            const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+            const options: Electron.OpenDialogOptions = {
+              title: 'Selecionar pasta de vídeos', properties: ['openDirectory']
+            }
+            const selection = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+            return !selection.canceled && selection.filePaths.length === 1 ? selection.filePaths[0]! : null
+          },
+          chooseCatalogFile: async () => {
+            const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+            const options: Electron.OpenDialogOptions = {
+              title: 'Importar catálogo de músicas', properties: ['openFile'],
+              filters: [{ name: 'Catálogo CSV', extensions: ['csv'] }]
+            }
+            const selection = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+            return !selection.canceled && selection.filePaths.length === 1 ? selection.filePaths[0]! : null
+          }
+        }
+      })
+      await createStandalonePlayerWindow()
     }
 
     app.on('child-process-gone', (_event, details) => {
@@ -1154,11 +1541,30 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       databaseInitializationFailed
         ? `O banco local não pôde ser inicializado. Seus dados antigos foram preservados.\n\n${detail}`
         : `A inicialização foi interrompida. Os dados operacionais foram preservados.\n\n${detail}`)
-    app.quit()
+    if (operatingMode === 'player') void closeStandaloneAfterStartupFailure()
+    else app.quit()
   }
 })
 
 if (hasSingleInstanceLock) app.on('before-quit', (event) => {
+  if (operatingMode === 'player') {
+    if (standaloneQuitAuthorized) {
+      shutdownStarted = true
+      logger.info('player', 'STANDALONE_QUIT_AUTHORIZED', 'O Electron recebeu a saída após a coordenação Standalone.')
+      return
+    }
+    event.preventDefault()
+    if (startupInitializationComplete && standaloneIpcBridge && standaloneSequence) {
+      requestStandaloneExitConfirmation()
+    } else if (standaloneSequence || playerPlaybackService || playerVideoWindow) {
+      void closeStandaloneAfterStartupFailure()
+    } else {
+      // No media or Standalone resources were created; the failed startup can close directly.
+      standaloneQuitAuthorized = true
+      app.quit()
+    }
+    return
+  }
   const shutdownRequest = playerPlaybackRecovery?.requestShutdown()
   if (shutdownRequest?.outcome === 'confirmation-required') {
     event.preventDefault()
@@ -1166,7 +1572,7 @@ if (hasSingleInstanceLock) app.on('before-quit', (event) => {
       attemptId: shutdownRequest.attemptId, playbackStatus: shutdownRequest.playbackStatus
     })
     const win = mainWindow
-    if (operatingMode === 'player' && win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    if (modeCapabilities?.player && win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
       win.webContents.send('player:shutdown-request', shutdownRequest)
     }
     return
@@ -1213,10 +1619,16 @@ if (hasSingleInstanceLock) app.on('before-quit', (event) => {
   }
 })
 if (hasSingleInstanceLock) app.on('will-quit', () => {
+  standaloneIpcBridge?.dispose()
+  standaloneIpcBridge = undefined
+  standaloneOptionsService?.dispose()
+  standaloneOptionsService = undefined
   unsubscribePlayerUiEvents?.()
   unsubscribePlayerUiEvents = undefined
   unsubscribeManualUiEvents?.()
   unsubscribeManualUiEvents = undefined
+  unsubscribeStandalonePlaybackDisplayEvents?.()
+  unsubscribeStandalonePlaybackDisplayEvents = undefined
   playerVideoWindow?.dispose()
   playerVideoWindow = undefined
   playerMediaProtocol?.dispose(protocol)
@@ -1229,7 +1641,7 @@ if (hasSingleInstanceLock) app.on('will-quit', () => {
     fatalMainFailure = true
     logger.error('sqlite', 'SQLITE_CLOSE_FAILED', 'Falha ao fechar a conexão SQLite.', error)
   }
-  logger.finishRun(fatalMainFailure ? 'failed' : 'normal')
+  logger.finishRun(fatalMainFailure || standaloneShutdownFailed ? 'failed' : 'normal')
 })
 
 if (hasSingleInstanceLock) app.on('window-all-closed', () => {

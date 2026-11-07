@@ -84,6 +84,72 @@ Ele cria uma pasta temporária com hash divergente e confirma que a validação 
 
 O worker confirma que está em Node.js `win32`, que npm é nativo, e que Electron e Playwright resolvem dentro do `node_modules` do clone Windows. Antes de compilar, move a árvore `build/` existente intacta para um backup exclusivo deste `runId` dentro de `.git/`; não apaga conteúdo preexistente por extensão. Em seguida executa `npm.cmd run compile` em uma pasta `build/` nova e compara os arquivos gerados com o inventário de outputs derivados dos fontes TypeScript e assets. Arquivos ausentes, inesperados, links ou reparse points fazem a validação falhar. Depois do E2E, se o inventário gerado continuar válido e havia build anterior, o build temporário é removido e o build anterior é restaurado; se não havia build anterior, o build novo permanece. Se a validação falhar, o runner preserva o backup e mantém o lock para inspeção. O E2E é iniciado com esse Node.js e usa o Electron Windows, Playwright e SQLite reais.
 
+### Prioridade de automação antes da revisão manual
+
+Antes de solicitar validação manual ao proprietário, execute os testes automatizados relevantes que forem tecnicamente viáveis: compile, unitários/integração afetados, E2E com Electron real e runner Windows quando houver dependência de plataforma. Corrija defeitos confirmados dentro do escopo e reexecute as suítes afetadas. Para alterações visuais, inspecione a renderização do Electron e compare screenshots com o Doop aprovado; assertions de DOM não aprovam fidelidade visual.
+
+Depois, entregue ao proprietário uma lista manual focada no que não foi coberto automaticamente: percepção humana de áudio/vídeo, aprovação visual/de produto, diálogo nativo não dirigido pelo harness, hardware ou operação real no estabelecimento. A aprovação explícita do proprietário permanece obrigatória quando exigida pela etapa. Se Windows não puder executar, investigue o preflight/problema, use testes alternativos relevantes e marque Windows como `NOT RUN`; um E2E Linux não é evidência de PASS nativo Windows.
+
+### Suítes Standalone Windows disponíveis
+
+Os comandos abaixo existem em `package.json`, partem do WSL e encaminham para `scripts/run-windows-native-tests.cjs`:
+
+| Comando | Cobertura focada | Dados Windows necessários |
+|---|---|---|
+| `npm run test:e2e:standalone-playback:windows` | Contratos/runtime/sequência/interação/adapter e regressões de playback/recovery; E2E Electron com MP4 real. | `KQ_PLAYER_TEST_MEDIA_DIR` contendo `01001.mp4`. |
+| `npm run test:e2e:standalone-integration:windows` | Integração B2/Preload/IPC/Main/Chromium e recovery com Electron real; não inicia `main.ts` nem altera modos. | `KQ_PLAYER_TEST_MEDIA_DIR` contendo `01001.mp4`; CSV opcional. |
+| `npm run test:e2e:standalone-options:windows` | Testes focados de Opções/IPC/metadados/catálogo e E2E C8 com Electron, Playwright, IPC, serviço, SQLite isolado, MP4 e capturas. | `KQ_PLAYER_TEST_MEDIA_DIR`, `KQ_STANDALONE_C8_REPRO_ORIGINAL_CSV` e `KQ_STANDALONE_C8_REPRO_REPLACEMENT_CSV` como arquivos Windows absolutos existentes. |
+
+Os aliases Linux/Xvfb correspondentes incluem `npm run test:e2e:standalone-playback:headless`, `npm run test:e2e:standalone-ipc:headless`, `npm run test:e2e:standalone-integration:headless`, `npm run test:e2e:standalone-ui:headless` e `npm run test:e2e:standalone-options:headless`. Eles executam Electron no ambiente Linux e não comprovam comportamento específico do Windows.
+
+Exemplo de preparação para C8 com arquivos já disponíveis no volume Windows. Encaminhe as variáveis usando `WSLENV` com `/w`, preservando entradas existentes e corrigindo entradas duplicadas como explicado acima:
+
+    media_wsl_path='/mnt/c/Users/Chris/Documents/Video musicas e catalogo'
+    original_csv_wsl_path='/mnt/c/Users/Chris/Documents/LISTA-06-12-24-41A-15H-LD52769-BASE-1.csv'
+    replacement_csv_wsl_path='/mnt/c/Users/Chris/Documents/musicas_corrigido.csv'
+    export KQ_PLAYER_TEST_MEDIA_DIR="$(wslpath -w "$media_wsl_path")"
+    export KQ_STANDALONE_C8_REPRO_ORIGINAL_CSV="$(wslpath -w "$original_csv_wsl_path")"
+    export KQ_STANDALONE_C8_REPRO_REPLACEMENT_CSV="$(wslpath -w "$replacement_csv_wsl_path")"
+    export WSLENV="${WSLENV:+${WSLENV}:}KQ_PLAYER_TEST_MEDIA_DIR/w:KQ_STANDALONE_C8_REPRO_ORIGINAL_CSV/w:KQ_STANDALONE_C8_REPRO_REPLACEMENT_CSV/w"
+    npm run test:e2e:standalone-options:windows
+
+O runner valida que os caminhos CSV sejam absolutos e arquivos regulares no Windows; esse modo também exige MP4 real na biblioteca. Revise os arquivos não rastreados listados pelo runner e confirme interativamente com `SYNC`. Em execução não interativa, use `--approve-untracked` apenas após revisar cada arquivo, por exemplo:
+
+    npm run test:e2e:standalone-options:windows -- --approve-untracked
+
+O cenário C8 usa fixtures temporárias para verificar importação/substituição durante playback, continuidade do MP4 e do snapshot, falha e persistência. Quando os dois caminhos reais são fornecidos, carrega o CSV original por um helper Main-side exclusivo de teste, aciona “Alterar CSV” pela UI e verifica a tentativa de substituição, o toast, a preservação do catálogo SQLite e a persistência após reiniciar. Essa tentativa com o par real acontece em estado idle após reiniciar; a continuidade do MP4 durante importação é verificada no cenário com fixture. Os arquivos reais são lidos diretamente dos caminhos Windows, não copiados para o snapshot.
+
+**Limite do diálogo nativo:** Playwright não controla a janela “Abrir arquivo” do Windows nesse harness. Uma porta de diálogo exclusiva de teste fornece o caminho; o clique na UI, Preload, IPC de produção, validação Main-side, serviço/parser, banco, snapshot e toast são reais. Isso valida o fluxo após o diálogo retornar um caminho, mas não a janela nativa nem a escolha física do arquivo. Não reporte o seletor como testado. Não adicione APIs privilegiadas, bypasses ou remoções de guards; preserve o passo manual quando a interação do diálogo precisar de validação.
+
+O E2E C8 imprime o diretório de screenshots no campo `screenshots` do resultado. Preserve as imagens relevantes e compare sua renderização com o Doop quando aplicável. Uma captura não equivale a aprovação visual humana; E2E não comprova áudio audível nem aprovação do proprietário.
+
+### Runner automatizado versus launcher manual
+
+`scripts/run-windows-native-tests.cjs`, chamado pelo comando central e pelos aliases Windows acima, é o runner automatizado: verifica snapshot/fingerprint, executa build e Playwright/Electron com assertions, usa perfil temporário e confirma cleanup/processos residuais. Não o substitua por execução direta de testes em um checkout Windows.
+
+`scripts/standalone-c1-windows-native.ps1` abre uma sessão interativa para observar o **harness visual C1**, não o startup de produção. Ele exporta o snapshot verificado pelo WSL, copia o código para staging NTFS em `%TEMP%`, compila no Windows, importa o CSV configurado e inicia `build/tests/standalone-player-ui-electron.js` com `KQ_STANDALONE_C1_UI_MAIN=1` e `KQ_STANDALONE_C1_MANUAL=1`. Esse entrypoint compõe serviços e a ponte IPC para testar a UI, mas não carrega `build/main.js`: não instala os handlers de `BrowserWindow.close`, `app.before-quit`, `will-quit` nem o coordenador real de encerramento. No harness, `onExitAuthorized` apenas conta a notificação; por isso Sair confirmado pode deixar a janela aberta, e Alt+F4 pode fechá-la diretamente. Esses resultados descrevem o harness C1 e não demonstram comportamento da aplicação de produção. O helper `scripts/standalone-c1-windows-manual.cjs` exporta/verifica o snapshot e o build, importa catálogo e localiza o Electron; não é runner Playwright. A sessão não executa assertions E2E.
+
+Para validar o lifecycle C9 em automação, use `npm run test:e2e:standalone-production:windows -- --approve-untracked`, com `KQ_PLAYER_TEST_MEDIA_DIR` encaminhado ao Windows via `WSLENV`; o modo `standalone-production` inicia o aplicativo pelo diretório do projeto, isto é, pelo `main` de produção definido em `package.json` (`build/main.js`), e valida Main/Preload/IPC, MP4, SQLite, recovery e cleanup.
+
+Para um reteste manual do app real, use o checkout NTFS cujo snapshot/fingerprint foi validado pelo runner, abra PowerShell nesse diretório e execute o comando abaixo. Ele compila e inicia `electron .` (Main real) com um perfil descartável novo e biblioteca configurada; não usa o harness C1 nem o perfil habitual do aplicativo:
+
+```powershell
+$media = 'C:\Users\Chris\Documents\Video musicas e catalogo'
+$testUserDataPath = Join-Path $env:TEMP ('karaoke-queue-c9-production-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $testUserDataPath | Out-Null
+$utf8 = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText((Join-Path $testUserDataPath 'operating-mode.json'), '{"version":1,"mode":"player"}', $utf8)
+$library = [ordered]@{ version = 1; roots = @($media) } | ConvertTo-Json -Compress
+[System.IO.File]::WriteAllText((Join-Path $testUserDataPath 'video-library.json'), $library, $utf8)
+npm.cmd run compile
+if ($LASTEXITCODE -ne 0) { throw 'A compilação Windows falhou.' }
+& (Join-Path $PWD 'node_modules\.bin\electron.cmd') . ("--user-data-dir=" + $testUserDataPath)
+```
+
+Use um checkout NTFS sincronizado para o código atual; não execute Node/Electron Windows a partir de `\\wsl.localhost\...`. Um launcher aberto não é E2E automatizado, e um E2E aprovado não é validação manual nem aprovação do proprietário.
+
+**Roteiro manual específico para Alt+F4:** no app iniciado pelo comando Main de produção acima, deixe a janela principal focada e pressione fisicamente `Alt+F4`. Confirme que o modal único aparece e que o app permanece aberto; pressione `Esc` e verifique que playback/fila continuam. Repita `Alt+F4`, confirme com `Enter` e verifique o encerramento normal. Faça também uma rodada com reprodução ativa e uma entrada pendente. Esse teste físico continua necessário quando o helper automatizado `SendInput` não produz o evento `BrowserWindow.close`; um resultado automatizado `SC_CLOSE` não substitui Alt+F4 físico.
+
 ### Harness isolado de Chromium
 
 O runner oferece modos focados de avaliação Chromium e um teste da implementação Player 5C. Todos usam a mesma sincronização, verificação de branch/HEAD/hashes, handshake de fingerprint, build nativo e cleanup. Para caminhos escolhidos no WSL, converta o valor com `wslpath -w` antes de encaminhá-lo ao Windows com `WSLENV` e `/w`; o processo PowerShell precisa receber o formato Windows (`C:\...`), não o literal `/mnt/c/...`. Revise a lista de arquivos não rastreados antes de aprovar `--approve-untracked`.
@@ -184,6 +250,12 @@ Os testes são automatizados e não pedem interação manual. Se não houver Exp
 
 Após o E2E, o worker verifica a remoção do perfil temporário e consulta processos Electron associados ao caminho exclusivo daquela execução via `Get-CimInstance Win32_Process`. Se a consulta falhar ou não puder confirmar o resultado, a verificação falha; isso não é interpretado como ausência de processos. O worker não encerra processos indiscriminadamente. Ao receber cancelamento, o runner confirma a identidade do worker pelo PID, `runId` e token do lock, encerra a árvore identificada e verifica que os processos observados terminaram. Depois recupera o build anterior, preservando o build interrompido em `.git/`, limpa apenas o perfil temporário exclusivo do run e confirma que não há pendência nem backup de sincronização. Só então remove o lock pertencente à execução. Se alguma verificação ou recuperação falhar, o relatório fica `CANCELLED_RECOVERY_REQUIRED` e o lock é mantido para revisão manual. Processos residuais ou uma consulta inconclusiva impedem o status geral PASS.
 
+Se o processo WSL que controlava o runner terminou, mas o worker Windows ainda está ativo, use o cancelamento oficial por `runId` correspondente:
+
+    npm run test:e2e:multi-instance:windows -- --cancel-windows-run <runId>
+
+Esse comando segue as mesmas verificações de PID, `runId`, token, árvore de processos, perfil e build do cancelamento por Ctrl+C; ele não remove lock manualmente. O runner executa o script de cancelamento por arquivo PowerShell temporário em `/tmp`, encaminhado com `wslpath -w`, e remove esse arquivo ao concluir. Isso evita exceder limites da linha de comando WSL/Windows com scripts `-EncodedCommand` longos. Use `--recover-windows-cancel` apenas quando o worker já estiver parado e a primeira tentativa tiver deixado `CANCELLED_RECOVERY_REQUIRED`.
+
 Se o processo worker já tiver terminado e a primeira recuperação tiver parado em `CANCELLED_RECOVERY_REQUIRED`, o runner permite retomar somente pelo `runId` correspondente e após confirmar que o worker não está ativo. Use o entry point central, preservando `KARAOKE_QUEUE_WIN_CHECKOUT` via `WSLENV`:
 
     npm run test:e2e:multi-instance:windows -- --recover-windows-cancel <runId>
@@ -232,5 +304,6 @@ Depois, execute o comando central no WSL. Não compartilhe node_modules, build, 
 - Sincronização pendente: uma interrupção durante cópia impede builds subsequentes. Inspecione o clone; reconstrua em novo caminho se não puder provar que ele corresponde a um manifesto completo.
 - Sessão gráfica indisponível: o E2E de minimize/restore/focus fica NOT RUN. Reconecte uma sessão desktop Windows interativa e execute novamente.
 - `UtilBindVsockAnyPort:307` ao iniciar executáveis Windows dentro do sandbox Codex: faça primeiro apenas os testes mínimos `powershell.exe -NoProfile -Command "Write-Output WSL_WINDOWS_OK"` e `cmd.exe /c echo WSL_CMD_OK`. Se falharem no sandbox, repita a chamada mínima pelo mecanismo de execução aprovado fora do sandbox. Nesta investigação, essa chamada aprovada funcionou e o runner oficial passou depois que o checkout alternativo foi encaminhado via `WSLENV`; a falha isolada dentro do sandbox não indicava que o WSL ou o host Windows estivessem permanentemente indisponíveis. Não desative o sandbox nem altere configurações globais como workaround.
+- Se o WSL reportar `...//powershell.exe: Invalid argument`, inspecione se uma entrada de `PATH` termina em `/`. Normalize as barras finais somente no ambiente daquela invocação do runner; não edite `PATH` global. Foi necessário neste ambiente para a invocação aprovada do runner.
 - Se `--player-recovery` terminar após a E2E por “foco da janela” em `CLEANUP`, confira a versão do runner: esse modo não mede focus e deve reportar `WINDOW_FOCUS NOT APPLICABLE`; a suíte multi-instância padrão continua exigindo a evidência de foco.
 - Origem alterada durante o teste: o resultado é inválido mesmo que o E2E tenha terminado; repita após estabilizar o snapshot.

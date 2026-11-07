@@ -7,12 +7,20 @@ import type {
 } from './src/standalone-player-contracts'
 import {
   STANDALONE_PLAYER_IPC_CHANNELS,
+  type StandaloneCurrentTrackMetadata,
+  type StandaloneCatalogImportIssuesPage,
   type StandalonePlayerRendererApi,
   type StandalonePlayerIpcCommandReply,
   type StandalonePlayerMetadataPreview,
+  type StandalonePlayerOptionsActionReply,
+  type StandalonePlayerOptionsSnapshot,
   type StandalonePlayerSnapshotEnvelope,
   type StandalonePlayerSnapshotUpdate,
-  type StandalonePlayerSubscriptionRef
+  type StandalonePlayerSubscriptionRef,
+  type StandalonePlayerVideoBounds,
+  type StandaloneExitConfirmationRequestReply,
+  type StandaloneExitConfirmationResolution,
+  type StandaloneExitConfirmationResolutionReply
 } from './src/standalone-player-ipc-contracts'
 
 interface LocalSubscription {
@@ -24,10 +32,14 @@ interface LocalSubscription {
 
 const subscriptions = new Map<string, LocalSubscription>()
 const catalogRevisionListeners = new Set<(revision: string | null) => void>()
+const optionsListeners = new Set<(snapshot: StandalonePlayerOptionsSnapshot) => void>()
+const exitConfirmationListeners = new Set<(requestId: string) => void>()
 let nextSubscriptionId = 0
 let newestEnvelope: StandalonePlayerSnapshotEnvelope | undefined
 let snapshotListenerAttached = false
 let catalogRevisionListenerAttached = false
+let optionsListenerAttached = false
+let exitConfirmationListenerAttached = false
 const ipcErrorCodes = new Set([
   'STANDALONE_IPC_DISPOSED',
   'STANDALONE_IPC_FAILED',
@@ -36,13 +48,73 @@ const ipcErrorCodes = new Set([
   'STANDALONE_IPC_INVALID_LISTENER',
   'STANDALONE_IPC_INVALID_REQUEST',
   'STANDALONE_IPC_INVALID_RESPONSE',
+  'STANDALONE_IPC_EXIT_FALLBACK_FAILED',
+  'STANDALONE_IPC_CLOSING',
   'STANDALONE_IPC_SUBSCRIPTION_EXISTS',
-  'STANDALONE_IPC_SUBSCRIPTION_LIMIT'
+  'STANDALONE_IPC_SUBSCRIPTION_LIMIT',
+  'STANDALONE_OPTIONS_CLOSED'
+])
+
+const optionsLibraryScanStatuses = new Set(['not-scanned', 'scanning', 'ready', 'degraded', 'closed'])
+const optionsActionCodes = new Set([
+  'PLAYER_NOT_IDLE', 'LIBRARY_BUSY', 'OPTIONS_BUSY', 'OPTIONS_FAILED', 'CATALOG_IMPORT_FAILED',
+  'CATALOG_CONFIRMATION_STALE'
 ])
 
 function isEnvelope(value: unknown): value is StandalonePlayerSnapshotEnvelope {
   return isPlainRecord(value) && hasExactKeys(value, ['revision', 'snapshot']) &&
     Number.isSafeInteger(value.revision) && (value.revision as number) >= 0 && isSnapshot(value.snapshot)
+}
+
+function isOptionsSnapshot(value: unknown): value is StandalonePlayerOptionsSnapshot {
+  return isPlainRecord(value) && hasExactKeys(value, ['revision', 'library', 'catalog']) &&
+    Number.isSafeInteger(value.revision) && (value.revision as number) >= 0 &&
+    isPlainRecord(value.library) && hasExactKeys(value.library, ['folderName', 'scanStatus', 'indexedFiles']) &&
+    (value.library.folderName === null || (typeof value.library.folderName === 'string' && value.library.folderName.length <= 255)) &&
+    typeof value.library.scanStatus === 'string' && optionsLibraryScanStatuses.has(value.library.scanStatus) &&
+    (value.library.indexedFiles === null || (Number.isSafeInteger(value.library.indexedFiles) && (value.library.indexedFiles as number) >= 0)) &&
+    isPlainRecord(value.catalog) && hasExactKeys(value.catalog,
+      ['fileName', 'recordCount', 'importedAt', 'revision', 'importIssueCount', 'importGeneration']) &&
+    (value.catalog.fileName === null || (typeof value.catalog.fileName === 'string' && value.catalog.fileName.length <= 255)) &&
+    Number.isSafeInteger(value.catalog.recordCount) && (value.catalog.recordCount as number) >= 0 &&
+    (value.catalog.importedAt === null || (typeof value.catalog.importedAt === 'string' && value.catalog.importedAt.length <= 128)) &&
+    (value.catalog.revision === null || (typeof value.catalog.revision === 'string' && /^[a-f0-9]{64}$/.test(value.catalog.revision))) &&
+    Number.isSafeInteger(value.catalog.importIssueCount) && (value.catalog.importIssueCount as number) >= 0 &&
+    (value.catalog.importIssueCount as number) <= 100_000 &&
+    Number.isSafeInteger(value.catalog.importGeneration) && (value.catalog.importGeneration as number) >= 0
+}
+
+function isOptionsActionReply(value: unknown): value is StandalonePlayerOptionsActionReply {
+  if (!isPlainRecord(value) || !['confirmed', 'cancelled', 'blocked', 'failed', 'confirmation-required'].includes(String(value.outcome)) ||
+      (value.code !== undefined && (typeof value.code !== 'string' || !optionsActionCodes.has(value.code))) ||
+      !isOptionsSnapshot(value.snapshot)) return false
+  const hasConfirmation = value.confirmation !== undefined
+  const expected = ['outcome', 'snapshot']
+  if (value.code !== undefined) expected.push('code')
+  if (hasConfirmation) expected.push('confirmation')
+  if (!hasExactKeys(value, expected)) return false
+  if (value.outcome === 'confirmation-required') {
+    return isPlainRecord(value.confirmation) && hasExactKeys(value.confirmation,
+      ['token', 'recordCount', 'issueCount', 'currentRecordCount']) &&
+      typeof value.confirmation.token === 'string' && /^[0-9a-f-]{36}$/.test(value.confirmation.token) &&
+      Number.isSafeInteger(value.confirmation.recordCount) && (value.confirmation.recordCount as number) > 0 &&
+      Number.isSafeInteger(value.confirmation.issueCount) && (value.confirmation.issueCount as number) > 0 &&
+      Number.isSafeInteger(value.confirmation.currentRecordCount) && (value.confirmation.currentRecordCount as number) >= 0
+  }
+  return !hasConfirmation
+}
+
+function isCatalogImportIssuesPage(value: unknown): value is StandaloneCatalogImportIssuesPage {
+  return isPlainRecord(value) && hasExactKeys(value, ['catalogRevision', 'generation', 'total', 'offset', 'issues']) &&
+    (value.catalogRevision === null || (typeof value.catalogRevision === 'string' && /^[a-f0-9]{64}$/.test(value.catalogRevision))) &&
+    Number.isSafeInteger(value.generation) && (value.generation as number) >= 0 &&
+    Number.isSafeInteger(value.total) && (value.total as number) >= 0 && (value.total as number) <= 100_000 &&
+    Number.isSafeInteger(value.offset) && (value.offset as number) >= 0 && Array.isArray(value.issues) &&
+    value.issues.length <= 100 && value.issues.every(issue => isPlainRecord(issue) &&
+      hasExactKeys(issue, ['rowNumber', 'field', 'value', 'code', 'reason']) &&
+      Number.isSafeInteger(issue.rowNumber) && (issue.rowNumber as number) > 0 && issue.field === 'numero' &&
+      typeof issue.value === 'string' && issue.value.length <= 4096 && issue.code === 'INVALID_MUSIC_NUMBER' &&
+      typeof issue.reason === 'string' && issue.reason.length <= 512)
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -54,6 +126,24 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
   const actual = Object.keys(value)
   return actual.length === expected.length && expected.every(key => Object.hasOwn(value, key))
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+function isExitConfirmationRequestReply(value: unknown): value is StandaloneExitConfirmationRequestReply {
+  if (!isPlainRecord(value) || typeof value.outcome !== 'string') return false
+  if (value.outcome === 'pending') {
+    return hasExactKeys(value, ['outcome', 'requestId']) && typeof value.requestId === 'string' && isUuid(value.requestId)
+  }
+  return hasExactKeys(value, ['outcome']) && ['authorized', 'native-fallback', 'unavailable'].includes(value.outcome)
+}
+
+function isExitConfirmationResolutionReply(value: unknown): value is StandaloneExitConfirmationResolutionReply {
+  return isPlainRecord(value) && hasExactKeys(value, ['requestId', 'outcome']) &&
+    typeof value.requestId === 'string' && isUuid(value.requestId) &&
+    ['confirmed', 'cancelled', 'stale', 'already-authorized'].includes(String(value.outcome))
 }
 
 function isQueueEntry(value: unknown): boolean {
@@ -234,7 +324,47 @@ function clearCatalogRevisionListeners(): void {
   removeCatalogRevisionListenerWhenUnused()
 }
 
+function onOptionsChanged(_event: Electron.IpcRendererEvent, value: unknown): void {
+  if (!isOptionsSnapshot(value)) return
+  const snapshot = cloneOptionsSnapshot(value)
+  for (const listener of [...optionsListeners]) {
+    try { listener(snapshot) } catch { /* Renderer observers cannot break the restricted preload bridge. */ }
+  }
+}
+
+function removeOptionsListenerWhenUnused(): void {
+  if (!optionsListenerAttached || optionsListeners.size > 0) return
+  ipcRenderer.removeListener(STANDALONE_PLAYER_IPC_CHANNELS.optionsChanged, onOptionsChanged)
+  optionsListenerAttached = false
+}
+
+function clearOptionsListeners(): void {
+  optionsListeners.clear()
+  removeOptionsListenerWhenUnused()
+}
+
+function onExitConfirmationRequested(_event: Electron.IpcRendererEvent, value: unknown): void {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ['requestId']) ||
+      typeof value.requestId !== 'string' || !isUuid(value.requestId)) return
+  for (const listener of [...exitConfirmationListeners]) {
+    try { listener(value.requestId) } catch { /* UI observers cannot affect the restricted IPC bridge. */ }
+  }
+}
+
+function removeExitConfirmationListenerWhenUnused(): void {
+  if (!exitConfirmationListenerAttached || exitConfirmationListeners.size > 0) return
+  ipcRenderer.removeListener(STANDALONE_PLAYER_IPC_CHANNELS.exitConfirmationRequested, onExitConfirmationRequested)
+  exitConfirmationListenerAttached = false
+}
+
+function clearExitConfirmationListeners(): void {
+  exitConfirmationListeners.clear()
+  removeExitConfirmationListenerWhenUnused()
+}
+
 window.addEventListener('pagehide', clearCatalogRevisionListeners, { once: true })
+window.addEventListener('pagehide', clearOptionsListeners, { once: true })
+window.addEventListener('pagehide', clearExitConfirmationListeners, { once: true })
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   try { return await ipcRenderer.invoke(channel, ...args) as T }
@@ -265,6 +395,19 @@ const api: StandalonePlayerRendererApi = Object.freeze({
     if (!isMetadataPreview(received)) throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
     return { catalogRevision: received.catalogRevision, title: received.title, artist: received.artist }
   },
+  getCurrentTrackMetadata: async () => {
+    const received = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.getCurrentTrackMetadata)
+    if (received === null) return null
+    if (!isCurrentTrackMetadata(received)) throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    return {
+      catalogRevision: received.catalogRevision,
+      title: received.title,
+      artist: received.artist,
+      entryId: received.entryId,
+      attemptId: received.attemptId,
+      musicCode: received.musicCode
+    }
+  },
   onCatalogRevisionChanged: (listener: (revision: string | null) => void) => {
     if (typeof listener !== 'function') throw new Error('STANDALONE_IPC_INVALID_LISTENER')
     if (!catalogRevisionListenerAttached) {
@@ -276,6 +419,97 @@ const api: StandalonePlayerRendererApi = Object.freeze({
       catalogRevisionListeners.delete(listener)
       removeCatalogRevisionListenerWhenUnused()
     }
+  },
+  getOptionsSnapshot: async () => {
+    const received = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.getOptionsSnapshot)
+    if (!isOptionsSnapshot(received)) throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    return cloneOptionsSnapshot(received)
+  },
+  selectVideoFolder: async () => {
+    const received = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.selectVideoFolder)
+    if (!isOptionsActionReply(received)) throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    return cloneOptionsActionReply(received)
+  },
+  refreshVideoLibrary: async () => {
+    const received = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.refreshVideoLibrary)
+    if (!isOptionsActionReply(received)) throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    return cloneOptionsActionReply(received)
+  },
+  importMusicCatalog: async () => {
+    const received = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.importMusicCatalog)
+    if (!isOptionsActionReply(received)) throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    return cloneOptionsActionReply(received)
+  },
+  confirmMusicCatalogImport: async (token: string) => {
+    const received = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.confirmMusicCatalogImport, token)
+    if (!isOptionsActionReply(received)) throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    return cloneOptionsActionReply(received)
+  },
+  cancelMusicCatalogImport: async (token: string) => {
+    const received = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.cancelMusicCatalogImport, token)
+    if (typeof received !== 'boolean') throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    return received
+  },
+  getCatalogImportIssuesPage: async (catalogRevision: string, generation: number, offset: number) => {
+    const received = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.getCatalogImportIssuesPage,
+      { catalogRevision, generation, offset })
+    if (!isCatalogImportIssuesPage(received)) throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    return received
+  },
+  onOptionsChanged: (listener: (snapshot: StandalonePlayerOptionsSnapshot) => void) => {
+    if (typeof listener !== 'function') throw new Error('STANDALONE_IPC_INVALID_LISTENER')
+    optionsListeners.add(listener)
+    if (!optionsListenerAttached) {
+      ipcRenderer.on(STANDALONE_PLAYER_IPC_CHANNELS.optionsChanged, onOptionsChanged)
+      optionsListenerAttached = true
+    }
+    return () => {
+      optionsListeners.delete(listener)
+      removeOptionsListenerWhenUnused()
+    }
+  },
+  requestExitConfirmation: async () => {
+    const received = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.requestExitConfirmation)
+    if (!isExitConfirmationRequestReply(received)) throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    return received
+  },
+  resolveExitConfirmation: async (resolution: StandaloneExitConfirmationResolution) => {
+    if (!isPlainRecord(resolution) || !hasExactKeys(resolution, ['requestId', 'decision']) ||
+        typeof resolution.requestId !== 'string' || !isUuid(resolution.requestId) ||
+        (resolution.decision !== 'confirm' && resolution.decision !== 'cancel')) {
+      throw new Error('STANDALONE_IPC_INVALID_REQUEST')
+    }
+    const received = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.resolveExitConfirmation, resolution)
+    if (!isExitConfirmationResolutionReply(received) || received.requestId !== resolution.requestId) {
+      throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    }
+    return received
+  },
+  onExitConfirmationRequested: (listener: (requestId: string) => void) => {
+    if (typeof listener !== 'function') throw new Error('STANDALONE_IPC_INVALID_LISTENER')
+    if (!exitConfirmationListenerAttached) {
+      ipcRenderer.on(STANDALONE_PLAYER_IPC_CHANNELS.exitConfirmationRequested, onExitConfirmationRequested)
+      exitConfirmationListenerAttached = true
+    }
+    exitConfirmationListeners.add(listener)
+    return () => {
+      exitConfirmationListeners.delete(listener)
+      removeExitConfirmationListenerWhenUnused()
+    }
+  },
+  showPlaybackSurface: async (bounds: StandalonePlayerVideoBounds) => {
+    if (!isPlainRecord(bounds) || !hasExactKeys(bounds, ['x', 'y', 'width', 'height']) ||
+        ![bounds.x, bounds.y, bounds.width, bounds.height].every(value => typeof value === 'number' && Number.isFinite(value))) {
+      throw new Error('STANDALONE_IPC_INVALID_REQUEST')
+    }
+    const result = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.showPlaybackSurface, bounds)
+    if (typeof result !== 'boolean') throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    return result
+  },
+  hidePlaybackSurface: async () => {
+    const result = await invoke<unknown>(STANDALONE_PLAYER_IPC_CHANNELS.hidePlaybackSurface)
+    if (typeof result !== 'boolean') throw new Error('STANDALONE_IPC_INVALID_RESPONSE')
+    return result
   },
   subscribe: async (listener: (envelope: StandalonePlayerSnapshotEnvelope) => void) => {
     if (typeof listener !== 'function') throw new Error('STANDALONE_IPC_INVALID_LISTENER')
@@ -328,6 +562,31 @@ function isMetadataPreview(value: unknown): value is StandalonePlayerMetadataPre
     (value.catalogRevision === null || (typeof value.catalogRevision === 'string' && value.catalogRevision.length <= 128)) &&
     (value.title === null || (typeof value.title === 'string' && value.title.length <= 4096)) &&
     (value.artist === null || (typeof value.artist === 'string' && value.artist.length <= 4096))
+}
+
+function isCurrentTrackMetadata(value: unknown): value is StandaloneCurrentTrackMetadata {
+  return isPlainRecord(value) && hasExactKeys(value, [
+    'catalogRevision', 'title', 'artist', 'entryId', 'attemptId', 'musicCode'
+  ]) &&
+    (value.catalogRevision === null || (typeof value.catalogRevision === 'string' && value.catalogRevision.length <= 128)) &&
+    (value.title === null || (typeof value.title === 'string' && value.title.length <= 4096)) &&
+    (value.artist === null || (typeof value.artist === 'string' && value.artist.length <= 4096)) &&
+    typeof value.entryId === 'string' && value.entryId.length > 0 && value.entryId.length <= 128 &&
+    typeof value.attemptId === 'string' && value.attemptId.length > 0 && value.attemptId.length <= 128 &&
+    typeof value.musicCode === 'string' && /^[0-9]{5}$/.test(value.musicCode)
+}
+
+function cloneOptionsSnapshot(snapshot: StandalonePlayerOptionsSnapshot): StandalonePlayerOptionsSnapshot {
+  return { revision: snapshot.revision, library: { ...snapshot.library }, catalog: { ...snapshot.catalog } }
+}
+
+function cloneOptionsActionReply(reply: StandalonePlayerOptionsActionReply): StandalonePlayerOptionsActionReply {
+  return {
+    outcome: reply.outcome,
+    ...(reply.code ? { code: reply.code } : {}),
+    ...(reply.confirmation ? { confirmation: { ...reply.confirmation } } : {}),
+    snapshot: cloneOptionsSnapshot(reply.snapshot)
+  }
 }
 
 contextBridge.exposeInMainWorld('standalonePlayer', api)

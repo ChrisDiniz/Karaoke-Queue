@@ -47,6 +47,18 @@ function isRecoveryPending(record: PlayerPlaybackRecoveryRecord): boolean {
   return ['pending', 'playing', 'paused', 'uncertain'].includes(record.status)
 }
 
+function sameRecoveryRecord(
+  left: PlayerPlaybackRecoveryRecord | undefined,
+  right: PlayerPlaybackRecoveryRecord | undefined
+): boolean {
+  if (!left || !right) return left === right
+  return left.version === right.version && left.revision === right.revision && left.status === right.status &&
+    left.attemptId === right.attemptId && left.musicCode === right.musicCode &&
+    left.playbackStatus === right.playbackStatus && left.lastTransition === right.lastTransition &&
+    left.updatedAt === right.updatedAt && left.startedAt === right.startedAt &&
+    left.terminalAt === right.terminalAt && left.reason === right.reason
+}
+
 /** Coordinates durable Player recovery and explicit decisions without owning playback state. */
 export class PlayerPlaybackRecoveryCoordinator implements PlayerPlaybackPersistence {
   private record: PlayerPlaybackRecoveryRecord | undefined
@@ -119,6 +131,27 @@ export class PlayerPlaybackRecoveryCoordinator implements PlayerPlaybackPersiste
     return {
       status: 'resolved', outcome: record.status as 'completed' | 'stopped' | 'failed' | 'dismissed',
       attemptId: record.attemptId, musicCode: record.musicCode, updatedAt: record.updatedAt
+    }
+  }
+
+  /** Re-reads and validates the durable record before Main publishes a safe shutdown result. */
+  verifyPersistedState(): PlayerRecoverySnapshot {
+    const confirmed = this.record
+    try {
+      const stored = this.store.read()
+      if (!sameRecoveryRecord(confirmed, stored)) {
+        this.writeFailure = true
+        return this.getState()
+      }
+      this.record = stored
+      this.readFailure = undefined
+      this.writeFailure = false
+      return this.getState()
+    } catch (error) {
+      this.readFailure = error instanceof PlayerPlaybackRecoveryStoreError
+        ? error
+        : new PlayerPlaybackRecoveryStoreError('UNREADABLE', 'O estado de recuperação não pôde ser relido.')
+      return this.getState()
     }
   }
 

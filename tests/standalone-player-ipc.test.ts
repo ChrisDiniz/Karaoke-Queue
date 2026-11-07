@@ -11,7 +11,11 @@ import {
   type StandalonePlayerListener,
   type StandalonePlayerSnapshot
 } from '../src/standalone-player-contracts'
-import { STANDALONE_PLAYER_IPC_CHANNELS } from '../src/standalone-player-ipc-contracts'
+import {
+  isNewerStandalonePlayerOptionsSnapshot,
+  STANDALONE_PLAYER_IPC_CHANNELS
+} from '../src/standalone-player-ipc-contracts'
+import type { StandalonePlayerOptionsData, StandalonePlayerOptionsMainPort } from '../src/standalone-player-ipc-contracts'
 import { installStandalonePlayerMainIpcBridge } from '../src/standalone-player-ipc'
 
 class FakeIpcMain {
@@ -88,7 +92,11 @@ class FakeControl implements StandalonePlayerControl {
 
 const documentUrl = 'file:///isolated/standalone.html'
 
-function setup(metadataCatalog?: Parameters<typeof installStandalonePlayerMainIpcBridge>[0]['metadataCatalog']) {
+function setup(
+  metadataCatalog?: Parameters<typeof installStandalonePlayerMainIpcBridge>[0]['metadataCatalog'],
+  optionsPort?: StandalonePlayerOptionsMainPort,
+  showExitFallbackDialog: () => Promise<boolean> = async () => false
+) {
   const ipcMain = new FakeIpcMain()
   const webContents = new FakeWebContents(documentUrl)
   const control = new FakeControl()
@@ -97,13 +105,245 @@ function setup(metadataCatalog?: Parameters<typeof installStandalonePlayerMainIp
     webContents: webContents as unknown as WebContents,
     expectedDocumentUrl: documentUrl,
     control,
-    ...(metadataCatalog ? { metadataCatalog } : {})
+    showExitFallbackDialog,
+    ...(metadataCatalog ? { metadataCatalog } : {}),
+    ...(optionsPort ? { options: optionsPort } : {})
   })
   const event = (sender: WebContents = webContents.sender(), frame: { url: string } = webContents.mainFrame) => ({
     sender,
     senderFrame: frame
   }) as IpcMainInvokeEvent
   return { ipcMain, webContents, control, bridge, event }
+}
+
+test('exit IPC validates origin and payload, coalesces requests, and settles only the current Main request', async t => {
+  const state = setup()
+  t.after(() => state.bridge.dispose())
+  const requestChannel = STANDALONE_PLAYER_IPC_CHANNELS.requestExitConfirmation
+  const resolveChannel = STANDALONE_PLAYER_IPC_CHANNELS.resolveExitConfirmation
+
+  await assert.rejects(state.ipcMain.invoke(requestChannel, state.event(), 'unexpected'), /STANDALONE_IPC_INVALID_REQUEST/)
+  await assert.rejects(state.ipcMain.invoke(resolveChannel, state.event(), null), /STANDALONE_IPC_INVALID_REQUEST/)
+  await assert.rejects(state.ipcMain.invoke(resolveChannel, state.event(), {
+    requestId: 'not-a-uuid', decision: 'confirm'
+  }), /STANDALONE_IPC_INVALID_REQUEST/)
+  await assert.rejects(state.ipcMain.invoke(resolveChannel, state.event(), {
+    requestId: '6f9f39e0-cae0-40f8-a877-e4a2fc53c99a', decision: 'confirm', extra: true
+  }), /STANDALONE_IPC_INVALID_REQUEST/)
+
+  const foreign = new FakeWebContents(documentUrl)
+  await assert.rejects(state.ipcMain.invoke(requestChannel, state.event(foreign.sender())), /STANDALONE_IPC_FORBIDDEN/)
+  await assert.rejects(state.ipcMain.invoke(resolveChannel, state.event(foreign.sender()), {
+    requestId: '6f9f39e0-cae0-40f8-a877-e4a2fc53c99a', decision: 'confirm'
+  }), /STANDALONE_IPC_FORBIDDEN/)
+  foreign.destroy()
+  await assert.rejects(state.ipcMain.invoke(requestChannel, state.event(state.webContents.sender(), { url: 'file:///child.html' })),
+    /STANDALONE_IPC_FORBIDDEN/)
+
+  const firstMainRequest = state.bridge.requestExitConfirmationFromMain()
+  const secondMainRequest = state.bridge.requestExitConfirmationFromMain()
+  const requestEvent = state.webContents.sent.at(-1)
+  assert.equal(requestEvent?.channel, STANDALONE_PLAYER_IPC_CHANNELS.exitConfirmationRequested)
+  const requestId = (requestEvent?.value as { requestId: string }).requestId
+  assert.match(requestId, /^[0-9a-f-]{36}$/)
+  assert.equal(state.webContents.sent.filter(item => item.channel === requestEvent?.channel).length, 1,
+    'simultaneous Main requests send one confirmation to the Renderer')
+
+  const rendererRequest = await state.ipcMain.invoke(requestChannel, state.event()) as { outcome: string; requestId: string }
+  assert.deepEqual(rendererRequest, { outcome: 'pending', requestId },
+    'a Renderer-originated request joins the already pending Main request')
+  const confirmed = await state.ipcMain.invoke(resolveChannel, state.event(), { requestId, decision: 'confirm' })
+  assert.deepEqual(confirmed, { requestId, outcome: 'confirmed' })
+  assert.deepEqual(await state.ipcMain.invoke(resolveChannel, state.event(), { requestId, decision: 'confirm' }), confirmed,
+    'duplicate confirmation is idempotent')
+  assert.deepEqual(await Promise.all([firstMainRequest, secondMainRequest]), [true, true])
+  assert.deepEqual(await state.ipcMain.invoke(requestChannel, state.event()), { outcome: 'authorized' },
+    'no later Renderer request can reenter after authorization')
+  assert.equal(await state.bridge.requestExitConfirmationFromMain(), true,
+    'repeated Main requests reuse the one authorization without another prompt')
+  assert.equal(state.webContents.sent.filter(item => item.channel === requestEvent?.channel).length, 1)
+})
+
+test('exit IPC rejects delayed settlement after cancel and keeps later requests independent', async t => {
+  const state = setup()
+  t.after(() => state.bridge.dispose())
+  const requestChannel = STANDALONE_PLAYER_IPC_CHANNELS.requestExitConfirmation
+  const resolveChannel = STANDALONE_PLAYER_IPC_CHANNELS.resolveExitConfirmation
+  const first = await state.ipcMain.invoke(requestChannel, state.event()) as { requestId: string }
+  assert.deepEqual(await state.ipcMain.invoke(resolveChannel, state.event(), {
+    requestId: first.requestId, decision: 'cancel'
+  }), { requestId: first.requestId, outcome: 'cancelled' })
+  assert.deepEqual(await state.ipcMain.invoke(resolveChannel, state.event(), {
+    requestId: first.requestId, decision: 'confirm'
+  }), { requestId: first.requestId, outcome: 'cancelled' }, 'a duplicate delayed response cannot reverse cancellation')
+
+  const second = await state.ipcMain.invoke(requestChannel, state.event()) as { requestId: string }
+  assert.notEqual(second.requestId, first.requestId)
+  assert.deepEqual(await state.ipcMain.invoke(resolveChannel, state.event(), {
+    requestId: first.requestId, decision: 'confirm'
+  }), { requestId: first.requestId, outcome: 'cancelled' },
+  'a delayed response from a settled request cannot mutate the new request')
+  assert.deepEqual(await state.ipcMain.invoke(resolveChannel, state.event(), {
+    requestId: second.requestId, decision: 'confirm'
+  }), { requestId: second.requestId, outcome: 'confirmed' })
+})
+
+test('Renderer confirmation notifies Main exactly once without performing shutdown', async t => {
+  const state = setup()
+  t.after(() => state.bridge.dispose())
+  let notifications = 0
+  const unsubscribe = state.bridge.onExitAuthorized(() => { notifications++ })
+  t.after(unsubscribe)
+  const requestChannel = STANDALONE_PLAYER_IPC_CHANNELS.requestExitConfirmation
+  const resolveChannel = STANDALONE_PLAYER_IPC_CHANNELS.resolveExitConfirmation
+
+  const cancelled = await state.ipcMain.invoke(requestChannel, state.event()) as { requestId: string }
+  await state.ipcMain.invoke(resolveChannel, state.event(), { requestId: cancelled.requestId, decision: 'cancel' })
+  assert.equal(notifications, 0, 'cancellation does not authorize or notify Main')
+
+  const confirmed = await state.ipcMain.invoke(requestChannel, state.event()) as { requestId: string }
+  assert.deepEqual(await state.ipcMain.invoke(resolveChannel, state.event(), {
+    requestId: confirmed.requestId, decision: 'confirm'
+  }), { requestId: confirmed.requestId, outcome: 'confirmed' })
+  await state.ipcMain.invoke(resolveChannel, state.event(), { requestId: confirmed.requestId, decision: 'confirm' })
+  await state.ipcMain.invoke(resolveChannel, state.event(), { requestId: confirmed.requestId, decision: 'cancel' })
+  assert.equal(notifications, 1, 'only the first Renderer-originated confirmation notifies Main')
+  assert.equal(state.webContents.isDestroyed(), false, 'authorization does not close the application in C9.3')
+})
+
+test('Main uses one native fallback when the Renderer is unavailable or disappears during confirmation', async t => {
+  let fallbackCalls = 0
+  let fallbackResult = true
+  const state = setup(undefined, undefined, async () => { fallbackCalls++; return fallbackResult })
+  t.after(() => state.bridge.dispose())
+
+  state.webContents.crash()
+  assert.equal(await state.bridge.requestExitConfirmationFromMain(), true)
+  assert.equal(fallbackCalls, 1, 'an unavailable Renderer uses the explicit fallback once')
+  assert.equal(state.webContents.sent.some(item => item.channel === STANDALONE_PLAYER_IPC_CHANNELS.exitConfirmationRequested), false)
+
+  const cancelledState = setup(undefined, undefined, async () => { fallbackCalls++; return false })
+  t.after(() => cancelledState.bridge.dispose())
+  cancelledState.webContents.crash()
+  assert.equal(await cancelledState.bridge.requestExitConfirmationFromMain(), false,
+    'choosing Cancel in the native fallback does not authorize exit')
+
+  let finishFallback!: (confirmed: boolean) => void
+  let notifyFallbackStarted!: () => void
+  const fallbackStarted = new Promise<void>(resolve => { notifyFallbackStarted = resolve })
+  const recoveredState = setup(undefined, undefined, () => {
+    fallbackCalls++
+    notifyFallbackStarted()
+    return new Promise<boolean>(resolve => { finishFallback = resolve })
+  })
+  t.after(() => recoveredState.bridge.dispose())
+  const pending = recoveredState.bridge.requestExitConfirmationFromMain()
+  assert.equal(recoveredState.webContents.sent.at(-1)?.channel, STANDALONE_PLAYER_IPC_CHANNELS.exitConfirmationRequested)
+  recoveredState.webContents.crash()
+  await fallbackStarted
+  assert.equal(fallbackCalls, 3, 'a Renderer crash switches the same pending confirmation to native fallback')
+  finishFallback(true)
+  assert.equal(await pending, true)
+})
+
+test('Renderer loss during its own pending exit request falls back and notifies Main only after confirmation', async t => {
+  let fallbackStarted!: () => void
+  const started = new Promise<void>(resolve => { fallbackStarted = resolve })
+  let settleFallback!: (confirmed: boolean) => void
+  const state = setup(undefined, undefined, () => {
+    fallbackStarted()
+    return new Promise<boolean>(resolve => { settleFallback = resolve })
+  })
+  t.after(() => state.bridge.dispose())
+  let notifications = 0
+  let authorized!: () => void
+  const authorization = new Promise<void>(resolve => { authorized = resolve })
+  const unsubscribe = state.bridge.onExitAuthorized(() => { notifications++; authorized() })
+  t.after(unsubscribe)
+
+  const request = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.requestExitConfirmation, state.event()) as { requestId: string }
+  state.webContents.crash()
+  await started
+  assert.equal(notifications, 0, 'Main is not notified while the native fallback is still awaiting a decision')
+  settleFallback(true)
+  await authorization
+  assert.equal(notifications, 1, 'a confirmed native fallback authorizes the pending Renderer-originated request once')
+  assert.deepEqual(await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.resolveExitConfirmation, state.event(), {
+    requestId: request.requestId, decision: 'confirm'
+  }), { requestId: request.requestId, outcome: 'already-authorized' }, 'a delayed Renderer reply cannot reenter after fallback approval')
+  assert.equal(await state.bridge.requestExitConfirmationFromMain(), true)
+  assert.equal(notifications, 1)
+})
+
+test('shutdown admission drains accepted IPC work and rejects later non-exit requests', async t => {
+  const state = setup()
+  t.after(() => state.bridge.dispose())
+  let release!: (result: StandalonePlayerCommandResult) => void
+  let started!: () => void
+  const commandStarted = new Promise<void>(resolve => { started = resolve })
+  state.control.executeHandler = request => {
+    started()
+    return new Promise(resolve => { release = resolve })
+  }
+  const command = state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.execute, state.event(), {
+    operationId: 'shutdown-drain-1', command: { type: 'submit-code', enteredCode: '1001', priority: 'normal' }
+  })
+  await commandStarted
+
+  let drained = false
+  const draining = state.bridge.beginCloseAdmission().then(() => { drained = true })
+  await assert.rejects(
+    state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getSnapshot, state.event()),
+    /STANDALONE_IPC_CLOSING/
+  )
+  assert.equal(drained, false, 'shutdown waits for a command that entered before admission closed')
+
+  release({ outcome: 'confirmed', operationId: 'shutdown-drain-1', snapshot: state.control.snapshot })
+  await command
+  await draining
+  assert.equal(drained, true, 'the drain resolves after accepted IPC work settles')
+
+  const exitRequest = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.requestExitConfirmation, state.event())
+  assert.equal((exitRequest as { outcome: string }).outcome, 'pending',
+    'the exit confirmation channel remains available for a safe retry after shutdown failure')
+})
+
+function fakeOptionsPort(overrides: Partial<StandalonePlayerOptionsMainPort> = {}) {
+  let snapshot: StandalonePlayerOptionsData = {
+    library: { folderName: 'videos', scanStatus: 'ready', indexedFiles: 1 },
+    catalog: { fileName: null, recordCount: 0, importedAt: null, revision: null, importIssueCount: 0, importGeneration: 0 }
+  }
+  const calls = { chooseVideoFolder: 0, applyVideoFolder: [] as string[], refreshVideoLibrary: 0,
+    chooseCatalogFile: 0, importCatalogFile: [] as string[] }
+  const listeners = new Set<(value: StandalonePlayerOptionsData) => void>()
+  const port: StandalonePlayerOptionsMainPort = {
+    getSnapshot: () => snapshot,
+    subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener) },
+    chooseVideoFolder: async () => { calls.chooseVideoFolder++; return '/selected/library' },
+    applyVideoFolder: async value => { calls.applyVideoFolder.push(value); snapshot = {
+      library: { folderName: 'library', scanStatus: 'ready', indexedFiles: 3 }, catalog: snapshot.catalog
+    }; listeners.forEach(listener => listener(snapshot)) },
+    refreshVideoLibrary: async () => { calls.refreshVideoLibrary++ },
+    chooseCatalogFile: async () => { calls.chooseCatalogFile++; return '/selected/catalog.csv' },
+    prepareCatalogImport: async value => {
+      calls.importCatalogFile.push(value)
+      return { outcome: 'imported' }
+    },
+    confirmCatalogImport: async () => undefined,
+    cancelCatalogImport: () => false,
+    getCatalogImportIssuesPage: (_revision, generation, offset, limit) => ({
+      catalogRevision: snapshot.catalog.revision, generation, total: 0, offset, issues: []
+    }),
+    ...overrides
+  }
+  return {
+    port,
+    calls,
+    setSnapshot: (value: StandalonePlayerOptionsData) => {
+      snapshot = value
+      listeners.forEach(listener => listener(snapshot))
+    }
+  }
 }
 
 test('metadata preview IPC validates exact digit payloads, sender origin, and the minimal response DTO', async t => {
@@ -169,6 +409,90 @@ test('metadata preview IPC exposes no arbitrary catalog fields and supports an a
   t.after(() => malformed.bridge.dispose())
   await assert.rejects(malformed.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.lookupMetadata, malformed.event(), '1001'),
     /STANDALONE_IPC_INVALID_RESPONSE/)
+})
+
+test('current-track metadata IPC binds the lookup to the confirmed Main attempt and exposes only its DTO', async t => {
+  const lookups: unknown[] = []
+  const catalog = {
+    lookupMetadataByVideoCode: (value: unknown) => {
+      lookups.push(value)
+      return { catalogRevision: 'catalog-r1', title: 'Always', artist: 'Bon Jovi' }
+    },
+    subscribeToMetadataRevision: () => () => undefined
+  }
+  const state = setup(catalog)
+  t.after(() => state.bridge.dispose())
+  const activeEntry = { entryId: 'entry-1', attemptId: 'attempt-1', musicCode: '01001' }
+  const pendingEntry = { entryId: 'queued', musicCode: '02002' }
+  const playing: StandalonePlayerSnapshot = {
+    playbackCondition: 'ready',
+    state: {
+      operationalState: 'playing',
+      current: activeEntry,
+      pending: [pendingEntry]
+    }
+  }
+  state.control.setSnapshot(playing)
+  assert.deepEqual(await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getCurrentTrackMetadata, state.event()), {
+    catalogRevision: 'catalog-r1', title: 'Always', artist: 'Bon Jovi',
+    entryId: 'entry-1', attemptId: 'attempt-1', musicCode: '01001'
+  })
+  assert.deepEqual(lookups, ['01001'], 'Main obtains the canonical current code and never accepts a renderer-selected code.')
+
+  state.control.setSnapshot({
+    playbackCondition: 'ready',
+    state: { operationalState: 'paused', current: activeEntry, pending: [pendingEntry] }
+  })
+  assert.equal((await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getCurrentTrackMetadata, state.event()) as any).attemptId,
+    'attempt-1', 'paused playback remains a confirmed current track.')
+
+  const foreign = new FakeWebContents(documentUrl)
+  await assert.rejects(state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getCurrentTrackMetadata,
+    state.event(foreign.sender())), /STANDALONE_IPC_FORBIDDEN/)
+  foreign.destroy()
+  for (const invalid of ['01001', null, { musicCode: '01001' }]) {
+    await assert.rejects(state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getCurrentTrackMetadata,
+      state.event(), invalid), /STANDALONE_IPC_INVALID_REQUEST/)
+  }
+})
+
+test('current-track metadata is unavailable outside ready playing or paused state, including idle and transitions', async t => {
+  const state = setup()
+  t.after(() => state.bridge.dispose())
+  const idle = createInitialStandalonePlayerSnapshot().state
+  const current = { entryId: 'entry-1', attemptId: 'attempt-1', musicCode: '01001' }
+  const target = { entryId: 'entry-2', musicCode: '02002' }
+  const cases: StandalonePlayerSnapshot[] = [
+    createInitialStandalonePlayerSnapshot(),
+    { playbackCondition: 'transitioning', phase: 'countdown', lastConfirmedState: idle,
+      pending: [target], target, remainingMs: 3200, paused: false },
+    { playbackCondition: 'transitioning', phase: 'loading', lastConfirmedState: idle, pending: [target], target },
+    { playbackCondition: 'transitioning', phase: 'celebration', lastConfirmedState: {
+      operationalState: 'playing', current, pending: []
+    }, pending: [], remainingMs: 3200, paused: false, message: STANDALONE_CELEBRATION_MESSAGES[0] },
+    { playbackCondition: 'blocked', lastConfirmedState: { operationalState: 'playing', current, pending: [] },
+      pending: [], error: { code: 'PLAYBACK_FAILED' } },
+    { playbackCondition: 'uncertain', lastConfirmedState: { operationalState: 'playing', current, pending: [] },
+      pending: [], error: { code: 'COMMAND_TIMEOUT' } }
+  ]
+  for (const snapshot of cases) {
+    state.control.setSnapshot(snapshot)
+    assert.equal(await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getCurrentTrackMetadata, state.event()), null,
+      `no confirmed metadata during ${snapshot.playbackCondition}${snapshot.playbackCondition === 'transitioning' ? `/${snapshot.phase}` : ''}`)
+  }
+})
+
+test('current-track metadata without an optional catalog still returns identity with unavailable fields', async t => {
+  const state = setup()
+  t.after(() => state.bridge.dispose())
+  state.control.setSnapshot({
+    playbackCondition: 'ready',
+    state: { operationalState: 'playing', current: { entryId: 'entry-1', attemptId: 'attempt-1', musicCode: '01001' }, pending: [] }
+  })
+  assert.deepEqual(await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getCurrentTrackMetadata, state.event()), {
+    catalogRevision: null, title: null, artist: null,
+    entryId: 'entry-1', attemptId: 'attempt-1', musicCode: '01001'
+  })
 })
 
 test('snapshot queries are versioned, cloned, and expose no mutable Main references', async t => {
@@ -492,7 +816,8 @@ test('destroying Renderer disposes transport but does not cancel its admitted ru
 
 test('bridge shutdown removes every handler and listener but does not mutate sequence state', async () => {
   const state = setup()
-  assert.equal(state.ipcMain.handlers.size, 5)
+  assert.equal(state.ipcMain.handlers.size, 10,
+    'the bridge also registers the restricted C9 exit-confirmation and playback-surface channels.')
   assert.equal(state.control.listeners.size, 1)
   state.bridge.dispose()
   assert.equal(state.ipcMain.handlers.size, 0)
@@ -567,4 +892,184 @@ test('a Renderer has a bounded number of active subscriptions', async t => {
   assert.equal(state.webContents.sent.length, 0)
   assert.equal(await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.unsubscribe, state.event(), subscriptions[0].subscription), true)
   assert.ok(await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.subscribe, state.event(), { subscriptionId: 'sp-9' }))
+})
+
+test('Standalone Options IPC exposes pathless snapshots and rejects malformed or foreign calls', async t => {
+  const options = fakeOptionsPort()
+  const state = setup(undefined, options.port)
+  t.after(() => state.bridge.dispose())
+  assert.deepEqual(await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getOptionsSnapshot, state.event()), {
+    ...options.port.getSnapshot(), revision: 0
+  })
+  options.setSnapshot({
+    library: { folderName: 'new-videos', scanStatus: 'ready', indexedFiles: 2 },
+    catalog: { fileName: null, recordCount: 0, importedAt: null, revision: null, importIssueCount: 0, importGeneration: 0 }
+  })
+  assert.deepEqual(state.webContents.sent.at(-1), {
+    channel: STANDALONE_PLAYER_IPC_CHANNELS.optionsChanged,
+    value: { ...options.port.getSnapshot(), revision: 1 }
+  }, 'Main attaches a monotonic revision to every pushed options update.')
+  assert.deepEqual(await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getOptionsSnapshot, state.event()), {
+    ...options.port.getSnapshot(), revision: 1
+  })
+  await assert.rejects(state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.selectVideoFolder, state.event(), '/renderer/path'),
+    /STANDALONE_IPC_INVALID_REQUEST/)
+  const foreign = new FakeWebContents(documentUrl)
+  await assert.rejects(state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getOptionsSnapshot,
+    state.event(foreign.sender())), /STANDALONE_IPC_FORBIDDEN/)
+  await assert.rejects(state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.importMusicCatalog,
+    state.event(foreign.sender())), /STANDALONE_IPC_FORBIDDEN/)
+  foreign.destroy()
+  assert.deepEqual(options.calls, {
+    chooseVideoFolder: 0, applyVideoFolder: [], refreshVideoLibrary: 0, chooseCatalogFile: 0, importCatalogFile: []
+  }, 'invalid and unauthorized invocations never reach native dialogs or services.')
+})
+
+test('folder selection is Main-guarded and revalidated after its asynchronous native dialog', async t => {
+  let releaseSelection!: (value: string | null) => void
+  let announceSelection!: () => void
+  const selection = new Promise<string | null>(resolve => { releaseSelection = resolve })
+  const selectionStarted = new Promise<void>(resolve => { announceSelection = resolve })
+  let dialogCalls = 0
+  const applied: string[] = []
+  const options = fakeOptionsPort({
+    chooseVideoFolder: async () => { dialogCalls++; announceSelection(); return selection },
+    applyVideoFolder: async value => { applied.push(value) }
+  })
+  const state = setup(undefined, options.port)
+  t.after(() => state.bridge.dispose())
+
+  const pendingSelection = state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.selectVideoFolder, state.event()) as Promise<any>
+  await selectionStarted
+  const duplicate = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.selectVideoFolder, state.event()) as any
+  assert.deepEqual({ outcome: duplicate.outcome, code: duplicate.code }, { outcome: 'blocked', code: 'LIBRARY_BUSY' })
+
+  const command = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.execute, state.event(), {
+    operationId: 'while-folder-dialog-open', command: { type: 'next' }
+  }) as any
+  assert.equal(command.outcome, 'rejected')
+  assert.equal(command.error.code, 'INVALID_STATE')
+  assert.equal(state.control.requests.length, 0, 'player commands cannot race a library replacement.')
+
+  state.control.setSnapshot({ playbackCondition: 'ready', state: {
+    operationalState: 'playing', current: { entryId: 'current', attemptId: 'attempt', musicCode: '01001' }, pending: []
+  } })
+  releaseSelection('/selected/library')
+  const result = await pendingSelection
+  assert.deepEqual({ outcome: result.outcome, code: result.code }, { outcome: 'blocked', code: 'PLAYER_NOT_IDLE' })
+  assert.equal(dialogCalls, 1, 'rapid repeated selection opens only one native folder picker.')
+  assert.deepEqual(applied, [], 'a transition during the dialog prevents persisting or applying the selected root.')
+  assert.equal(result.snapshot.library.folderName, 'videos')
+
+})
+
+test('CSV selection remains available during playback and is serialized without changing sequence state', async t => {
+  const options = fakeOptionsPort()
+  const state = setup(undefined, options.port)
+  t.after(() => state.bridge.dispose())
+  state.control.setSnapshot({ playbackCondition: 'ready', state: {
+    operationalState: 'paused', current: { entryId: 'current', attemptId: 'attempt', musicCode: '01001' }, pending: [
+      { entryId: 'pending', musicCode: '01002' }
+    ]
+  } })
+  const before = state.control.getSnapshot()
+  const result = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.importMusicCatalog, state.event()) as any
+  assert.equal(result.outcome, 'confirmed')
+  assert.equal(Number.isSafeInteger(result.snapshot.revision), true)
+  assert.deepEqual(options.calls.importCatalogFile, ['/selected/catalog.csv'])
+  assert.deepEqual(state.control.getSnapshot(), before, 'CSV import does not mutate the authoritative sequence.')
+})
+
+test('partial catalog confirmation is Main-locked and report pages are revision/generation scoped', async t => {
+  const token = '123e4567-e89b-12d3-a456-426614174000'
+  const revision = 'a'.repeat(64)
+  const options = fakeOptionsPort({
+    prepareCatalogImport: async value => {
+      options.calls.importCatalogFile.push(value)
+      return { outcome: 'confirmation-required', token, recordCount: 10, issueCount: 1, currentRecordCount: 4 }
+    },
+    confirmCatalogImport: async suppliedToken => {
+      assert.equal(suppliedToken, token)
+      options.setSnapshot({
+        ...options.port.getSnapshot(),
+        catalog: { fileName: 'partial.csv', recordCount: 10, importedAt: new Date(0).toISOString(),
+          revision, importIssueCount: 1, importGeneration: 1 }
+      })
+    },
+    cancelCatalogImport: suppliedToken => suppliedToken === token,
+    getCatalogImportIssuesPage: (catalogRevision, generation, offset) => {
+      if (catalogRevision !== revision || generation !== 1) throw new Error('CATALOG_REPORT_STALE')
+      return {
+        catalogRevision, generation, total: 1, offset,
+        issues: [{ rowNumber: 135, field: 'numero', value: '78952770', code: 'INVALID_MUSIC_NUMBER',
+          reason: 'O código deve conter de 1 a 5 dígitos, sem zero inicial.' }]
+      }
+    }
+  })
+  const state = setup(undefined, options.port)
+  t.after(() => state.bridge.dispose())
+
+  const prepared = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.importMusicCatalog, state.event()) as any
+  assert.equal(prepared.outcome, 'confirmation-required')
+  assert.deepEqual(prepared.confirmation, { token, recordCount: 10, issueCount: 1, currentRecordCount: 4 })
+  assert.equal(options.calls.importCatalogFile.length, 1)
+  const duplicate = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.importMusicCatalog, state.event()) as any
+  assert.deepEqual({ outcome: duplicate.outcome, code: duplicate.code }, { outcome: 'blocked', code: 'OPTIONS_BUSY' })
+
+  const confirmed = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.confirmMusicCatalogImport, state.event(), token) as any
+  assert.equal(confirmed.outcome, 'confirmed')
+  assert.equal(confirmed.snapshot.catalog.importIssueCount, 1)
+  const page = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getCatalogImportIssuesPage, state.event(), {
+    catalogRevision: revision, generation: 1, offset: 0
+  }) as any
+  assert.equal(page.issues[0].rowNumber, 135)
+  await assert.rejects(state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.getCatalogImportIssuesPage, state.event(), {
+    catalogRevision: revision, generation: 0, offset: 0
+  }), /CATALOG_REPORT_STALE/)
+  const staleConfirmation = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.confirmMusicCatalogImport,
+    state.event(), token) as any
+  assert.deepEqual({ outcome: staleConfirmation.outcome, code: staleConfirmation.code },
+    { outcome: 'failed', code: 'CATALOG_CONFIRMATION_STALE' })
+})
+
+test('Renderer accepts only newer options revisions when replies and events arrive out of order', () => {
+  const snapshot = (revision: number, folderName: string) => ({
+    revision,
+    library: { folderName, scanStatus: 'ready' as const, indexedFiles: 1 },
+    catalog: { fileName: null, recordCount: 0, importedAt: null, revision: null, importIssueCount: 0, importGeneration: 0 }
+  })
+  const revision3 = snapshot(3, 'latest')
+  assert.equal(isNewerStandalonePlayerOptionsSnapshot(undefined, revision3), true)
+  assert.equal(isNewerStandalonePlayerOptionsSnapshot(revision3, snapshot(2, 'stale')), false)
+  assert.equal(isNewerStandalonePlayerOptionsSnapshot(revision3, snapshot(3, 'duplicate')), false)
+  assert.equal(isNewerStandalonePlayerOptionsSnapshot(revision3, snapshot(4, 'newer')), true)
+})
+
+test('library refresh may use its own Main lock but still requires confirmed idle state', async t => {
+  const options = fakeOptionsPort()
+  const state = setup(undefined, options.port)
+  t.after(() => state.bridge.dispose())
+
+  const readyRefresh = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.refreshVideoLibrary, state.event()) as any
+  assert.equal(readyRefresh.outcome, 'confirmed')
+  assert.equal(options.calls.refreshVideoLibrary, 1)
+
+  state.control.setSnapshot({ playbackCondition: 'ready', state: {
+    operationalState: 'playing', current: { entryId: 'current', attemptId: 'attempt', musicCode: '01001' }, pending: []
+  } })
+  const busyRefresh = await state.ipcMain.invoke(STANDALONE_PLAYER_IPC_CHANNELS.refreshVideoLibrary, state.event()) as any
+  assert.deepEqual({ outcome: busyRefresh.outcome, code: busyRefresh.code }, { outcome: 'blocked', code: 'PLAYER_NOT_IDLE' })
+  assert.equal(options.calls.refreshVideoLibrary, 1, 'blocked direct IPC cannot start a second scan.')
+
+  const idle = createInitialStandalonePlayerSnapshot().state
+  const target = { entryId: 'loading-entry', musicCode: '01001' }
+  state.control.setSnapshot({
+    playbackCondition: 'transitioning', phase: 'loading', lastConfirmedState: idle,
+    pending: [target], target
+  })
+  const loadingRefresh = await state.ipcMain.invoke(
+    STANDALONE_PLAYER_IPC_CHANNELS.refreshVideoLibrary, state.event()) as any
+  assert.deepEqual({ outcome: loadingRefresh.outcome, code: loadingRefresh.code },
+    { outcome: 'blocked', code: 'PLAYER_NOT_IDLE' }, 'loading is occupied and cannot start a library scan.')
+  assert.equal(options.calls.refreshVideoLibrary, 1)
 })

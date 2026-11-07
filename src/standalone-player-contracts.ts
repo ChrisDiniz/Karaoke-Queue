@@ -170,7 +170,7 @@ export interface StandalonePlayerCommandRequest {
   readonly command: StandalonePlayerCommand
 }
 
-export type StandalonePlayerErrorCode = PlayerPlaybackErrorCode | 'OPERATION_ID_CONFLICT'
+export type StandalonePlayerErrorCode = PlayerPlaybackErrorCode | 'OPERATION_ID_CONFLICT' | 'QUEUE_LIMIT_REACHED'
 
 export interface StandalonePlayerError {
   readonly code: StandalonePlayerErrorCode

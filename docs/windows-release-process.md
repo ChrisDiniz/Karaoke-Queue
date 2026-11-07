@@ -16,6 +16,12 @@ The build compiles TypeScript and creates an unsigned Windows x64 NSIS installer
 
 The packaging verifier checks the installer name, app archive, Main, Preload, Renderer, assets, built-in SQLite dependency, icon, and absence of test/docs files and native SQLite add-ons. On Windows CI, `tests/packaged-windows-smoke.cjs` launches the unpacked packaged executable with a temporary profile, verifies trial initialization, writes and reads a test presentation through Renderer → Preload → IPC → SQLite, restarts, and checks persistence. This is a packaged-app smoke test; it does not run the NSIS installer interactively.
 
+## Approved future function-selection flow
+
+The installer described above does **not** yet implement the approved product flow. Phase E1 must first audit the existing Electron Builder/NSIS setup, per-user versus per-machine installation, privileges, multiple Windows accounts, installation detection, exclusivity, locks, profiles, and data-preservation/rollback requirements, then document and obtain approval for the implementation strategy. Only after that strategy is approved may E1 implement one Windows installer that selects Reprodutor (Standalone) or Gestão (Combined), initializes directly into the selected function, and enforces one installed/active function per computer. The application will not select or change function in first-run onboarding or Settings. E2 applies the selected function's identity and shortcuts; E4 owns the installer-maintenance flow for later function changes. E3 implements computer-wide exclusivity using the approved strategy. Do not treat the current per-user `userData` lock as machine-wide exclusivity.
+
+E1 defines and obtains approval for the strategy for preserving the selected function, existing `userData`/SQLite data, legacy installations, and recovery after partial failure. E5 will implement and validate updates, reinstalls, migration, rollback, and data preservation after E1–E4; it must not discover the data-protection strategy for the first time. Function changes must not silently delete or merge the prior function's data. These are future E requirements, not capabilities verified by the current installer or release workflow; no automatic database conversion or profile fusion is assumed.
+
 Builds are currently unsigned because no Windows signing certificate is configured. Windows SmartScreen may warn users. The workflow reports signature status and does not claim that the installer is signed.
 
 ## Pull requests
@@ -23,6 +29,10 @@ Builds are currently unsigned because no Windows signing certificate is configur
 `.github/workflows/pr-validation.yml` runs for opened, synchronized, and reopened pull requests targeting `main`. It uses read-only repository permissions and runs compile, unit tests, release/packaging configuration tests, and the real-Electron Linux E2E suites under Xvfb. After they pass, a Windows runner builds and verifies the x64 installer and runs the packaged executable smoke test. The installer is uploaded as the Actions artifact `Karaoke-Queue-PR-<number>-Windows-x64` for 30 days. It is a test artifact, not a GitHub Release. A PR workflow cannot create tags or publish Releases.
 
 ## Manual prerelease
+
+### Planned controlled venue-test milestone (Phase H7)
+
+The roadmap's H7 milestone is a controlled first release for owner-led remote-operation tests at a karaoke venue, after H5 and H6 approval. It is not automatic authorization for a public/commercial release or for running the publication workflow below. Preparing builds, distributing them, and installing them each require the owner's specific authorization. H7 covers Management controlling a separate Standalone Player; local playback integrated into Combined is deferred to H8 and is not an H7 prerequisite. Build, distribution, publication, and effective installation each require specific owner authorization.
 
 Only `.github/workflows/release-windows.yml` publishes. Its only trigger is `workflow_dispatch`; there are no push, tag, merge, PR, or release-published triggers. The workflow must be present on the repository's default branch for the Actions UI to show **Run workflow**.
 

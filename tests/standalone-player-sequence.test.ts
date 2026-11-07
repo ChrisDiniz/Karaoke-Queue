@@ -674,6 +674,154 @@ test('multiple priorities use LIFO order ahead of normal FIFO entries', async ()
   await sequence.dispose()
 })
 
+test('C11 accepts 30 pending songs excluding the current track and rejects Enter/P without mutating playback or order', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'limit-normal-first', '1002')
+  await submit(sequence, 'limit-normal-second', '1003')
+  await submit(sequence, 'limit-priority-first', '1111', 'priority')
+  await submit(sequence, 'limit-priority-second', '2222', 'priority')
+  for (let index = 0; index < 25; index++) {
+    await submitRaw(sequence, `limit-normal-fill-${index}`, '1002')
+  }
+
+  const at29 = ready(sequence.getSnapshot())
+  assert.equal(at29.current?.musicCode, '01001')
+  assert.equal(at29.pending.length, 29)
+
+  const thirtieth = await submitRaw(sequence, 'limit-thirtieth-normal', '3333')
+  assert.equal(thirtieth.outcome, 'confirmed')
+  const at30 = ready(sequence.getSnapshot())
+  assert.equal(at30.current?.musicCode, '01001', 'the current music is outside the 30-song pending capacity.')
+  assert.equal(at30.pending.length, 30)
+  assert.deepEqual(at30.pending.map(entry => entry.musicCode), [
+    '02222', '01111', '01002', '01003', ...Array(25).fill('01002'), '03333'
+  ], 'priority entries retain LIFO and normal entries retain FIFO at the capacity boundary.')
+
+  let publicationCount = 0
+  const unsubscribe = sequence.subscribe(() => { publicationCount++ })
+  const beforeRejectedAdmission = sequence.getSnapshot()
+  const playbackBeforeRejectedAdmission = playback.getState()
+  const validationCountBeforeRejectedAdmission = playback.validateCalls.length
+  const startsBeforeRejectedAdmission = [...playback.starts]
+  const stopsBeforeRejectedAdmission = [...playback.stops]
+  const timersBeforeRejectedAdmission = scheduler.activeTimerCount
+  const eventsBeforeRejectedAdmission = publicationCount
+
+  const rejectedEnter = await submitRaw(sequence, 'limit-31-enter', '4004', 'normal')
+  assert.equal(rejectedEnter.outcome, 'rejected')
+  if (rejectedEnter.outcome === 'rejected') assert.equal(rejectedEnter.error.code, 'QUEUE_LIMIT_REACHED')
+  const rejectedPriority = await submitRaw(sequence, 'limit-31-priority', '5005', 'priority')
+  assert.equal(rejectedPriority.outcome, 'rejected')
+  if (rejectedPriority.outcome === 'rejected') assert.equal(rejectedPriority.error.code, 'QUEUE_LIMIT_REACHED')
+
+  assert.deepEqual(sequence.getSnapshot(), beforeRejectedAdmission, 'capacity rejection does not publish or mutate the confirmed snapshot.')
+  assert.deepEqual(playback.getState(), playbackBeforeRejectedAdmission)
+  assert.equal(playback.validateCalls.length, validationCountBeforeRejectedAdmission,
+    'a known-full queue rejects before media validation or playback work.')
+  assert.deepEqual(playback.starts, startsBeforeRejectedAdmission)
+  assert.deepEqual(playback.stops, stopsBeforeRejectedAdmission)
+  assert.equal(scheduler.activeTimerCount, timersBeforeRejectedAdmission)
+  assert.equal(publicationCount, eventsBeforeRejectedAdmission, 'capacity rejection does not publish sequence events.')
+  unsubscribe()
+  await sequence.dispose()
+})
+
+test('C11 serializes competing Enter/P admissions for the last pending slot and preserves operation idempotency', async () => {
+  const { sequence, playback } = await build()
+  await addCurrent(sequence)
+  for (let index = 0; index < 29; index++) {
+    await submitRaw(sequence, `limit-race-fill-${index}`, '1002')
+  }
+
+  const gate = deferred<void>()
+  playback.validateGates.set('01003', gate)
+  playback.validationStarted.set('01003', deferred<void>())
+  const enterRequest: StandalonePlayerCommandRequest = {
+    operationId: 'limit-race-enter', command: { type: 'submit-code', enteredCode: '1003', priority: 'normal' }
+  }
+  const priorityRequest: StandalonePlayerCommandRequest = {
+    operationId: 'limit-race-priority', command: { type: 'submit-code', enteredCode: '1111', priority: 'priority' }
+  }
+  const enter = sequence.execute(enterRequest)
+  await playback.validationStarted.get('01003')!.promise
+  const priority = await sequence.execute(priorityRequest)
+  assert.equal(priority.outcome, 'rejected', 'the first in-flight admission reserves the final slot in Main.')
+  if (priority.outcome === 'rejected') assert.equal(priority.error.code, 'QUEUE_LIMIT_REACHED')
+  assert.deepEqual(playback.validateCalls.at(-1), '01003', 'the rejected priority request does not start a validation effect.')
+
+  gate.resolve()
+  const accepted = await enter
+  assert.equal(accepted.outcome, 'confirmed')
+  assert.equal(ready(sequence.getSnapshot()).pending.length, 30)
+  assert.deepEqual(await sequence.execute(enterRequest), accepted, 'retrying an accepted operationId cannot create another entry.')
+  assert.deepEqual(await sequence.execute(priorityRequest), priority, 'a rejected operationId remains idempotently rejected.')
+  assert.equal(ready(sequence.getSnapshot()).pending.length, 30)
+  await sequence.dispose()
+})
+
+test('C11 releases an in-flight capacity reservation when media validation rejects the admission', async () => {
+  const { sequence, playback } = await build()
+  await addCurrent(sequence)
+  for (let index = 0; index < 29; index++) {
+    await submitRaw(sequence, `limit-validation-fill-${index}`, '1002')
+  }
+
+  const gate = deferred<void>()
+  playback.validateGates.set('09999', gate)
+  playback.validationStarted.set('09999', deferred<void>())
+  playback.validationErrors.set('09999', new PlayerPlaybackError('MEDIA_UNAVAILABLE', 'Missing sample'))
+  const invalidAdmission: StandalonePlayerCommandRequest = {
+    operationId: 'limit-invalid-in-flight', command: { type: 'submit-code', enteredCode: '9999', priority: 'normal' }
+  }
+  const pendingInvalid = sequence.execute(invalidAdmission)
+  await playback.validationStarted.get('09999')!.promise
+
+  const whileReserved = await submitRaw(sequence, 'limit-rejected-while-reserved', '1111', 'priority')
+  assert.equal(whileReserved.outcome, 'rejected')
+  if (whileReserved.outcome === 'rejected') assert.equal(whileReserved.error.code, 'QUEUE_LIMIT_REACHED')
+  assert.equal(ready(sequence.getSnapshot()).pending.length, 29,
+    'an in-flight validation reserves the final slot without publishing a pending entry.')
+
+  gate.resolve()
+  const invalidResult = await pendingInvalid
+  assert.equal(invalidResult.outcome, 'rejected')
+  if (invalidResult.outcome === 'rejected') assert.equal(invalidResult.error.code, 'MEDIA_UNAVAILABLE')
+  assert.equal(ready(sequence.getSnapshot()).pending.length, 29)
+
+  const freshIntent = await submitRaw(sequence, 'limit-new-after-validation-failure', '1003')
+  assert.equal(freshIntent.outcome, 'confirmed', 'the failed validation must release capacity for a new intent.')
+  assert.equal(ready(sequence.getSnapshot()).pending.length, 30)
+  await sequence.dispose()
+})
+
+test('C11 keeps a full-queue rejection idempotent after natural EOF releases a slot; a new intent can use the vacancy', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await addCurrent(sequence)
+  for (let index = 0; index < 30; index++) {
+    await submitRaw(sequence, `limit-eof-fill-${index}`, '1002')
+  }
+  const rejectedRequest: StandalonePlayerCommandRequest = {
+    operationId: 'limit-rejected-before-eof', command: { type: 'submit-code', enteredCode: '3333', priority: 'normal' }
+  }
+  const rejected = await sequence.execute(rejectedRequest)
+  assert.equal(rejected.outcome, 'rejected')
+  if (rejected.outcome === 'rejected') assert.equal(rejected.error.code, 'QUEUE_LIMIT_REACHED')
+
+  await beginCelebration(sequence, playback)
+  const advanced = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' &&
+    snapshot.state.operationalState === 'playing' && snapshot.state.pending.length === 29)
+  await advanceCelebrationTimer(sequence, scheduler)
+  await advanced
+  assert.deepEqual(await sequence.execute(rejectedRequest), rejected,
+    'a retry of the rejected intent returns its original result even after capacity changes.')
+
+  const newIntent = await submitRaw(sequence, 'limit-new-intent-after-eof', '3333')
+  assert.equal(newIntent.outcome, 'confirmed')
+  assert.equal(ready(sequence.getSnapshot()).pending.length, 30)
+  await sequence.dispose()
+})
+
 test('concurrent validation completions preserve normal FIFO and priority LIFO admission order', async () => {
   const { sequence, playback } = await build()
   await addCurrent(sequence)
@@ -707,6 +855,162 @@ test('natural EOF keeps the celebration for five seconds then starts the current
   const advanced = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.current?.musicCode === '01002')
   await advanceCelebrationTimer(sequence, scheduler)
   await advanced
+  assert.deepEqual(playback.starts, ['01001', '01002'])
+  await sequence.dispose()
+})
+
+test('shutdown fences an EOF already queued in the transition arbiter before it can start the next song', async () => {
+  const { sequence, playback } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'shutdown-eof-pending', '1002')
+
+  playback.endCurrent()
+  await sequence.beginShutdown()
+  await new Promise<void>(resolve => setImmediate(resolve))
+  await new Promise<void>(resolve => setImmediate(resolve))
+
+  assert.deepEqual(playback.starts, ['01001'], 'shutdown must prevent the EOF handler from starting queued media.')
+  const afterShutdown = await sequence.execute({
+    operationId: 'sequence-after-shutdown', command: { type: 'toggle-pause' }
+  })
+  assert.equal(afterShutdown.outcome, 'rejected')
+  if (afterShutdown.outcome === 'rejected') assert.equal(afterShutdown.error.code, 'DISPOSED')
+  await sequence.dispose()
+})
+
+test('a failed pre-stop shutdown restores an active countdown with its frozen remaining time', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await submitRaw(sequence, 'shutdown-resume-countdown', '1001')
+  await scheduler.elapseWithoutRunning(1200)
+  const beforeShutdown = sequence.getSnapshot()
+  assert.equal(beforeShutdown.playbackCondition, 'transitioning')
+  if (beforeShutdown.playbackCondition !== 'transitioning' || beforeShutdown.phase !== 'countdown') {
+    throw new Error('Expected an active countdown before shutdown.')
+  }
+  const remainingMs = beforeShutdown.remainingMs
+
+  await sequence.beginShutdown()
+  await scheduler.elapseWithoutRunning(3000)
+  const frozen = sequence.getSnapshot()
+  assert.equal(frozen.playbackCondition, 'transitioning')
+  if (frozen.playbackCondition !== 'transitioning' || frozen.phase !== 'countdown') throw new Error('Countdown changed while shutdown was fenced.')
+  assert.equal(frozen.remainingMs, remainingMs)
+  assert.equal(scheduler.activeTimerCount, 0)
+
+  await sequence.resumeAfterFailedShutdown()
+  const resumed = sequence.getSnapshot()
+  assert.equal(resumed.playbackCondition, 'transitioning')
+  if (resumed.playbackCondition !== 'transitioning' || resumed.phase !== 'countdown') throw new Error('Countdown did not resume after shutdown failure.')
+  assert.equal(resumed.remainingMs, remainingMs)
+  assert.equal(scheduler.activeTimerCount, 1)
+  await scheduler.advance(remainingMs)
+  const playing = await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' &&
+    snapshot.state.operationalState === 'playing')
+  assert.equal(playing.playbackCondition, 'ready')
+  assert.deepEqual(playback.starts, ['01001'])
+  await sequence.dispose()
+})
+
+test('a failed pre-stop shutdown restores an active celebration and its FIFO continuation', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'shutdown-resume-celebration-queued', '1002')
+  const celebration = await beginCelebration(sequence, playback)
+  await scheduler.elapseWithoutRunning(1700)
+  const beforeShutdown = sequence.getSnapshot()
+  assert.equal(beforeShutdown.playbackCondition, 'transitioning')
+  if (beforeShutdown.playbackCondition !== 'transitioning' || beforeShutdown.phase !== 'celebration') {
+    throw new Error('Expected an active celebration before shutdown.')
+  }
+  const remainingMs = beforeShutdown.remainingMs
+  assert.ok(remainingMs < celebration.remainingMs)
+
+  await sequence.beginShutdown()
+  await scheduler.elapseWithoutRunning(4000)
+  const frozen = sequence.getSnapshot()
+  assert.equal(frozen.playbackCondition, 'transitioning')
+  if (frozen.playbackCondition !== 'transitioning' || frozen.phase !== 'celebration') throw new Error('Celebration changed while shutdown was fenced.')
+  assert.equal(frozen.remainingMs, remainingMs)
+  assert.equal(scheduler.activeTimerCount, 0)
+
+  await sequence.resumeAfterFailedShutdown()
+  const resumed = sequence.getSnapshot()
+  assert.equal(resumed.playbackCondition, 'transitioning')
+  if (resumed.playbackCondition !== 'transitioning' || resumed.phase !== 'celebration') throw new Error('Celebration did not resume after shutdown failure.')
+  assert.equal(resumed.remainingMs, remainingMs)
+  assert.equal(scheduler.activeTimerCount, 1)
+  const nextPlaying = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' &&
+    snapshot.state.current?.musicCode === '01002')
+  await scheduler.advance(remainingMs)
+  await nextPlaying
+  assert.deepEqual(playback.starts, ['01001', '01002'])
+  await sequence.dispose()
+})
+
+test('shutdown freezes a countdown whose timer callback is already queued in the transition arbiter', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await submitRaw(sequence, 'shutdown-queued-countdown-callback', '1001')
+  await scheduler.elapseWithoutRunning(1000)
+  const firedTimer = scheduler.timers.find(timer => !timer.cancelled)
+  assert.ok(firedTimer)
+  firedTimer.cancelled = true
+  firedTimer.callback()
+  const shutdown = sequence.beginShutdown()
+  await shutdown
+
+  const frozen = sequence.getSnapshot()
+  if (frozen.playbackCondition !== 'transitioning' || frozen.phase !== 'countdown') {
+    throw new Error('The queued countdown callback must not advance playback during shutdown.')
+  }
+  assert.equal(frozen.remainingMs, 4000)
+  assert.equal(scheduler.activeTimerCount, 0)
+
+  await sequence.resumeAfterFailedShutdown()
+  const resumed = sequence.getSnapshot()
+  if (resumed.playbackCondition !== 'transitioning' || resumed.phase !== 'countdown') {
+    throw new Error('The countdown callback queued before shutdown must be recoverable.')
+  }
+  assert.equal(resumed.remainingMs, 4000)
+  assert.equal(scheduler.activeTimerCount, 1)
+  await scheduler.advance(4000)
+  const playing = await waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' &&
+    snapshot.state.operationalState === 'playing')
+  assert.equal(playing.playbackCondition, 'ready')
+  assert.deepEqual(playback.starts, ['01001'])
+  await sequence.dispose()
+})
+
+test('shutdown freezes a celebration whose timer callback is already queued in the transition arbiter', async () => {
+  const { sequence, playback, scheduler } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'shutdown-queued-celebration-callback', '1002')
+  await beginCelebration(sequence, playback)
+  await scheduler.elapseWithoutRunning(1000)
+  const firedTimer = scheduler.timers.find(timer => !timer.cancelled)
+  assert.ok(firedTimer)
+  firedTimer.cancelled = true
+  firedTimer.callback()
+  const shutdown = sequence.beginShutdown()
+  await shutdown
+
+  const frozen = sequence.getSnapshot()
+  if (frozen.playbackCondition !== 'transitioning' || frozen.phase !== 'celebration') {
+    throw new Error('The queued celebration callback must not advance the sequence during shutdown.')
+  }
+  assert.equal(frozen.remainingMs, 4000)
+  assert.equal(scheduler.activeTimerCount, 0)
+
+  await sequence.resumeAfterFailedShutdown()
+  const resumed = sequence.getSnapshot()
+  if (resumed.playbackCondition !== 'transitioning' || resumed.phase !== 'celebration') {
+    throw new Error('The celebration callback queued before shutdown must be recoverable.')
+  }
+  assert.equal(resumed.remainingMs, 4000)
+  assert.equal(scheduler.activeTimerCount, 1)
+  const nextPlaying = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'ready' &&
+    snapshot.state.current?.musicCode === '01002')
+  await scheduler.advance(4000)
+  await nextPlaying
   assert.deepEqual(playback.starts, ['01001', '01002'])
   await sequence.dispose()
 })
@@ -1076,6 +1380,53 @@ test('natural EOF confirmed before Stop ACK advances once; delayed EOF for the o
   playback.state = { status: 'completed', attemptId: old.attemptId, musicCode: old.musicCode }
   playback.emit({ type: 'natural-end-candidate', attemptId: old.attemptId, musicCode: old.musicCode, duration: 1, endedAt: new Date(1).toISOString() })
   assert.equal(ready(sequence.getSnapshot()).current?.musicCode, '01002')
+  await sequence.dispose()
+})
+
+test('shutdown prevents a queued Next from starting its successor when natural EOF wins Stop', async () => {
+  const { sequence, playback } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'next-shutdown-queue', '1002')
+  const stopStarted = deferred<string | undefined>()
+  const allowStop = deferred<void>()
+  playback.stopStarted = stopStarted
+  playback.stopGate = allowStop
+
+  const next = sequence.execute({ operationId: 'next-shutdown-eof-race', command: { type: 'next' } })
+  await stopStarted.promise
+  playback.endCurrent()
+  const shutdown = sequence.beginShutdown()
+  allowStop.resolve()
+  await Promise.all([next, shutdown])
+
+  assert.deepEqual(playback.starts, ['01001'], 'shutdown must fence the successor after EOF beats the pending Stop.')
+  await sequence.dispose()
+})
+
+test('shutdown closing admission between EOF reservation and Next successor start blocks that start', async () => {
+  const { sequence, playback } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'next-shutdown-after-eof-reserve', '1002')
+  const stopStarted = deferred<string | undefined>()
+  const allowStop = deferred<void>()
+  playback.stopStarted = stopStarted
+  playback.stopGate = allowStop
+
+  const next = sequence.execute({ operationId: 'next-shutdown-after-eof-reserve-race', command: { type: 'next' } })
+  await stopStarted.promise
+  let shutdown: Promise<void> | undefined
+  const unsubscribe = sequence.subscribe(snapshot => {
+    if (shutdown || snapshot.playbackCondition !== 'transitioning' || snapshot.phase !== 'operation') return
+    shutdown = sequence.beginShutdown()
+  })
+  playback.endCurrent()
+  allowStop.resolve()
+  await next
+  assert.ok(shutdown, 'natural EOF reservation should synchronously trigger shutdown admission closure.')
+  await shutdown
+  unsubscribe()
+
+  assert.deepEqual(playback.starts, ['01001'], 'shutdown must block the second arbiter step from starting queued media.')
   await sequence.dispose()
 })
 

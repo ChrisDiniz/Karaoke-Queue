@@ -52,22 +52,58 @@ function launch(profile) {
   })
 }
 
-async function waitForEmbeddedPlayer(page) {
-  return page.evaluate(() => new Promise((resolve, reject) => {
-    const bridge = window.karaokePlayer
-    if (!bridge) { reject(new Error('Player bridge is unavailable.')); return }
-    const isReady = snapshot => snapshot.videoWindow.open && snapshot.videoWindow.location === 'inline' && snapshot.videoWindow.ready
-    let unsubscribe = () => {}
-    const timeout = window.setTimeout(() => finish(new Error('Embedded Player surface did not become ready.')), 15000)
-    const finish = (error, snapshot) => {
-      window.clearTimeout(timeout)
-      unsubscribe()
-      if (error) reject(error)
-      else resolve(snapshot)
-    }
-    unsubscribe = bridge.onSnapshot(snapshot => { if (isReady(snapshot)) finish(undefined, snapshot) })
-    void bridge.getSnapshot().then(snapshot => { if (isReady(snapshot)) finish(undefined, snapshot) }, finish)
-  }))
+async function getStandaloneControlPage(app) {
+  const pages = await app.windows()
+  const page = pages.find(candidate => candidate.url().includes('/standalone-player.html'))
+  assert.ok(page, `Standalone control Renderer must be attached; pages=${JSON.stringify(pages.map(candidate => candidate.url()))}`)
+  return page
+}
+
+async function readStandaloneSnapshot(page) {
+  page.on('pageerror', error => process.stderr.write(`STANDALONE_RENDERER_ERROR ${error.message}\n`))
+  try {
+    await page.waitForFunction(() => typeof window.standalonePlayer?.getSnapshot === 'function')
+  } catch (error) {
+    const diagnostic = await page.evaluate(() => ({
+      url: location.href,
+      title: document.title,
+      readyState: document.readyState,
+      bridgeType: typeof window.standalonePlayer,
+      scripts: [...document.scripts].map(script => script.src ? new URL(script.src).pathname : 'inline'),
+      bodyText: document.body.innerText.slice(0, 400)
+    })).catch(() => ({ renderer: 'unavailable' }))
+    process.stderr.write(`STANDALONE_BRIDGE_DIAGNOSTIC ${JSON.stringify(diagnostic)}\n`)
+    throw error
+  }
+  const envelope = await page.evaluate(() => window.standalonePlayer.getSnapshot())
+  return envelope.snapshot
+}
+
+async function closeStandalone(app, page) {
+  const closed = page.waitForEvent('close', { timeout: 15000 })
+  await app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find(candidate =>
+      candidate.webContents.getURL().includes('standalone-player.html'))
+    if (!window) throw new Error('The Standalone BrowserWindow is not available for the shutdown test.')
+    window.close()
+  })
+  await page.locator('#standalone-exit-confirmation').waitFor({ state: 'visible' })
+  await page.locator('#exit-confirmation-confirm').click()
+  await closed
+  await app.close()
+}
+
+async function closeStandaloneForCleanup(app, page) {
+  if (!app) return
+  try {
+    const cleanupPage = page ?? await getStandaloneControlPage(app).catch(() => undefined)
+    if (cleanupPage) await closeStandalone(app, cleanupPage)
+    else await app.close()
+  } catch (error) {
+    process.stderr.write(`STANDALONE_TEST_CLEANUP_FAILED ${error instanceof Error ? error.message : String(error)}\n`)
+    app.process().kill('SIGKILL')
+    await app.close().catch(() => {})
+  }
 }
 
 function readRecords(profile) {
@@ -147,6 +183,7 @@ async function runPlayerScanAndRestart() {
   writeMode(profile, 'player')
   writeVideoLibraryConfiguration(profile.userData, [mediaRoot])
   let app
+  let controlPage
   try {
     app = await launch(profile)
     const scan = await waitForRecord(profile, 'VIDEO_LIBRARY_SCAN_COMPLETED')
@@ -160,23 +197,29 @@ async function runPlayerScanAndRestart() {
     assert.equal(JSON.stringify(scan).includes(mediaRoot), false, 'startup diagnostics must not publish local absolute paths')
     assert.equal(fs.existsSync(path.join(profile.userData, 'karaoke.sqlite')), false,
       'Player-only startup must not create the Controller operational database')
-    const controlPage = await app.firstWindow()
+    controlPage = await getStandaloneControlPage(app)
     await controlPage.waitForLoadState('domcontentloaded')
     const playerWindowUrls = await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows().map(window => window.webContents.getURL()))
     assert.equal(playerWindowUrls.length, 1,
       'Player-only startup must open only its approved control shell')
-    assert.equal(playerWindowUrls.some(url => url.includes('player-control.html')), true)
+    assert.equal(playerWindowUrls.some(url => url.includes('standalone-player.html')), true,
+      `Player-only startup must open the Standalone control screen; windows=${JSON.stringify(playerWindowUrls)}`)
     assert.equal(playerWindowUrls.some(url => url.includes('player-playback.html')), false,
       'The independent video window must remain closed until an explicit operator action')
-    const initialPlayerSnapshot = await waitForEmbeddedPlayer(controlPage)
-    assert.equal(initialPlayerSnapshot.playback.status, 'idle', 'Player-only startup must not autoplay')
-    assert.equal(initialPlayerSnapshot.videoWindow.open, true, 'Player-only startup must make the embedded video surface available')
-    assert.equal(initialPlayerSnapshot.videoWindow.location, 'inline', 'Player-only startup must keep video embedded')
+    const initialPlayerSnapshot = await readStandaloneSnapshot(controlPage)
+    assert.equal(initialPlayerSnapshot.playbackCondition, 'ready')
+    assert.equal(initialPlayerSnapshot.state.operationalState, 'idle', 'Player-only startup must not autoplay')
+    assert.equal(initialPlayerSnapshot.state.current, null)
+    assert.deepEqual(initialPlayerSnapshot.state.pending, [])
+    const initialOptions = await controlPage.evaluate(() => window.standalonePlayer.getOptionsSnapshot())
+    assert.equal(initialOptions.library.scanStatus, 'ready')
+    assert.equal(initialOptions.library.indexedFiles, 1, 'Standalone Options must expose the completed media-library index')
 
     const previousRunId = ready.runId
-    await app.close()
+    await closeStandalone(app, controlPage)
     app = undefined
+    controlPage = undefined
     fs.writeFileSync(path.join(mediaRoot, 'nested', '01235 - nested.MKV'), '')
 
     app = await launch(profile)
@@ -187,22 +230,28 @@ async function runPlayerScanAndRestart() {
       'configured roots must survive restart')
     assert.equal(restartedScan.details.availableCodes, 2,
       'the index must be rebuilt from the configured filesystem on restart')
-    const restartedControlPage = await app.firstWindow()
+    controlPage = await getStandaloneControlPage(app)
+    const restartedControlPage = controlPage
     await restartedControlPage.waitForLoadState('domcontentloaded')
     const restartedPlayerWindowUrls = await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows().map(window => window.webContents.getURL()))
     assert.equal(restartedPlayerWindowUrls.length, 1,
       'Player-only restart must restore only the control shell without opening video output')
-    assert.equal(restartedPlayerWindowUrls.some(url => url.includes('player-control.html')), true,
-      'the Player control shell must be restored for the configured Player mode')
+    assert.equal(restartedPlayerWindowUrls.some(url => url.includes('standalone-player.html')), true,
+      `the Standalone control shell must be restored for the configured Player mode; windows=${JSON.stringify(restartedPlayerWindowUrls)}`)
     assert.equal(restartedPlayerWindowUrls.some(url => url.includes('player-playback.html')), false,
       'the independent video window must remain closed after restart')
-    const restartedPlayerSnapshot = await waitForEmbeddedPlayer(restartedControlPage)
-    assert.equal(restartedPlayerSnapshot.playback.status, 'idle', 'Player-only restart must not autoplay')
-    assert.equal(restartedPlayerSnapshot.videoWindow.open, true, 'Player-only restart must restore the embedded video surface')
-    assert.equal(restartedPlayerSnapshot.videoWindow.location, 'inline', 'Player-only restart must keep video embedded')
+    const restartedPlayerSnapshot = await readStandaloneSnapshot(restartedControlPage)
+    assert.equal(restartedPlayerSnapshot.playbackCondition, 'ready')
+    assert.equal(restartedPlayerSnapshot.state.operationalState, 'idle', 'Player-only restart must not autoplay')
+    assert.equal(restartedPlayerSnapshot.state.current, null)
+    assert.deepEqual(restartedPlayerSnapshot.state.pending, [])
+    const restartedOptions = await restartedControlPage.evaluate(() => window.standalonePlayer.getOptionsSnapshot())
+    assert.equal(restartedOptions.library.scanStatus, 'ready')
+    assert.equal(restartedOptions.library.indexedFiles, 2,
+      'the configured library must be re-indexed after restart without storing its inventory in the Controller database')
     assert.equal(fs.existsSync(path.join(profile.userData, 'karaoke.sqlite')), false)
-  } finally { await app?.close().catch(() => {}) }
+  } finally { await closeStandaloneForCleanup(app, controlPage) }
 }
 
 async function runCombinedReusesControllerAndPlayerOwnership() {

@@ -70,6 +70,7 @@ export class PlayerPlaybackService {
   private latestRequestedCode: string | undefined
   private stopOperation: Promise<PlayerPlaybackState> | undefined
   private stopOperationAttemptId: string | undefined
+  private uncertainContainment: { attemptId: string; musicCode: string; host: PlayerPlaybackHost } | undefined
   private progress: PlayerPlaybackProgress | undefined
 
   constructor(
@@ -377,6 +378,15 @@ export class PlayerPlaybackService {
   }
 
   stop(expectedAttemptId?: string): Promise<PlayerPlaybackState> {
+    return this.beginStop(expectedAttemptId, false)
+  }
+
+  /** A bounded shutdown stop that records shutdown-specific transitions without disposing the service. */
+  stopForShutdown(expectedAttemptId?: string): Promise<PlayerPlaybackState> {
+    return this.beginStop(expectedAttemptId, true)
+  }
+
+  private beginStop(expectedAttemptId: string | undefined, shutdown: boolean): Promise<PlayerPlaybackState> {
     if (this.stopOperation) {
       if (expectedAttemptId && this.stopOperationAttemptId !== expectedAttemptId) {
         return Promise.reject(new PlayerPlaybackError('SUPERSEDED', 'A reprodução mudou antes da confirmação de parada.'))
@@ -384,7 +394,7 @@ export class PlayerPlaybackService {
       return this.stopOperation
     }
     this.commandGeneration++
-    const operation = this.performStop(expectedAttemptId)
+    const operation = this.performStop(expectedAttemptId, shutdown)
     this.stopOperation = operation
     this.stopOperationAttemptId = expectedAttemptId ?? this.active?.attemptId
     void operation.then(
@@ -392,6 +402,35 @@ export class PlayerPlaybackService {
       () => { if (this.stopOperation === operation) { this.stopOperation = undefined; this.stopOperationAttemptId = undefined } }
     )
     return operation
+  }
+
+  /** Retries bounded containment after a failed shutdown stop while retaining the recovery owner. */
+  async retryShutdownContainment(): Promise<PlayerPlaybackState> {
+    const target = await this.enqueue(() => {
+      this.ensureNotDisposed()
+      if (this.state.status !== 'uncertain' || !this.state.attemptId || !this.state.musicCode) {
+        throw new PlayerPlaybackError('INVALID_STATE', 'Não há uma tentativa incerta para conter durante o encerramento.')
+      }
+      if (['stop-acknowledged', 'host-terminated'].includes(this.state.containmentStatus ?? '')) return undefined
+      const retained = this.uncertainContainment
+      if (!retained || retained.attemptId !== this.state.attemptId || retained.musicCode !== this.state.musicCode) {
+        throw new PlayerPlaybackError('HOST_CONTAINMENT_FAILED', 'O host da tentativa incerta não está disponível para uma nova contenção.')
+      }
+      const attempt: ActiveAttempt = {
+        attemptId: retained.attemptId,
+        musicCode: retained.musicCode,
+        hostEpoch: retained.host.hostEpoch,
+        inventoryRevision: '',
+        lastSequence: 0,
+        sawPlaying: false,
+        pauseRequested: false,
+        terminal: true
+      }
+      return { attempt, host: retained.host }
+    })
+    if (!target) return this.getState()
+    await this.containUncertainAttempt(target.attempt, target.host, true)
+    return this.getState()
   }
 
   /** Clears a manually removed song only after its Stop ACK has been recorded. */
@@ -439,7 +478,7 @@ export class PlayerPlaybackService {
     })
   }
 
-  private async performStop(expectedAttemptId?: string): Promise<PlayerPlaybackState> {
+  private async performStop(expectedAttemptId?: string, shutdown = false): Promise<PlayerPlaybackState> {
     const command = await this.enqueue(() => {
       this.ensureNotDisposed()
       const attempt = this.active
@@ -454,7 +493,8 @@ export class PlayerPlaybackService {
         }
         return undefined
       }
-      this.setDurableState({ status: 'stopping', attemptId: attempt.attemptId, musicCode: attempt.musicCode }, 'stop-intent')
+      this.setDurableState({ status: 'stopping', attemptId: attempt.attemptId, musicCode: attempt.musicCode },
+        shutdown ? 'shutdown-stop-intent' : 'stop-intent')
       this.active = undefined
       attempt.terminal = true
       attempt.mediaGrant?.revoke()
@@ -475,7 +515,8 @@ export class PlayerPlaybackService {
         await this.enqueue(() => {
           if (!this.disposed && this.state.status === 'stopping' && this.state.attemptId === command.attempt.attemptId) {
             this.setDurableState({ status: 'stopped', attemptId: command.attempt.attemptId,
-              musicCode: command.attempt.musicCode, containmentStatus: 'stop-acknowledged' }, 'stop-confirmed')
+              musicCode: command.attempt.musicCode, containmentStatus: 'stop-acknowledged' },
+              shutdown ? 'shutdown-confirmed' : 'stop-confirmed')
           }
         })
       } catch (error) {
@@ -978,6 +1019,9 @@ export class PlayerPlaybackService {
     host: PlayerPlaybackHost | undefined,
     requestStop: boolean
   ): Promise<void> {
+    this.uncertainContainment = host?.hostEpoch === attempt.hostEpoch
+      ? { attemptId: attempt.attemptId, musicCode: attempt.musicCode, host }
+      : undefined
     let containmentStatus: NonNullable<PlayerPlaybackState['containmentStatus']> = 'unavailable'
     if (host?.hostEpoch === attempt.hostEpoch) {
       if (requestStop) {
@@ -993,8 +1037,13 @@ export class PlayerPlaybackService {
     }
     await this.enqueue(() => {
       if (this.state.status !== 'uncertain' || this.state.attemptId !== attempt.attemptId) return
-      try { this.setDurableState({ ...this.state, containmentStatus }, 'containment-updated') }
+      const confirmedState = { ...this.state }
+      delete confirmedState.errorCode
+      try { this.setDurableState({ ...confirmedState, containmentStatus }, 'containment-updated') }
       catch { this.setState({ ...this.state, errorCode: 'RECOVERY_PERSISTENCE_FAILED', containmentStatus }) }
+      if (containmentStatus === 'stop-acknowledged' || containmentStatus === 'host-terminated') {
+        this.uncertainContainment = undefined
+      }
     })
   }
 

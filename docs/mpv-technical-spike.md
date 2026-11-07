@@ -2,6 +2,8 @@
 
 **Status:** comparação isolada Linux/Windows preservada como histórico; Chromium/Electron foi selecionado pelo responsável do produto para a engine inicial. Na Phase 5B.1, o operador confirmou áudio audível; a decisão aprovada para a Phase 5C registra também sincronização A/V percebida como aceitável. A integração técnica de produção está documentada na seção 14.
 
+> **Direção atual:** referências futuras a “Phase 7” neste registro usam a numeração histórica da arquitetura remota e correspondem à atual Fase H (integração operacional Gestão + Player). Preserve os resultados do spike; consulte o [roadmap atual](standalone-player-roadmap.md) para a sequência A–H.
+
 ## 1. Objetivo e limites
 
 Avaliar arquivos de amostra fornecidos pelo operador, parser/decode em ferramentas locais e os contratos de controle/eventos do mpv, comparando com Chrome/Chromium e Electron em Linux. Nenhuma amostra foi alterada. Não houve integração com o app, mudança de banco, tela ou distribuição de binários.

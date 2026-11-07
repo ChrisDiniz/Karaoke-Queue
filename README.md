@@ -2,7 +2,7 @@
 
 **Version 0.5.0 · Pre-1.0 development**
 
-> **AVISO DE TRANSIÇÃO** — O produto está migrando para dois modos: **Player Only (Standalone)** e **Tudo em um (Combined)**. A implementação antiga do Player Only e o modo Controlador independente ainda podem aparecer no código e na seleção atual. Os recursos operacionais do Controlador serão preservados no Combined. A especificação funcional oficial da nova V1 está em [docs/standalone-one-screen-player.md](docs/standalone-one-screen-player.md); o estado e as fases estão em [docs/standalone-player-roadmap.md](docs/standalone-player-roadmap.md). A UI Standalone será criada separadamente no Doop.
+> **AVISO DE TRANSIÇÃO** — O produto-alvo tem duas funções: **Reprodutor (Standalone)** e **Gestão (Combined)**. A implementação antiga do Player Only e o modo Controller independente ainda podem aparecer no código e na seleção atual. Mesas, cantores, fila, sessões, histórico e regras de gestão serão preservados no Combined. No produto final, a função será escolhida durante a instalação Windows, sem seletor no onboarding ou nas Configurações; a alteração posterior será feita pela manutenção do instalador. A regra aprovada é uma função por computador; a estratégia de instalação precisa de aprovação em E1 e a garantia técnica pertence a E3. A especificação funcional Standalone está em [docs/standalone-one-screen-player.md](docs/standalone-one-screen-player.md); a direção e as fases atuais estão em [docs/standalone-player-roadmap.md](docs/standalone-player-roadmap.md).
 
 Karaoke Queue is a desktop application for karaoke operators. Its Controller organizes singers, tables, sessions, and presentation queues; its isolated Player mode plays local videos from a manually managed sequence.
 
@@ -59,11 +59,12 @@ These bullets describe the existing multi-view Player implementation. They are n
 
 ### Current implementation and target modes
 
-- **Current code:** still recognizes `controller`, `player`, and `combined`. The first-launch selector offers all three; the old Player is a separate multi-view interface. Combined currently initializes Controller operations and some local Player services, but has no completed Standalone-style playback UI integration.
-- **Target:** **Player Only (Standalone)** is the independent one-screen local Player in the V1 specification. **Tudo em um (Combined)** preserves the current Controller's operational features and adds local or, in a later phase, remote playback.
-- **Controlador:** the independent mode will be discontinued as a product option; its tables, singers, queue, sessions, history, and scheduling rules are being preserved for Combined.
+- **Current code:** still recognizes `controller`, `player`, and `combined`. Its first-launch selector offers all three; the old Player is a separate multi-view interface. This is transitional behavior, not the target installation flow. Combined currently initializes Controller operations and some local Player services, but does not yet have completed Standalone-style playback UI integration.
+- **Target:** **Reprodutor (Standalone)** is the independent one-screen local Player in the V1 specification, with its own media library, optional CSV catalog, and sequence; it can work offline and does not use the Controller's operational queue. **Gestão (Combined)** preserves the Controller's operational features and will first control a remote Player for controlled venue testing; local playback integrated into Combined follows later and is not a prerequisite for that first release.
+- **Function selection:** one Windows installer will let the operator choose a function. New installs will open directly in that function; the app will not offer mode selection in onboarding or Settings. Later changes will use installer maintenance. Updates must preserve the chosen function and existing data. The current installer and code do not yet enforce this product rule; strategy approval is planned in Phase E1 and implementation in Phase E3.
+- **Controller:** the independent product function will be discontinued; tables, singers, queue, sessions, history, and scheduling rules remain for Combined. Do not remove Controller features or shared services before the authorized cleanup/integration phases.
 
-The mode selector and existing lifecycle are transitional and are not changed during architecture preparation. LAN playback is planned after the Standalone is complete; it is not implemented.
+The existing selector and lifecycle are transitional and remain unchanged until their authorized roadmap phase. The approved sequence is A → B → C (Standalone, responsiveness and performance) → D (installer, functions and migration) → E (controlled cleanup, regression and stabilization) → F (secure remote communication) → G (Combined consolidation). LAN/remote playback is not implemented.
 
 ## How the smart queue works
 

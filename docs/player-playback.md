@@ -2,7 +2,7 @@
 
 **Status:** engine Chromium, serviços de playback, recuperação local, sequência local e catálogo opcional foram implementados nas Phases 5C–5F-A. Na Phase 5F-B, a interface e a janela independente de vídeo foram integradas para **Player isolado**. Os frames Player usados nesta implementação estão `ready_for_dev`; o frame de modo operacional nas Configurações do Controller (`f86VljP3G4`) continua `draft` e não recebe aceite visual nesta fase. Nenhum canvas foi alterado. E2Es Linux e Windows nativo pelo runner oficial passaram. LAN, UI Player do Combined e orquestração autoritativa de apresentações no Combined permanecem fora deste escopo.
 
-> **AVISO DE TRANSIÇÃO:** este documento descreve a implementação técnica e o histórico do Player Only legado. Preserve esses serviços e testes até a aprovação funcional, visual e audiovisual do novo Standalone. Este documento não define a fila, os atalhos ou a interface da V1; use [a especificação canônica](standalone-one-screen-player.md) e o [roadmap Standalone/Combined](standalone-player-roadmap.md). Referências à futura integração Controller/Player abaixo são históricas e estão subordinadas ao novo roadmap.
+> **AVISO DE TRANSIÇÃO:** este documento descreve a implementação técnica e o histórico do Player Only legado. Preserve esses serviços e testes até a aprovação funcional, visual e audiovisual do novo Standalone. Este documento não define a fila, os atalhos ou a interface da V1; use [a especificação canônica](standalone-one-screen-player.md) e o [roadmap Standalone/Combined](standalone-player-roadmap.md). A seleção de modo por Welcome/Settings registrada abaixo é o comportamento legado atual, não a direção futura: a função será selecionada durante a instalação e alterada somente pela manutenção do instalador na Fase E. A prioridade do roadmap atual é Gestão controlando um Player remoto e o primeiro release controlado em H2–H7; reprodução local integrada ao Combined é posterior, em H8. Referências antigas à Phase 6/7 são a numeração desta arquitetura histórica, hoje mapeada para G/H.
 
 ## Escopo e propriedade
 
@@ -29,7 +29,7 @@ Na Phase 5F-B, Player-only abre o painel `player-control.html` com a superfície
 | `src/player-control-renderer.ts` / `src/player-control.html` / `src/player-control.css` | Painel do modo Reprodutor: entrada por código, música atual, sequência local, controles, configurações de acervo/CSV e estados de recuperação/erro. |
 | `player-control-preload.ts` | Bridge estreito da interface de controle; encaminha comandos e snapshots sem expor Node, SQLite ou filesystem. |
 | `src/player-video-window.ts` | BrowserWindow independente para o host Chromium de produção, com saída em janela e fullscreen sem controles sobre o vídeo. |
-| `src/welcome-renderer.ts` / `welcome-preload.ts` | Seleção de modo na primeira abertura quando o perfil não tem configuração nem dados operacionais anteriores. Perfis legados preservam o comportamento Controller. |
+| `src/welcome-renderer.ts` / `welcome-preload.ts` | Seletor transitório de modo na primeira abertura quando o perfil não tem configuração nem dados operacionais anteriores. Perfis legados preservam Controller. O fluxo-alvo aprovado não seleciona função no Welcome; a escolha será do instalador D. |
 
 O adapter usa diretamente Chromium/Electron. Não há framework de plugins nem processo mpv.
 
@@ -37,11 +37,19 @@ O adapter usa diretamente Chromium/Electron. Não há framework de plugins nem p
 
 - **Controller:** não inicializa a biblioteca de mídia, o protocolo nem `PlayerPlaybackService`; preserva banco e comportamento Controller existentes.
 - **Player:** inicializa a biblioteca local, registra `kq-media`, cria `PlayerPlaybackService` e `ManualPlaybackService`, abre `player-music-catalog.sqlite` para metadados opcionais e cria o painel de controle com a superfície de vídeo inline. A janela de saída independente é criada sob demanda. Não abre `karaoke.sqlite`, tabelas operacionais ou fila Controller. A sequência continua volátil e é separada da fila Controller.
-- **Combined:** inicializa serviços de biblioteca/playback e mantém uma única conexão SQLite Controller. Nesta fase não cria a janela Player nem ativa a sequência local com auto-avanço; a orquestração Combined permanece com Controller/Phase 7. Não usa loopback LAN.
+- **Combined:** na implementação atual inicializa serviços de biblioteca/playback e mantém uma única conexão SQLite Controller. Não cria a janela Player nem ativa a sequência local com auto-avanço, e não usa loopback LAN. A futura integração remota da Gestão segue H2–H7; a reprodução local integrada fica para H8, depois do primeiro release remoto.
 
 O catálogo Player-only rejeita arquivos não regulares, links/reparse points e identidades que aliasem `karaoke.sqlite` ou seus arquivos WAL/SHM antes de executar PRAGMAs de escrita. A identidade do arquivo é revalidada depois que SQLite abre o banco. Como o processo usa arquivos locais sem um lock de filesystem contra outros processos do mesmo usuário, uma troca maliciosa concorrente do caminho continua sendo uma limitação de TOCTOU do sistema operacional.
 
-Na saída normal em Player-only, `before-quit` consulta o contrato de shutdown do coordenador. Sem playback ativo, a saída continua; com uma tentativa ativa ou cuja contenção não foi confirmada, o painel apresenta a decisão de manter tocando ou interromper e sair. Cancelar preserva a tentativa; confirmar usa a parada controlada e não trata Stop como EOF. A janela independente de vídeo não encerra sessão Controller. Em Controller/Combined, esta UI de confirmação do Player ainda não foi integrada.
+A composição e a confirmação de saída atuais do modo `player` estão descritas na seção C9.4 abaixo. O shell legado segue preservado para consumidores necessários, incluindo Combined, e não define a confirmação de saída Standalone.
+
+## Composição Standalone de produção — C9.4
+
+No modo player, main.ts compõe uma única StandalonePlayerSequence, PlayerPlaybackService, responsável único pela recuperação e UI standalone-player.html com Preload/IPC restritos. PlayerVideoWindow continua sendo o host Chromium de mídia; catálogo Player, biblioteca e opções continuam sob autoridade Main. A fila Standalone é volátil e não é a fila operacional do Combined.
+
+Saída pelo menu, X/Alt+F4 e app.quit normal usa uma confirmação Main-side única; se o Renderer estiver indisponível há fallback nativo. Depois de confirmar, Main fecha novas admissões e drena chamadas aceitas, pede Stop específico de shutdown, verifica a recuperação persistida e a contenção, descarta sequence/host e valida novamente antes de autorizar app.quit. O prazo total é 30 s. Stop não é EOF. Se recovery/contenção não puderem ser confirmados, o app permanece aberto e mostra falha, com possibilidade de nova tentativa; shutdown incerto não é apresentado como seguro. O registro de recovery mantém resultados reais (inclusive tentativa pendente incerta), a sequence não é persistida, e startup após saída confirmada começa sem autoplay.
+
+C9.4 passou em Linux e Windows com Electron/Playwright, MP4 real e SQLite/perfil isolados. Windows foi validado pelo runner oficial com fingerprint `d7c4fea777704df8742cfc88b6560dc343d1c38e6b68d2fb97c7ec722f97e152`, sem processos residuais. O envio físico de Alt+F4 foi aceito, mas não produziu evento `close` no runner; o `SC_CLOSE` para a janela verificada produziu exatamente um. A validação integrada adicional de C9.5 segue em andamento.
 
 ## Recuperação persistente — Phase 5E
 
@@ -87,7 +95,7 @@ As transições curtas são serializadas no Main. Espera por readiness/ACK ocorr
 
 `ManualPlaybackService` mantém uma sequência local volátil com IDs de item, música atual, itens pendentes e histórico de navegação necessário para Previous. `addToSequence()` normaliza e revalida o código pela biblioteca; `removeFromSequence()`, `reorderSequence()` (permutação exata dos IDs pendentes) e `clearSequence()` não persistem dados. Next/Previous só usam itens explicitamente conhecidos; sem contexto retornam `unavailable / NO_SEQUENCE`, e nas bordas retornam `boundary / SEQUENCE_BOUNDARY`. Não há wrap-around nem incremento/decremento numérico.
 
-O Main habilita `autoAdvanceOnNaturalEnd` somente para o modo Player isolado. Ao receber `natural-end-candidate`, o serviço exige correspondência com a tentativa ativa e com o estado `completed` validado pelo `PlayerPlaybackService`; deduplica por attempt ID e dispara apenas o item pendente na cabeça da sequência. O item só é removido após novo playback aceito/iniciado. Falha mantém o item pendente e não pula adiante. Stop, Restart e substituição invalidam a autoridade antiga antes de comandos posteriores; EOF antigo/duplicado não pode avançar. Em Combined o avanço automático local está desligado nesta fase para não substituir a orquestração Controller, que será definida na Phase 7. A sequência não é persistida e não é a fila autoritativa.
+O Main habilita `autoAdvanceOnNaturalEnd` somente para o modo Player isolado. Ao receber `natural-end-candidate`, o serviço exige correspondência com a tentativa ativa e com o estado `completed` validado pelo `PlayerPlaybackService`; deduplica por attempt ID e dispara apenas o item pendente na cabeça da sequência. O item só é removido após novo playback aceito/iniciado. Falha mantém o item pendente e não pula adiante. Stop, Restart e substituição invalidam a autoridade antiga antes de comandos posteriores; EOF antigo/duplicado não pode avançar. Em Combined o avanço automático local está desligado na implementação atual. A integração remota e sua autoridade operacional pertencem a H2/H3; playback local integrado e seu avanço só são escopo de H8, após H7. A sequência do Player isolado não é persistida e não é a fila autoritativa.
 
 `ManualPlaybackService` devolve resultados tipados para adição, remoção, reordenação, limpeza e navegação. O snapshot expõe `current`, `pending` e `previous`, sem dados de Controller. Seleção manual pode iniciar imediatamente ou consumir um item equivalente pendente sem adivinhar outros códigos.
 
@@ -133,7 +141,7 @@ O Renderer observa `loadedmetadata`, `playing`, `pause`, `ended`, `error`, `empt
 
 Stop, Restart, substituição, falha de mídia, término do Renderer e timeout nunca viram natural EOF. Crash/ACK incerto remove a tentativa ativa, emite interrupção/incerteza e não reinicia playback.
 
-`natural-end-candidate` é uma observação do playback local, não uma conclusão de música cantada ou apresentação. O Renderer fornece a observação `ended` e valores de tempo; Main valida correlação/coerência, mas não verifica independentemente cada frame ou amostra de áudio. A Phase 7 deve definir a confiança e validação Controller antes de afetar histórico.
+`natural-end-candidate` é uma observação do playback local, não uma conclusão de música cantada ou apresentação. O Renderer fornece a observação `ended` e valores de tempo; Main valida correlação/coerência, mas não verifica independentemente cada frame ou amostra de áudio. A autoridade e validação Controller para eventos remotos pertencem a H3; a integração local do mesmo caminho será tratada posteriormente em H8.
 
 ## Acesso local à mídia e segurança
 
@@ -188,12 +196,12 @@ A superfície de vídeo aparece inline na tela do Player por padrão. “Abrir e
 - **Phase 5D implementada:** serviço técnico de seleção por código e sequência explícita; API interna, sem interface de operador.
 - **Phase 5E implementada:** persistência mínima de recuperação, decisões técnicas de shutdown e operações explícitas sem autoplay. Os diálogos aprovados para Player-only foram integrados na Phase 5F-B; Combined continua sem essa UI.
 - **Phase 5F-B implementada para Player-only:** shell de controle, configurações locais, recuperação e host Chromium independente vinculados a designs Doop aprovados. A integração visual/operacional de Combined e Player Connected continua pendente e não é afirmada como pronta.
-- **Phase 6:** LAN HTTP/WebSocket e adaptação do mesmo contrato de playback.
-- **Phase 7:** reconciliação Controller, persistência por música e conclusão autoritativa de apresentação.
+- **Phase 6 (nomenclatura histórica deste documento; atual F):** comunicação remota segura HTTPS/WSS, pareamento e contratos versionados.
+- **Phase 7:** nomenclatura histórica preservada. No roadmap atual, integração remota e autoridade operacional são H2/H3, validação operacional remota é H5, o primeiro release controlado é H7, e playback local integrado ao Combined fica para H8.
 
 ### Fase 5F-A — sequência, catálogo Player e recovery inválida
 
-- **Implementado:** sequência local com add/remove/reorder/clear em memória; inclusões concorrentes preservam a ordem de chamada e EOF natural validado avança somente no modo Player isolado. Next/Previous ficam indisponíveis durante a transição de auto-avanço. Combined não autoavança; a orquestração de apresentações permanece com Controller/Phase 7.
+- **Implementado:** sequência local com add/remove/reorder/clear em memória; inclusões concorrentes preservam a ordem de chamada e EOF natural validado avança somente no modo Player isolado. Next/Previous ficam indisponíveis durante a transição de auto-avanço. Combined não autoavança na implementação atual; a integração remota será H2/H3 e playback local integrado será H8.
 - **Implementado:** catálogo CSV opcional Player-only em `player-music-catalog.sqlite`; não abre nem cria SQLite operacional. O parser e o repositório compartilham as regras existentes. Na Phase 5F-A ainda não havia tela; importação/substituição foi integrada na Phase 5F-B.
 - **Implementado:** recovery inválida permanece bloqueante. Resolução explícita journaled move os arquivos para quarentena por rename atômico, confirma tamanho/hash depois do move e só libera playback depois da gravação e releitura de `idle`; divergência permanece bloqueada.
 - **Implementado na Phase 5F-A:** contratos `KaraokePlayerBridge` no Preload e handlers Main-side para estado, sequência, metadados, importação e recovery. Naquele estágio ainda não havia janela Player no startup nem UI de operador; a integração Player-only foi entregue depois na Phase 5F-B.
@@ -330,7 +338,7 @@ Enquanto o modal de confirmação de encerramento está aberto sobre a área Rep
 
 - Um EOF natural válido da última música remove o elemento de vídeo encerrado, limpa progresso e seleção atual e restaura no host Chromium o estado **“Aguardando música”** com **“Não há música em reprodução ou na sequência local.”** Havendo próxima faixa explícita, o serviço manual inicia somente esse item. Stop, Restart, erro, falha de cleanup e EOF de tentativa antiga não são tratados como término natural.
 - F11/Esc preservam a tentativa e restauram a geometria a partir de bounds atuais. O host real do vídeo mostra temporariamente **“Pressione Esc ou F11 para sair da tela cheia”**, oculta o aviso após 2,6 s e o remove imediatamente ao sair.
-- As Configurações do Reprodutor e do Controlador permitem abrir a seleção de modo usando a configuração e o lifecycle existentes. A mudança persiste o modo e reinicia o app; Tudo em um segue visível e bloqueado, e Main rejeita seleção por IPC.
+- **Comportamento histórico da Phase 5F-B:** as Configurações do Reprodutor e do Controlador permitiam abrir a seleção de modo pelo lifecycle existente. A mudança persistia o modo e reiniciava o app; Tudo em um seguia visível e bloqueado, e Main rejeitava seleção por IPC. Essa implementação atual é transitória; a direção aprovada remove seleção/troca da UI normal e transfere a função para instalação/manutenção na D.
 - Música anterior/próxima usam o `ManualPlaybackService` e apenas a sequência local explícita; não inferem códigos nem instalam um segundo scheduler no Renderer. Ações sem posição navegável ficam desativadas. A remoção da música atual pede confirmação: cancelar preserva tentativa e sequência; confirmar usa Stop/clear correlacionados, remove o item sem fabricar EOF e não avança automaticamente uma pendência.
 - Entrada em lote permanece ordenada e aceita vírgulas, espaços e quebras de linha sem trocar o menu ativo. CSV segue opcional, a biblioteca local controla disponibilidade e o Player-only não abre SQLite operacional do Controller. Recovery inicial não reproduz automaticamente.
 
@@ -358,6 +366,16 @@ Texto, checkbox, fechar, tamanho e estilo correspondem ao frame aprovado. Para m
 - `npm run test:e2e:multi-instance:windows -- --player-recovery` — PASS no mesmo fingerprint. O harness Windows executou 30 testes de recuperação (30/30) e a integração Electron nativa com crash abrupto, recovery pendente sem autoplay, replay explícito com nova tentativa, Stop, EOF após reinício e preservação do SQLite operacional Combined. Runner confirmou perfil limpo e ausência de processo residual; `WINDOW_FOCUS NOT APPLICABLE` era esperado.
 - `npm run test:e2e:multi-instance:windows` — PASS no mesmo fingerprint: migrações SQLite (10), modos (8), biblioteca (16), catálogo (22), multi-instância, troca de modos e E2Es de biblioteca/catálogo. O runner observou foco, removeu perfis temporários e confirmou ausência de processos Electron residuais. O `npm ci` Windows reportou 15 avisos moderados; nenhuma atualização de pacote foi aplicada.
 - As primeiras tentativas Linux de Electron dentro do sandbox falharam antes do teste com `sandbox_host_linux.cc:41` / `EPERM`. As suítes afetadas passaram quando executadas pelo mecanismo aprovado fora do sandbox. Nenhuma configuração global ou política foi alterada.
+
+### Composição atual do playback Standalone — correções C9 (2026-11-07)
+
+No modo Player/Standalone de produção, a janela `standalone-player.html` é a única superfície visível e o `PlayerVideoWindow` hospeda o MP4 no mesmo `webContents`. Fila, overlays e vídeo compartilham a composição. O legado `WebContentsView`/`player-playback.html` permanece disponível aos outros modos que ainda dependem dele; esta correção não remove serviços compartilháveis nem cria uma segunda engine.
+
+No Standalone, F11 alterna entre janela e tela cheia. Esc continua controlando o menu/painéis contextuais e não altera o estado de tela cheia; o atalho legado Esc para sair permanece somente nas superfícies que não declaram o contrato Standalone.
+
+Adicionar, Informações e Menu Esc mantêm o vídeo em reprodução ao fundo. O painel `#standalone-queue` é parte da implementação existente: fica visível com pendências e é ocultado temporariamente por Adicionar/Informações, voltando quando esses painéis fecham se ainda houver fila. A superfície não é escondida durante essas transições. O listener de teclado do host executa na fase de captura para preservar a entrega de atalhos após clique; o F11 Standalone passa por um único handler Main validado para o documento/frame player e alterna o `PlayerVideoWindow` existente.
+
+O E2E de produção verifica `currentTime` avançando sob cada overlay, estado audiovisual do MP4, foco após cliques, restauração da fila, ciclo F11 consecutivo, pause/resume e shutdown/recovery; captura e verifica também a composição nativa Windows. Evidências detalhadas, fingerprint e cenários NOT RUN estão no [ticket C9](backlog/0003-fase-c-interface-standalone/0009-c9-encerramento-controlado.md). A injeção física repetida de F11 no Windows continua NOT RUN quando o processo auxiliar não comprova foreground; isso não altera o resultado positivo dos ciclos Playwright no Electron real.
 
 ### Revisões e pendências
 
