@@ -3,7 +3,7 @@
 ## Identificação
 
 - Ticket: 0005/0004
-- Ticket pai: 0005 — Fase E: Instalador e gerenciamento de funções
+- Ticket pai: 0005 — Fase E: Consolidação de funções, instalador e gerenciamento
 - Etapa canônica: E4
 - Status: Planejado
 - Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
@@ -16,10 +16,12 @@ Permitir alteração posterior da função pelo fluxo de manutenção do instala
 
 - Detectar instalação existente quando o instalador for executado novamente.
 - Oferecer “Alterar função” no fluxo de manutenção.
+- Manter a escolha inicial fora do NSIS: somente o onboarding do primeiro launch seleciona a função; configurações normais não oferecem troca.
+- Aplicar a alteração pela manutenção do mesmo instalador/executável comum, atualizando a função persistida e identidade/atalhos conforme E1/E2.
 - Exigir encerramento seguro do aplicativo e impedir alteração insegura com processos ativos.
 - Aplicar a exclusividade definida em E3 e implementada em E1.
-- Atualizar função, identidade e atalhos conforme E1/E2.
-- Preservar bancos, configurações, perfis e dados.
+- Atualizar identidade Windows, AppUserModelID/taskbar e atalhos conforme as capacidades confirmadas em E2.
+- Preservar SQLite, sessões, histórico, biblioteca, catálogo, preferências, recovery, configurações, perfis e dados das duas funções; não converter ou fundir implicitamente.
 - Tratar falhas parciais segundo a estratégia aprovada.
 - Avaliar integração com “Alterar” em Programas e Recursos sem torná-la requisito obrigatório inicial.
 
@@ -34,21 +36,22 @@ Permitir alteração posterior da função pelo fluxo de manutenção do instala
 
 - Implementar detecção e fluxo de manutenção do instalador.
 - Coordenar encerramento/estado dos processos antes da mudança.
-- Aplicar nova função e atalhos sem criar instalações paralelas.
-- Preservar dados e oferecer recuperação segura em falha parcial, conforme E3.
+- Aplicar nova função e identidade/atalhos sem criar instalações ou autoridades paralelas; não alterar executável binário para trocar ícone.
+- Preservar dados e oferecer rollback/recuperação segura em falha parcial, conforme E3; só reportar troca concluída quando função e identidade estiverem confirmadas.
 - Validar troca de função em Windows nativo com perfis e bancos isolados.
 
 ## Critérios de conclusão
 
 - Reexecutar o instalador detecta a instalação e permite alterar a função.
+- A troca é oferecida somente na manutenção do instalador; Configurações do aplicativo não permitem a mudança.
 - A troca não prossegue enquanto houver processo incompatível ativo.
-- A função e os atalhos correspondem à escolha final.
-- Dados/configurações são preservados; nenhuma conversão, fusão ou exclusão não aprovada ocorre.
+- A função, título/ícone da janela, taskbar quando suportada e atalhos correspondem à função final persistida.
+- SQLite, sessões, histórico, biblioteca, catálogo, preferências, recovery e configurações são preservados; nenhuma conversão/fusão/exclusão não aprovada ocorre.
 - Falha parcial segue o fluxo de recuperação aprovado e não deixa o estado silenciosamente inconsistente.
 
 ## Validação prevista
 
-Testar detecção, encerramento, manutenção, troca, exclusividade, atalhos e preservação após reinício em Windows nativo. Verificar os bancos/perfis antes e depois e exercitar os caminhos de falha definidos em E3.
+Testar detecção, encerramento, manutenção, troca, exclusividade, identidade/atalhos e preservação após reinício em Windows nativo. Verificar os bancos/perfis antes e depois e exercitar os caminhos de falha definidos em E3. Distinguir smoke de executável empacotado de instalação/alteração interativa NSIS.
 
 ## Decisões aprovadas
 

@@ -65,7 +65,7 @@ Ticket planejado. O antigo ticket H5 incluía cenários locais e remotos; a orga
 ## Referências
 
 - [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
-- [Ticket H1 — Gestão operacional](0001-h1-gestao-operacional.md)
+- [Ticket H1 — Gestão Combined preparada para operação remota](0001-h1-gestao-operacional.md)
 - [Ticket H2 — Player remoto](0002-h2-integracao-player-remoto.md)
 - [Ticket H3 — Autoridade e sincronização](0003-h3-autoridade-sincronizacao-operacional.md)
 - [Ticket H4 — UI da Gestão](0004-h4-melhorias-interface-gestao.md)

@@ -63,7 +63,7 @@ Planejado. Nenhuma implementação ou validação foi iniciada.
 ## Referências
 
 - [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
-- [Ticket H1 — Gestão operacional](0001-h1-gestao-operacional.md)
+- [Ticket H1 — Gestão Combined preparada para operação remota](0001-h1-gestao-operacional.md)
 - [Ticket G3 — Comandos e sincronização](../0007-fase-g-comunicacao-remota-segura/0003-g3-comandos-eventos-sincronizacao.md)
 - [Ticket G4 — Reconexão e recuperação](../0007-fase-g-comunicacao-remota-segura/0004-g4-reconexao-recuperacao.md)
 - [Remote player architecture](../../remote-player-architecture.md)

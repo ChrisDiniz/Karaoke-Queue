@@ -3,7 +3,7 @@
 ## Identificação
 
 - Ticket: 0005/0005
-- Ticket pai: 0005 — Fase E: Instalador e gerenciamento de funções
+- Ticket pai: 0005 — Fase E: Consolidação de funções, instalador e gerenciamento
 - Etapa canônica: E5
 - Status: Planejado
 - Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
@@ -16,11 +16,14 @@ Implementar e validar os fluxos de atualização, migração, rollback e preserv
 
 - Atualização entre versões, reinstalação e migração de instalações legadas.
 - Preservação da função escolhida, `userData`, SQLite, sessões, histórico, filas persistidas quando aplicável, biblioteca, catálogo, preferências e dados de recovery.
-- Preservação da função em updates sem reexibir onboarding ou redefinir o papel.
-- Testes de troca de função, atalhos e reinicialização após manutenção.
+- Preservação da escolha persistida em updates/reinstalação sem reexibir a seleção inicial ou redefinir a função; configuração de biblioteca adiada também permanece segura.
+- Testes de identidade Windows (atalhos, título/ícone da janela e taskbar conforme suporte), troca via manutenção, reinicialização e isolamento entre perfis/contas conforme E1/E3.
 - Rollback e recuperação após falha conforme a estratégia E3.
 - Verificação em Windows nativo com perfis isolados.
 - Não inventar conversão automática de bancos ou fusão de perfis.
+- Usar um único launcher manual oficial e perfis separados para validar Reprodutor e Tudo em um; qualquer override de automação fica restrito a perfis de teste e não enfraquece exclusividade de produção.
+- Auditar workflows GitHub Actions existentes antes de adicionar CI; reutilizar o build Windows/NSIS quando aplicável e identificar artifacts de validação por commit/fingerprint.
+- Não publicar GitHub Release automaticamente, fazer deploy/push nem usar credenciais reais de assinatura para os artifacts E/F. Distinguir smoke de executável empacotado de teste de instalação NSIS.
 
 ## Dependências
 
@@ -41,7 +44,9 @@ Implementar e validar os fluxos de atualização, migração, rollback e preserv
 ## Critérios de conclusão
 
 - Update e reinstalação preservam função, `userData` e dados cobertos pela estratégia.
+- Reinício e update mantêm a função e não repetem onboarding; biblioteca/catálogo e preferências persistem segundo a estratégia aprovada.
 - Migração legada segue decisões aprovadas, sem conversão ou fusão presumida.
+- Identidade/atalhos seguem a mesma função após update ou manutenção; artifacts automatizados apontam ao commit/fingerprint validado e não criam Releases.
 - Rollback/recuperação são exercitados nos cenários definidos em E3 e não causam perda silenciosa de dados.
 - Troca de função, atalhos e persistência são verificados após reinicialização.
 - Resultados de testes Windows e limites de compatibilidade ficam registrados.
