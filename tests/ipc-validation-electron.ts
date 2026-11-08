@@ -68,8 +68,8 @@ async function add(table, name) {
 async function run() {
   try {
     await launch()
-    assert.equal(await page.evaluate(() => !!window.karaokeDatabase), true,
-      'the real Preload database bridge must be exposed')
+    assert.equal(await page.evaluate(() => !!window.karaokeManagement), true,
+      'the production Preload exposes the Management application client')
 
     await add('1', 'Pending singer')
     await add('2', 'Singer with history')
@@ -85,33 +85,21 @@ async function run() {
       'fixture must retain a pending presentation')
 
     const results = await page.evaluate(async () => {
-      const base = await window.karaokeDatabase.load()
-      const { history, ...withoutHistory } = base
       const invalidPayloads = [
-        ['empty object', {}],
-        ['null', null],
-        ['undefined', undefined],
-        ['array root', []],
-        ['required field missing', withoutHistory],
-        ['queue must be an array', { ...base, queue: {} }],
-        ['priorityIds must be an array', { ...base, priorityIds: {} }],
-        ['entry identifier must be a string', {
-          ...base, queue: [{ ...base.queue[0], id: 7 }]
-        }],
-        ['entry timestamp must be finite', {
-          ...base, queue: [{ ...base.queue[0], insertedAt: Number.NaN }]
-        }],
-        ['history status must be supported', {
-          ...base, history: [{ ...base.history[0], status: 'unknown' }]
-        }],
-        ['session timestamp must be numeric', {
-          ...base, sessions: [{ ...base.sessions[0], startedAt: 'invalid' }]
-        }]
+        ['missing command', null],
+        ['unknown command', { operationId: 'bad-type', command: { type: 'eraseEverything' } }],
+        ['extra command property', { operationId: 'extra', command: { type: 'releaseFreeze', payload: true } }],
+        ['entries must be an array', { operationId: 'bad-array', command: { type: 'addEntries', entries: {}, selectCurrent: true } }],
+        ['entry has extra property', { operationId: 'extra-entry', command: { type: 'addEntries', entries: [
+          { name: 'Invalid', songNumber: '1', songNumber2: '', table: '1', status: 'done' }
+        ], selectCurrent: true } }],
+        ['non-integral position', { operationId: 'bad-position', command: { type: 'moveTurn', id: 'id', targetPosition: 1.5 } }],
+        ['invalid operation id', { operationId: {}, command: { type: 'releaseFreeze' } }]
       ]
       const outcomes = []
-      for (const [label, payload] of invalidPayloads) {
+      for (const [label, request] of invalidPayloads) {
         try {
-          await window.karaokeDatabase.save(payload)
+          await window.karaokeManagement.command(request)
           outcomes.push({ label, outcome: 'resolved' })
         } catch (error) {
           outcomes.push({ label, outcome: 'rejected', message: String(error) })
@@ -128,8 +116,22 @@ async function run() {
     }))
 
     assert.ok(results.every(result => result.outcome === 'rejected'),
-      'every structurally invalid app-data:save payload must be rejected')
+      'every malformed Management command DTO must be rejected before application dispatch')
     assert.deepEqual(after, before, 'rejecting invalid payloads must preserve all SQLite rows')
+
+    const beforeRendererReload = await page.evaluate(() => window.karaokeManagement.getSnapshot())
+    await page.reload()
+    await page.waitForFunction(() => !!window.__kqueue && !!window.karaokeManagement)
+    if (await page.locator('#startup-modal').isVisible()) {
+      await page.locator('#btn-startup-primary').click()
+    }
+    const afterRendererReload = await page.evaluate(() => window.karaokeManagement.getSnapshot())
+    assert.equal(afterRendererReload.hostEpoch, beforeRendererReload.hostEpoch,
+      'Renderer reload reattaches to the existing Main host')
+    assert.equal(afterRendererReload.revision, beforeRendererReload.revision,
+      'Renderer reload does not repeat session repairs or initialization writes')
+    assert.deepEqual(readPersistedState(), after,
+      'Renderer reload preserves the confirmed operational state and session count')
 
     await add('3', 'Valid operation after rejection')
     assert.equal(readPersistedState().entries.length, 3,

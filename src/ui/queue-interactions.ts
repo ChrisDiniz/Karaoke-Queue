@@ -1,5 +1,6 @@
-import { PersistenceError } from '../state-repository'
-import type { KaraokeApplication, ReadonlyAppState } from '../application'
+import { PersistenceError } from '../persistence-contracts'
+import type { ReadonlyAppState } from '../application'
+import type { ManagementApplicationPort } from '../management-contracts'
 import type { QueueView } from './queue-view'
 import type { HistoryView } from './history-view'
 import { getElement, getInput, ModalManager, showToast, reportPersistenceFailure } from './dom'
@@ -35,7 +36,7 @@ export class QueueInteractions {
   private queueMenuObserver: MutationObserver | null = null
 
   constructor(
-    private readonly application: KaraokeApplication,
+    private readonly application: ManagementApplicationPort,
     private readonly getState: () => ReadonlyAppState,
     private readonly queueView: QueueView,
     private readonly historyView: HistoryView,

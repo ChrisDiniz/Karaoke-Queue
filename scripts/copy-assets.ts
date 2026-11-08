@@ -17,8 +17,6 @@ fs.copyFileSync(path.join(projectRoot, 'src', 'index.html'), path.join(rendererO
 fs.copyFileSync(path.join(projectRoot, 'src', 'style.css'), path.join(rendererOutput, 'style.css'))
 fs.copyFileSync(path.join(projectRoot, 'src', 'player-playback.html'), path.join(rendererOutput, 'player-playback.html'))
 fs.copyFileSync(path.join(projectRoot, 'src', 'player-playback.css'), path.join(rendererOutput, 'player-playback.css'))
-fs.copyFileSync(path.join(projectRoot, 'src', 'player-control.html'), path.join(rendererOutput, 'player-control.html'))
-fs.copyFileSync(path.join(projectRoot, 'src', 'player-control.css'), path.join(rendererOutput, 'player-control.css'))
 fs.copyFileSync(path.join(projectRoot, 'src', 'welcome.html'), path.join(rendererOutput, 'welcome.html'))
 fs.copyFileSync(path.join(projectRoot, 'src', 'welcome.css'), path.join(rendererOutput, 'welcome.css'))
 fs.copyFileSync(path.join(projectRoot, 'src', 'standalone-player.html'), path.join(rendererOutput, 'standalone-player.html'))
@@ -29,9 +27,6 @@ fs.cpSync(path.join(projectRoot, 'src', 'assets'), path.join(rendererOutput, 'as
 const playbackRendererSource = fs.readFileSync(path.join(rendererOutput, 'player-playback-renderer.js'), 'utf8')
 fs.writeFileSync(path.join(rendererOutput, 'player-playback.js'),
   `(function() {\n  const module = { exports: {} };\n  const exports = module.exports;\n${playbackRendererSource}\n})();\n`)
-
-fs.writeFileSync(path.join(rendererOutput, 'player-control-renderer.bundle.js'),
-  bundleCommonJsModules(['player-ui-contracts', 'player-control-renderer'], './player-control-renderer'))
 
 const welcomeRendererSource = fs.readFileSync(path.join(rendererOutput, 'welcome-renderer.js'), 'utf8')
 fs.writeFileSync(path.join(rendererOutput, 'welcome-renderer.bundle.js'),
@@ -73,7 +68,7 @@ fs.writeFileSync(path.join(projectRoot, 'build', 'standalone-player-preload.bund
 // unchanged). Bundle its small CommonJS rule modules into that script without
 // exposing Node APIs in the isolated renderer.
 const moduleNames = [
-  'queue-rules', 'debut-cadence-rules', 'round-robin-rules', 'fixed-turn-rules', 'frozen-queue-rules', 'history-rules', 'singer-suggestions', 'state-repository', 'licensing', 'application',
+  'queue-rules', 'debut-cadence-rules', 'round-robin-rules', 'fixed-turn-rules', 'frozen-queue-rules', 'history-rules', 'singer-suggestions', 'persistence-contracts', 'licensing', 'management-projections', 'management-client',
   'ui/dom', 'ui/queue-view', 'ui/history-view', 'ui/queue-interactions',
   'ui/table-dialog', 'ui/app-shell', 'ui/navigation', 'ui/sidebar-display-name', 'ui/settings-view', 'ui/previous-sessions-view', 'app'
 ]

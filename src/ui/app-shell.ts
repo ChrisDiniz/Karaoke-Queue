@@ -1,4 +1,5 @@
-import type { KaraokeApplication, ReadonlyAppState } from '../application'
+import type { ReadonlyAppState } from '../application'
+import type { ManagementApplicationPort } from '../management-contracts'
 import { getElement, getInput, ModalManager, showToast, reportPersistenceFailure } from './dom'
 import { trialLabel } from '../licensing'
 
@@ -7,7 +8,7 @@ export class AppShell {
   private refreshTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(
-    private readonly application: KaraokeApplication,
+    private readonly application: ManagementApplicationPort,
     private readonly getState: () => ReadonlyAppState,
     private readonly modals: ModalManager,
     private readonly startNewShift: () => boolean | Promise<boolean>,

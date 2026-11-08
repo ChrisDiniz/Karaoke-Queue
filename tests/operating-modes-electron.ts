@@ -300,23 +300,6 @@ async function runPlayerWithoutControllerState() {
   let app
   try {
     app = await launch(profile)
-    const playerStartupEvents = await app.evaluate(({ app: electronApp, webContents }) => {
-      const events = { renderProcessGone: [], childProcessGone: [], consoleErrors: [], destroyedContents: [] }
-      const observeContents = contents => {
-        contents.on('render-process-gone', (_event, details) => events.renderProcessGone.push({
-          id: contents.id, url: contents.getURL(), ...details
-        }))
-        contents.on('destroyed', () => events.destroyedContents.push({ id: contents.id, url: contents.getURL() }))
-        contents.on('console-message', (_event, details) => {
-          if (details.level >= 2) events.consoleErrors.push({ id: contents.id, url: contents.getURL(), ...details })
-        })
-      }
-      for (const contents of webContents.getAllWebContents()) observeContents(contents)
-      electronApp.on('web-contents-created', (_event, contents) => observeContents(contents))
-      electronApp.on('child-process-gone', (_event, details) => events.childProcessGone.push(details))
-      electronApp.__playerStartupEvents = events
-      return events
-    })
     const ready = await waitForLogRecord(profile, 'APP_READY')
     assert.equal(ready.details.mode, 'player')
     assert.equal(ready.details.controllerServicesInitialized, false)
@@ -327,91 +310,35 @@ async function runPlayerWithoutControllerState() {
       'Player-only mode must initialize the playback service without Controller persistence')
     assert.equal(await app.evaluate(({ app: electronApp }) => electronApp.isReady()), true)
     const playerWindows = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(window => window.webContents.getURL()))
-    assert.equal(playerWindows.some(url => url.includes('player-control.html')), true,
-      'Player-only mode must open the approved local control interface')
+    assert.equal(playerWindows.some(url => url.includes('standalone-player.html')), true,
+      'Player-only mode must open the approved Standalone control and playback interface')
+    assert.equal(playerWindows.some(url => url.includes('player-control.html')), false,
+      'Player-only mode must not start the legacy control shell')
     assert.equal(playerWindows.some(url => url.endsWith('/index.html')), false,
       'Player-only mode must not create the Controller window')
     assert.equal(playerWindows.some(url => url.includes('player-playback.html')), false,
-      'Player-only startup must not show the independent video window before an explicit operator action')
-    assert.equal(playerWindows.length, 1, 'A clean Player-only launch must show only its control window.')
+      'Player-only startup must not create a separate playback window')
+    assert.equal(playerWindows.length, 1, 'A clean Player-only launch must show one composed Standalone window.')
     const playerPage = await app.firstWindow()
-    const playerRendererMessages = []
-    const playerWindowSnapshots = []
-    playerPage.on('pageerror', error => playerRendererMessages.push({ type: 'pageerror', message: error.message }))
-    playerPage.on('console', message => {
-      if (message.type() === 'error') playerRendererMessages.push({ type: 'console', message: message.text() })
-    })
-    await playerPage.waitForFunction(() => !!window.karaokePlayer?.getSnapshot)
-    await playerPage.evaluate(async () => {
-      window.__playerWindowSnapshots = []
-      const observe = state => window.__playerWindowSnapshots.push({
-          open: state.videoWindow.open,
-          ready: state.videoWindow.ready,
-          location: state.videoWindow.location,
-          layoutRevision: state.videoWindow.inlineLayoutRevision,
-          playbackStatus: state.playback.status
-        })
-      window.__stopPlayerSnapshotTracking = window.karaokePlayer.onSnapshot(observe)
-      observe(await window.karaokePlayer.getSnapshot())
-    })
-    await playerPage.waitForFunction(() => window.__playerWindowSnapshots.some(state =>
-      state.location === 'inline' && state.ready))
-    const observedReadySnapshot = await playerPage.evaluate(() =>
-      window.__playerWindowSnapshots.find(state => state.location === 'inline' && state.ready))
-    const observedWindowSnapshots = await playerPage.evaluate(() => window.__playerWindowSnapshots)
-    await playerPage.evaluate(() => window.__stopPlayerSnapshotTracking?.())
-    const initialPlayerSnapshot = await playerPage.evaluate(() => window.karaokePlayer.getSnapshot())
-    if (!initialPlayerSnapshot.videoWindow.open) {
-      const rendererDiagnostics = await playerPage.evaluate(() => ({
-        activeView: document.body.dataset.playerView,
-        toast: document.querySelector('#player-toast')?.textContent,
-        videoViewHidden: document.querySelector('#player-video-view')?.hidden,
-        videoStageBounds: document.querySelector('#player-inline-stage')?.getBoundingClientRect().toJSON(),
-        snapshots: window.__playerWindowSnapshots
-      }))
-      const diagnostics = await app.evaluate(({ app: electronApp, BrowserWindow, webContents }, details) => ({
-        platform: process.platform,
-        versions: process.versions,
-        observedReadySnapshot: details.readySnapshot,
-        currentSnapshot: details.currentSnapshot,
-        playerRendererMessages: details.rendererMessages,
-        rendererDiagnostics: details.rendererDiagnostics,
-        playerStartupEvents: electronApp.__playerStartupEvents,
-        windows: BrowserWindow.getAllWindows().map(window => ({
-          id: window.id,
-          title: window.getTitle(),
-          url: window.webContents.getURL(),
-          destroyed: window.isDestroyed(),
-          crashed: window.webContents.isCrashed(),
-          children: window.contentView.children.map(child => ({
-            url: child.webContents?.getURL(),
-            destroyed: child.webContents?.isDestroyed(),
-            crashed: child.webContents?.isCrashed(),
-            visible: child.getVisible(),
-            bounds: child.getBounds()
-          }))
-        })),
-        allWebContents: webContents.getAllWebContents().map(contents => ({
-          id: contents.id,
-          type: contents.getType(),
-          url: contents.getURL(),
-          destroyed: contents.isDestroyed(),
-          crashed: contents.isCrashed(),
-          loading: contents.isLoadingMainFrame()
-        }))
-      }), {
-        readySnapshot: observedReadySnapshot,
-        currentSnapshot: initialPlayerSnapshot,
-        rendererMessages: playerRendererMessages,
-        rendererDiagnostics
-      })
-      await playerPage.screenshot({ path: path.join(profile.root, 'player-startup-failure.png') }).catch(() => undefined)
-      assert.equal(initialPlayerSnapshot.videoWindow.open, true,
-        `Player-only startup must initialize the embedded playback surface. Ready snapshot: ${JSON.stringify(observedReadySnapshot)}; Current snapshot: ${JSON.stringify(initialPlayerSnapshot)}; Renderer messages: ${JSON.stringify(playerRendererMessages)}; Diagnostics: ${JSON.stringify(diagnostics)}`)
-    }
-    assert.equal(initialPlayerSnapshot.videoWindow.location, 'inline',
-      'Player-only startup must keep playback embedded instead of opening a detached window.')
-    assert.equal(initialPlayerSnapshot.playback.status, 'idle', 'Player startup must not start or resume a song.')
+    await playerPage.waitForFunction(() => !!window.standalonePlayer?.getSnapshot)
+    const startupState = await playerPage.evaluate(async () => ({
+      bridgeKeys: Object.keys(window.standalonePlayer ?? {}).sort(),
+      snapshot: await window.standalonePlayer.getSnapshot(),
+      stageVisible: Boolean(document.querySelector('#playback-stage')),
+      mediaLayerPresent: Boolean(document.querySelector('#playback-media-layer'))
+    }))
+    assert.ok(startupState.bridgeKeys.includes('execute'),
+      'Player-only mode must expose the restricted Standalone bridge')
+    assert.equal(startupState.stageVisible, true, 'The composed Standalone window must contain its playback stage.')
+    assert.equal(startupState.mediaLayerPresent, true, 'The composed Standalone window must contain its media layer.')
+    assert.equal(startupState.snapshot.snapshot.playbackCondition, 'ready',
+      'Player startup must begin with an available, confirmed sequence.')
+    assert.equal(startupState.snapshot.snapshot.state.operationalState, 'idle',
+      'Player startup must not start or resume a song.')
+    assert.equal(startupState.snapshot.snapshot.state.current, null,
+      'Player startup must not restore a volatile current song.')
+    assert.deepEqual(startupState.snapshot.snapshot.state.pending, [],
+      'Player startup must not restore a volatile pending sequence.')
     assert.equal(fs.existsSync(path.join(profile.userData, 'karaoke.sqlite')), false,
       'Player-only mode must not create operational Controller SQLite state')
     const playerCatalogPath = path.join(profile.userData, 'player-music-catalog.sqlite')
@@ -420,10 +347,12 @@ async function runPlayerWithoutControllerState() {
     try {
       const tables = playerCatalog.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all()
         .map(row => row.name)
-      assert.deepEqual(tables, ['music_catalog', 'music_catalog_metadata'],
+      assert.deepEqual(tables, [
+        'music_catalog', 'music_catalog_import_issues', 'music_catalog_import_state', 'music_catalog_metadata'
+      ],
         'the Player catalog database must not contain tables for queues, entries, sessions, or operational history')
     } finally { playerCatalog.close() }
-    assert.equal(app.process().exitCode, null, 'Player lifecycle remains alive without a window')
+    assert.equal(app.process().exitCode, null, 'Player lifecycle remains alive in its Standalone window')
   } finally { await forceClose(app) }
 }
 

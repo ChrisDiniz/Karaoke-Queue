@@ -102,14 +102,16 @@ async function run() {
     try {
       await page.evaluate(async () => {
         try { await window.karaokeUiScale.setPreference('invalid-scale') } catch {}
-        const state = await window.karaokeDatabase.load()
-        const newEntry = {
-          id: 'diagnostic-triggered-save', name: 'diagnostic-only', songNumber: '1', songNumber2: '',
-          table: '1', insertedAt: Date.now(), status: 'pending', sessionId: state.currentSessionId
-        }
-        try { await window.karaokeDatabase.save({ ...state, queue: [...state.queue, newEntry] }) } catch {}
-        window.karaokeDiagnostics.logSessionEvent('SESSION_RESUMED', state.currentSessionId, 'test')
       })
+      await page.locator('#nav-dashboard').hover()
+      await page.locator('#nav-queue-current').waitFor({ state: 'visible' })
+      await page.locator('#nav-queue-current').click()
+      await page.locator('#input-table').fill('1')
+      await page.locator('#input-name').fill('diagnostic-only')
+      await page.locator('#input-song').fill('1')
+      await page.locator('#form-entry button[type="submit"]').click()
+      await page.locator('.persistence-feedback[role="alert"]').waitFor({ state: 'visible' })
+      await page.evaluate(() => window.karaokeDiagnostics.logSessionEvent('SESSION_RESUMED', 'session-diagnostic', 'test'))
     } finally {
       database.exec('DROP TRIGGER diagnostics_fail_save')
       database.close()

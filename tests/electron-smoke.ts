@@ -851,9 +851,9 @@ async function run() {
     await closeWithEvidence(reopened)
     app = undefined
 
-    const newShiftApp = await launch()
+    let newShiftApp = await launch()
     app = newShiftApp
-    const newShiftPage = await newShiftApp.firstWindow()
+    let newShiftPage = await newShiftApp.firstWindow()
     await newShiftPage.locator('#form-entry').waitFor({ state: 'visible' })
     const startNew = newShiftPage.locator('#btn-startup-secondary')
     if (await startNew.isVisible()) {
@@ -895,6 +895,11 @@ async function run() {
       await dialog.accept()
     })
     await newShiftPage.evaluate(() => window.__kqueue?.flushState())
+
+    // Stop the Main SQLite writer before changing this test fixture directly.
+    // A Renderer reload keeps the Main-owned application state by design.
+    await closeWithEvidence(newShiftApp)
+    app = undefined
     const overdueDb = new DatabaseSync(databasePath)
     try {
       overdueDb.prepare("UPDATE entries SET inserted_at = ? WHERE status = 'pending'")
@@ -902,7 +907,14 @@ async function run() {
     } finally {
       overdueDb.close()
     }
-    await newShiftPage.reload()
+    newShiftApp = await launch()
+    app = newShiftApp
+    newShiftPage = await newShiftApp.firstWindow()
+    newShiftPage.on('dialog', async (dialog: import('playwright').Dialog) => {
+      waitAlertDialogs.push(dialog.message())
+      await dialog.accept()
+    })
+    await newShiftPage.locator('#form-entry').waitFor({ state: 'visible' })
     const continueShiftAgain = newShiftPage.locator('#btn-startup-primary')
     if (await continueShiftAgain.isVisible()) await continueShiftAgain.click()
     await newShiftPage.locator('.card-boost-msg').first().waitFor()

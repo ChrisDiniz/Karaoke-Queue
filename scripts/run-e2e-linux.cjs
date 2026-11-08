@@ -11,6 +11,7 @@ if (process.platform !== 'linux') {
 const root = path.resolve(__dirname, '..')
 const suites = [
   'electron-smoke',
+  'management-legacy-import-electron',
   'drag-electron',
   'round-robin-electron',
   'debut-cadence-electron',

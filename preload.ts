@@ -29,11 +29,21 @@ process.on('unhandledRejection', reason => {
   })
 })
 
-// Keep SQLite in the main process. The isolated renderer receives only the
-// state load/save operations it needs, never a database connection or SQL API.
-contextBridge.exposeInMainWorld('karaokeDatabase', {
-  load: ()     => invokeLogged<StoredAppState>('app-data:load'),
-  save: (data: AppState) => invokeLogged<boolean>('app-data:save', data)
+contextBridge.exposeInMainWorld('karaokeManagement', {
+  initialize: (legacyState: import('./src/persistence-contracts').LegacyStateStorageDto) =>
+    invokeLogged<import('./src/management-contracts').ManagementSnapshot>('management:initialize', legacyState),
+  getSnapshot: () => invokeLogged<import('./src/management-contracts').ManagementSnapshot>('management:snapshot'),
+  command: (request: import('./src/management-contracts').ManagementCommandRequest) =>
+    invokeLogged<import('./src/management-contracts').ManagementCommandReply>('management:command', request),
+  acknowledge: async (operationId: string) => {
+    await invokeLogged<boolean>('management:acknowledge', operationId)
+  },
+  flush: async () => { await invokeLogged<boolean>('management:flush') },
+  onStateChanged: (callback: (snapshot: import('./src/management-contracts').ManagementSnapshot) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: import('./src/management-contracts').ManagementSnapshot) => callback(snapshot)
+    ipcRenderer.on('management:state-changed', listener)
+    return () => ipcRenderer.removeListener('management:state-changed', listener)
+  }
 })
 
 contextBridge.exposeInMainWorld('karaokeLicense', {

@@ -5,7 +5,7 @@
 - Ticket: 0003/0011
 - Ticket pai: 0003 — Fase C: Interface Standalone
 - Etapa canônica: C11
-- Status: Concluída e aprovada manualmente pelo proprietário em 2026-11-07, após validação técnica em Linux e Windows nativo. A Fase C continua sem aprovação global devido às pendências independentes de C9.
+- Status: Concluída e aprovada manualmente pelo proprietário em 2026-11-07, após validação técnica em Linux e Windows nativo. A Fase C foi posteriormente concluída e aprovada globalmente pelo proprietário em 2026-11-07.
 - Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
 
 ## Objetivo
@@ -79,15 +79,15 @@ Impor limite de 30 músicas pendentes na sequência Standalone, excluindo a mús
 - **Capturas:** Linux `/tmp/karaoke-queue-standalone-production-screenshots-71573/c11-full-queue-toast-1280x800.png` e `c11-full-queue-toast-element.png`; Windows `C:\Users\Chris\AppData\Local\Temp\karaoke-queue-standalone-production-screenshots-18164\c11-full-queue-toast-1280x800.png` e `c11-full-queue-toast-element.png`. As capturas foram inspecionadas; mostram a mensagem no topo da superfície de controle, com metadados da faixa ativa.
 - **Abrangência confirmada:** 29 pendências aceitam a 30ª; 30 rejeitam a 31ª em Enter e P, incluindo admissões simultâneas; current não é contado; prioridades FIFO/LIFO permanecem; retry preserva o resultado; nova intenção usa vaga liberada após EOF natural; rejeição preserva snapshot/playback; shutdown mantém recuperação `stopped/shutdown-confirmed`, não cria EOF artificial e o restart não recupera a fila volátil.
 - **Revisão independente:** arquitetura e concorrência confirmaram que a Sequence é a autoridade única e que `entryOrder` reserva as vagas durante validações em voo. O code review não encontrou defeitos acionáveis; observou que uma intenção concorrente pode receber rejeição enquanto a última vaga está reservada por outra validação que depois falha. Um teste adicional agora comprova que a falha libera a vaga para uma nova intenção, sem reprocessar o `operationId` rejeitado.
-- **C9 separada:** o E2E integrado voltou a passar, mas isso não declara aprovação humana de C9. Alt+F4 físico continua NOT RUN; as pendências visuais C9.2/C9.5 permanecem independentes.
+- **C9 separada — registro histórico:** o E2E integrado voltou a passar, mas aquele resultado isolado não declarava aprovação humana de C9. Alt+F4 físico foi registrado `NOT RUN` naquela execução; a aprovação global posterior do proprietário encerrou C9 sem exigir reteste.
 - **Status na entrega da implementação — 2026-11-06:** C11 estava implementada e tecnicamente validada; aguardava a aprovação manual antes de D. A campanha de performance transferida a H6 não foi iniciada.
 
 ### Encerramento e aprovação — 2026-11-07
 
-- O proprietário confirmou que testou e compilou a versão sincronizada no Windows, reportou resultado satisfatório e autorizou registrar C11 como concluída. Essa confirmação encerra a aprovação manual específica da C11; não aprova a Fase C inteira nem as pendências de C9.
+- O proprietário confirmou que testou e compilou a versão sincronizada no Windows, reportou resultado satisfatório e autorizou registrar C11 como concluída. Naquele registro, essa confirmação encerrava somente C11; o proprietário posteriormente aprovou globalmente a Fase C e encerrou C9 em 2026-11-07.
 - No mesmo snapshot, o runner oficial `npm run test:e2e:multi-instance:windows -- --approve-untracked --standalone-production` — PASS em checkout NTFS `E:\source\karaoke-queue-win-c11-validation-05`, com Node/npm/Electron/Playwright Windows nativos, MP4 real, SQLite/perfil isolados e Main de produção. O fingerprint validado foi `6397b8bbee4813726145edc88fee3d463a300b2ba3e643a8e4b7d0aa069725f2`; compilação, E2E, limpeza de perfil e ausência de processos residuais passaram. O E2E integrou as regressões C9, C10 e C11, inclusive playback ativo durante toast de fila cheia. `WINDOW_FOCUS NOT APPLICABLE` era esperado para o modo focado; não é evidência de teclado físico.
 - O proprietário reportou também que a alteração pontual do atalho de fullscreen foi compilada e testada. No Standalone, somente F11 altera fullscreen; Esc continua controlando o menu. A alteração pertence ao registro técnico de playback/C9 e não altera a regra nem a autoridade da fila C11.
-- Status final: C11 concluída e aprovada manualmente; C10 concluída e aprovada conforme registrado em seu ticket; Fase C ainda não aprovada globalmente enquanto C9 permanecer pendente. H6 continua futura e não foi iniciada.
+- Status ao compor o registro C11: C11 concluída e aprovada manualmente; C10 concluída e aprovada conforme seu ticket; C9 ainda aguardava decisão. **Atualização posterior — 2026-11-07:** o proprietário declarou C9 concluída/aprovada e a Fase C concluída/aprovada globalmente. As limitações documentadas permanecem histórico de cobertura, sem bloqueio ou teste adicional requerido. H6 continua futura e não foi iniciada.
 
 ## Referências
 

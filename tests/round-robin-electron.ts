@@ -32,7 +32,7 @@ async function run() {
     const actualProfile = await app.evaluate(({ app }) => app.getPath('userData'))
     assert.ok(path.resolve(actualProfile).startsWith(path.resolve(root)), 'isolated profile')
     databasePath = path.join(actualProfile, 'karaoke.sqlite')
-    assert.equal(await page.evaluate(() => !!window.karaokeDatabase), true, 'uses SQLite IPC bridge')
+    assert.equal(await page.evaluate(() => !!window.karaokeManagement), true, 'uses the Main-hosted Management application bridge')
   }
   const close = async () => {
     if (!app) return

@@ -7,6 +7,7 @@ const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
 const { prepareControllerModeProfile } = require('./electron-test-profile')
+const { getManagementPlayOrder } = require('../src/management-projections')
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-persistence-'))
 const profile = path.join(root, 'profile')
 const project = path.resolve(__dirname, '../..')
@@ -50,7 +51,7 @@ async function closeForced() {
 async function run() {
  try {
   await launch()
-  assert.equal(await page.evaluate(() => !!window.karaokeDatabase), true)
+  assert.equal(await page.evaluate(() => !!window.karaokeManagement), true)
   console.log('CHECK cadastro')
   const initial = read()
   fail()
@@ -118,8 +119,6 @@ async function run() {
   assert.match(await app.evaluate(() => globalThis.closeErrors[0].message), /não foram confirmados/)
   assert.deepEqual(read(), before)
   heal(); await recover()
-  // Wait until native-close finally restores admission.
-  await page.evaluate(() => window.__kqueue.cancelClose())
   await page.locator('#now-block .btn-done-lg').click(); await settled()
   assert.equal(read().entries.find(entry => entry.id === current).status, 'done')
 
@@ -136,59 +135,80 @@ async function run() {
   assert.equal(await app.evaluate(() => globalThis.closeErrors.length), 3)
   assert.deepEqual(read(), beforeEnd)
   heal()
-  // Main-process close errors have their own native dialogue; trigger the shared
-  // recovery banner with a rejected write while closing admission is restored.
-  await page.evaluate(() => window.__kqueue.cancelClose())
-  await recover()
+  // Main owns the close flow; reconcile the repository directly through the same application host.
+  await page.evaluate(() => window.karaokeManagement.command({ operationId: 'recover-after-close-failure', command: { type: 'recoverPersistence' } }))
   console.log('CHECK perda IPC')
-  // A committed write with a lost IPC response is read back, not submitted twice.
+  // A committed write with a lost IPC response reconciles the confirmed snapshot;
+  // an explicit retry reuses the operation ID and receives its cached receipt.
   await app.evaluate(({ ipcMain }) => {
-    const handler = ipcMain._invokeHandlers.get('app-data:save')
-    globalThis.originalSave = handler
-    ipcMain.removeHandler('app-data:save')
-    ipcMain.handle('app-data:save', async (event, state) => { await handler(event, state); throw Error('Injected lost response after COMMIT') })
+    const handler = ipcMain._invokeHandlers.get('management:command')
+    globalThis.originalManagementCommand = handler
+    globalThis.lostReplyOnce = false
+    globalThis.lostCommandIds = []
+    ipcMain.removeHandler('management:command')
+    ipcMain.handle('management:command', async (event, request) => {
+      if (request.command.type === 'addEntries' && request.command.entries[0].table === '5') globalThis.lostCommandIds.push(request.operationId)
+      const reply = await handler(event, request)
+      if (!globalThis.lostReplyOnce && request.command.type === 'addEntries' && request.command.entries[0].table === '5') {
+        globalThis.lostReplyOnce = true
+        throw Error('Injected lost IPC reply after confirmed commit')
+      }
+      return reply
+    })
   })
   await add('5'); await settled()
   assert.equal(read().entries.filter(entry => entry.table_number === '5').length, 1)
+  assert.equal(await page.locator('#input-name').inputValue(), 'Test 5')
+  await page.locator('#form-entry button[type="submit"]').click(); await settled()
+  assert.equal(read().entries.filter(entry => entry.table_number === '5').length, 1)
   assert.equal(await page.locator('#input-name').inputValue(), '')
+  assert.equal(await app.evaluate(() => globalThis.lostCommandIds.length), 2)
+  assert.equal(await app.evaluate(() => globalThis.lostCommandIds[0]), await app.evaluate(() => globalThis.lostCommandIds[1]))
   await app.evaluate(({ ipcMain }) => {
-    ipcMain.removeHandler('app-data:save'); ipcMain.handle('app-data:save', globalThis.originalSave)
+    ipcMain.removeHandler('management:command'); ipcMain.handle('management:command', globalThis.originalManagementCommand)
   })
 
-  // Lose reply AND readback; block further writes, then reconcile without duplicating input.
+  // Lose reply and snapshot; explicit retry still reuses the process-local receipt.
   await app.evaluate(({ ipcMain }) => {
-    globalThis.originalLoad = ipcMain._invokeHandlers.get('app-data:load')
-    ipcMain.removeHandler('app-data:save'); ipcMain.removeHandler('app-data:load')
-    ipcMain.handle('app-data:save', async (event, state) => { await globalThis.originalSave(event, state); throw Error('IPC lost') })
-    ipcMain.handle('app-data:load', () => { throw Error('IPC unavailable') })
+    globalThis.originalSnapshot = ipcMain._invokeHandlers.get('management:snapshot')
+    globalThis.lostReplySix = false
+    globalThis.lostSixCommandIds = []
+    ipcMain.removeHandler('management:command'); ipcMain.removeHandler('management:snapshot')
+    ipcMain.handle('management:command', async (event, request) => {
+      if (request.command.type === 'addEntries' && request.command.entries[0].table === '6') globalThis.lostSixCommandIds.push(request.operationId)
+      const reply = await globalThis.originalManagementCommand(event, request)
+      if (!globalThis.lostReplySix && request.command.type === 'addEntries' && request.command.entries[0].table === '6') {
+        globalThis.lostReplySix = true
+        throw Error('IPC reply unavailable')
+      }
+      return reply
+    })
+    ipcMain.handle('management:snapshot', () => { throw Error('snapshot temporarily unavailable') })
   })
   await add('6'); await settled()
   assert.equal(read().entries.filter(entry => entry.table_number === '6').length, 1)
   assert.equal(await page.locator('#input-name').inputValue(), 'Test 6')
-  const unknownDb = read()
   await page.locator('#form-entry button[type="submit"]').click(); await settled()
-  assert.deepEqual(read(), unknownDb)
+  assert.equal(read().entries.filter(entry => entry.table_number === '6').length, 1)
+  assert.equal(await page.locator('#input-name').inputValue(), '')
+  assert.equal(await app.evaluate(() => globalThis.lostSixCommandIds.length), 2)
+  assert.equal(await app.evaluate(() => globalThis.lostSixCommandIds[0]), await app.evaluate(() => globalThis.lostSixCommandIds[1]))
   await app.evaluate(({ ipcMain }) => {
-    ipcMain.removeHandler('app-data:save'); ipcMain.removeHandler('app-data:load')
-    ipcMain.handle('app-data:save', globalThis.originalSave); ipcMain.handle('app-data:load', globalThis.originalLoad)
+    ipcMain.removeHandler('management:command'); ipcMain.removeHandler('management:snapshot')
+    ipcMain.handle('management:command', globalThis.originalManagementCommand)
+    ipcMain.handle('management:snapshot', globalThis.originalSnapshot)
   })
   await recover(); await settled()
-  assert.equal(await page.locator('#input-name').inputValue(), '')
   assert.equal(read().entries.filter(entry => entry.table_number === '6').length, 1)
   console.log('CHECK operações concorrentes')
-  // Rapid dependent actions: add succeeds, completion fails, queued freeze rejects.
+  // A confirmed failed completion stays pending; the subsequent independent
+  // freeze command is accepted and persisted through the same Main authority.
   const beforeRapid = read()
-  await app.evaluate(({ ipcMain }) => {
-    globalThis.rapidWrites = 0
-    ipcMain.removeHandler('app-data:save')
-    ipcMain.handle('app-data:save', async (event, state) => {
-      if (++globalThis.rapidWrites === 2) throw Error('SQLITE_READONLY test-only')
-      await new Promise(resolve => setTimeout(resolve, 150))
-      return globalThis.originalSave(event, state)
-    })
-  })
   await add('10')
-  const ids = beforeRapid.entries.filter(entry => entry.status === 'pending' && entry.id !== beforeRapid.state.current_turn_id).map(entry => entry.id)
+  const beforeRapidSnapshot = await page.evaluate(() => window.karaokeManagement.getSnapshot())
+  const ids = getManagementPlayOrder(beforeRapidSnapshot.state)
+    .filter(entry => entry.id !== beforeRapid.state.current_turn_id).map(entry => entry.id)
+  sql("CREATE TRIGGER fail_turn_advance BEFORE UPDATE ON app_state WHEN NEW.current_turn_id IS NOT OLD.current_turn_id BEGIN SELECT RAISE(ABORT, 'SQLITE_READONLY test-only'); END")
   await page.evaluate(({ current, last }) => {
     void window.markDone(current)
     void window.freezeThrough(last)
@@ -196,39 +216,27 @@ async function run() {
   await settled()
   assert.equal(read().entries.length, beforeRapid.entries.length + 1)
   assert.equal(read().entries.find(entry => entry.id === beforeRapid.state.current_turn_id).status, 'pending')
-  assert.equal(await app.evaluate(() => globalThis.rapidWrites), 2)
-  assert.equal(read().state.frozen_turn_ids_json, beforeRapid.state.frozen_turn_ids_json)
-  await app.evaluate(({ ipcMain }) => {
-    ipcMain.removeHandler('app-data:save'); ipcMain.handle('app-data:save', globalThis.originalSave)
-  })
+  assert.equal(read().state.current_turn_id, beforeRapid.state.current_turn_id)
+  assert.deepEqual(JSON.parse(read().state.frozen_turn_ids_json), ids,
+    'the later confirmed freeze is persisted while the rejected completion remains unchanged')
+  sql('DROP TRIGGER fail_turn_advance')
   await recover()
   const saved = read()
   await closeForced(); await launch()
   assert.deepEqual(read(), saved)
   assert.equal(await page.evaluate(() => window.__kqueue.queueLength()), saved.entries.filter(entry => entry.status === 'pending').length)
   await page.screenshot({ path: path.join(root, 'recuperacao-confirmada.png') })
-  console.log('CHECK fechamento pendente')
-  // Close waits for a delayed transaction before asking/confirming normal exit.
-  await app.evaluate(({ ipcMain, dialog }) => {
-    const handler = ipcMain._invokeHandlers.get('app-data:save')
-    ipcMain.removeHandler('app-data:save')
-    ipcMain.handle('app-data:save', async (event, state) => {
-      await new Promise(resolve => { globalThis.releaseSave = resolve })
-      return handler(event, state)
-    })
+  console.log('CHECK fechamento normal')
+  await add('20'); await settled()
+  await app.evaluate(({ dialog }) => {
     globalThis.closePromptCount = 0
     dialog.showMessageBox = async () => { globalThis.closePromptCount++; return { response: 1 } }
   })
-  await add('20')
-  await app.evaluate(async ({ BrowserWindow }) => {
-    for (let i=0;i<100&&!globalThis.releaseSave;i++) await new Promise(resolve=>setTimeout(resolve,10))
-    BrowserWindow.getAllWindows()[0].close()
-    await new Promise(resolve=>setTimeout(resolve,150))
-  })
-  assert.equal(await app.evaluate(() => globalThis.closePromptCount), 0)
   const exited = page.waitForEvent('close')
-  await app.evaluate(() => globalThis.releaseSave())
-  await exited; await app.close(); app = null
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())
+  await exited
+  assert.equal(await app.evaluate(() => globalThis.closePromptCount), 1)
+  await app.close(); app = null
   assert.equal(read().entries.filter(entry => entry.table_number === '20').length, 1)
   assert.equal(read().sessions.find(session => session.id === read().state.current_session_id).ended_at, null)
   console.log(`PASS real Electron / SQLite: rollback, inputs, completion, cancel, freeze, close failure, IPC uncertainty, recovery and restart. Evidence: ${root}`)

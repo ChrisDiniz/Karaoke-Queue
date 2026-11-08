@@ -1,13 +1,8 @@
-/** Persistence boundary for application state (SQLite bridge or browser fallback). */
+/** Persistence coordination for application state; production storage is owned by Main. */
+import { LEGACY_STATE_STORAGE_KEYS, PersistenceError, type LegacyStateStorageDto } from './persistence-contracts'
+export { PersistenceError } from './persistence-contracts'
 
-const STORE_KEY = 'kshake_store'
-const LEGACY_KEYS = {
-  QUEUE: 'kshake_queue', HISTORY: 'kshake_history', SESSIONS: 'kshake_sessions',
-  CURRENT_SESSION_ID: 'kshake_current_session', PRIORITY_IDS: 'kshake_priority',
-  FIXED_TURN_POSITIONS: 'kshake_fixed_turn_positions',
-  FROZEN_TURN_IDS: 'kshake_frozen_turn_ids',
-  CURRENT_TURN_ID: 'kshake_current_turn', LAST_RESET: 'kshake_last_reset'
-} as const
+const LEGACY_KEYS = LEGACY_STATE_STORAGE_KEYS
 
 interface StorageAdapter {
   load(): Promise<StoredAppState>
@@ -23,7 +18,7 @@ export interface StateRepository {
   load(): Promise<StoredAppState>
   save(state: AppState): Promise<boolean>
   recover?(): Promise<'committed' | 'unchanged'>
-  finishMigration(): void
+  finishMigration(): boolean
   flush(): Promise<unknown>
 }
 
@@ -43,15 +38,6 @@ function legacyFromStorage(storage: LegacyStorage): StoredAppState | null {
     lastReset: storage.getItem(LEGACY_KEYS.LAST_RESET) || null
   }
 }
-
-export class PersistenceError extends Error {
-  constructor(readonly outcome: 'rejected' | 'failed' | 'uncertain', message =
-    'Não foi possível confirmar a gravação. Seus dados foram preservados; verifique o armazenamento e tente novamente.') {
-    super(message)
-    this.name = 'PersistenceError'
-  }
-}
-
 /** Compare persisted semantics (SQLite groups history by session on read). */
 function fingerprint(state: StoredAppState): string {
   const entries = [...(state.queue || []), ...(state.history || [])]
@@ -110,6 +96,7 @@ export function createStateRepository(adapter: StorageAdapter, legacyStorage?: L
             baseline = snapshot
             return true
           } catch (error) {
+            if (error instanceof PersistenceError && error.outcome === 'rejected') throw error
             log('PERSISTENCE_WRITE_FAILED')
             let result: 'committed' | 'unchanged'
             try { result = await reconcile(before, snapshot) } catch {
@@ -128,7 +115,9 @@ export function createStateRepository(adapter: StorageAdapter, legacyStorage?: L
           }
         }
       })
-      writeTail = write
+      // The caller receives the outcome; this tail only serializes later writes
+      // and lets explicit recovery continue after a rejected/failed attempt.
+      writeTail = write.catch(() => undefined)
       return write
     },
     async recover() {
@@ -148,27 +137,32 @@ export function createStateRepository(adapter: StorageAdapter, legacyStorage?: L
       }
     },
     finishMigration() {
-      if (!migrationPending || !legacyStorage) return
+      if (!migrationPending || !legacyStorage) return false
       Object.values(LEGACY_KEYS).forEach(key => legacyStorage.removeItem(key))
       migrationPending = false
+      return true
     },
     flush() { return writeTail }
   }
 }
 
-export function createRendererStateRepository(): StateRepository {
-  const storage = window.localStorage
-  const adapter: StorageAdapter = {
-    async load() {
-      if (window.karaokeDatabase) return (await window.karaokeDatabase.load()) || {}
-      const raw = storage.getItem(STORE_KEY)
-      return raw ? JSON.parse(raw) : {}
+/** Mutable in-memory adapter for transferring legacy values through validated IPC. */
+export function createLegacyStateStorageBuffer(): {
+  storage: LegacyStorage
+  replace(values: LegacyStateStorageDto): void
+} {
+  const values = new Map<string, string>()
+  return {
+    storage: {
+      getItem(key) { return values.get(key) ?? null },
+      removeItem(key) { values.delete(key) }
     },
-    save(state) {
-      if (window.karaokeDatabase) return window.karaokeDatabase.save(state)
-      storage.setItem(STORE_KEY, JSON.stringify(state))
-      return Promise.resolve(true)
+    replace(next) {
+      values.clear()
+      for (const key of Object.values(LEGACY_KEYS)) {
+        const value = next[key as keyof LegacyStateStorageDto]
+        if (value !== null) values.set(key, value)
+      }
     }
   }
-  return createStateRepository(adapter, storage)
 }

@@ -90,7 +90,7 @@ C10.1 alterações visuais aprovadas → C10.2 remoção visual da seleção de 
 - Windows nativo testou a janela fullscreen no monitor disponível (viewport CSS 2752×1152, escala física observada de 125%). O host Windows não teve o monitor físico redimensionado nas cinco resoluções; as medidas foram verificadas pela viewport Electron/CDP. Escalas globais Windows 100%, 150%, 175% e 200% não foram testadas fisicamente; DPRs equivalentes foram emulados em CDP.
 - Não houve TV física nem teste real de overscan/distância de sofá. Capturas/comparações técnicas não substituem revisão visual do proprietário.
 
-**Critérios:** resultados funcionais, visuais e técnicos permanecem separados; comparações automatizadas/de agente não são aprovação humana. A aprovação explícita do proprietário encerra C10.5/C10; não altera as pendências independentes de C9.2/C9.5.
+**Critérios:** resultados funcionais, visuais e técnicos permanecem separados; comparações automatizadas/de agente não são aprovação humana. A aprovação explícita do proprietário encerra C10.5/C10. C9 foi posteriormente concluída e aprovada pelo proprietário em 2026-11-07, sem novos testes.
 
 ## Decisões aprovadas
 
@@ -100,13 +100,13 @@ C10.1 alterações visuais aprovadas → C10.2 remoção visual da seleção de 
 
 ## Pendências e riscos
 
-- A avaliação visual humana de C9.2/C9.5 permanece pendente. C10.5 foi aprovada pelo proprietário; as limitações físicas listadas abaixo não impedem essa aprovação.
+- **Registro histórico anterior ao encerramento global de C9:** a avaliação visual humana C9.2/C9.5 ainda aguardava decisão naquele checkpoint. O proprietário posteriormente concluiu/aprovou C9 e a Fase C em 2026-11-07, sem exigir nova validação. C10.5 foi aprovada pelo proprietário; as limitações físicas listadas abaixo não impedem essa aprovação.
 - Sem TV física/overscan; escala física Windows observada foi 125%. DPR simulado por CDP não equivale a alterar escala global Windows.
 - Os tamanhos CSS no runner Windows não equivalem a redimensionar fisicamente o monitor em cada resolução.
 
 ## Histórico de execução
 
-O histórico anterior concluiu C10.1–C10.3 no escopo então aprovado. A adaptação responsiva e as capturas/comparações de validação foram realizadas dentro da antiga C10.3, embora C10.4/C10.5 tenham sido registradas como não iniciadas enquanto etapas independentes. Esta reorganização transfere as evidências às responsabilidades C10.3, C10.4 e C10.5 sem repetir a execução. Em 2026-11-06, o proprietário aprovou explicitamente a experiência atual e encerrou C10.5/C10; isso não aprova C9 nem remove as limitações físicas documentadas.
+O histórico anterior concluiu C10.1–C10.3 no escopo então aprovado. A adaptação responsiva e as capturas/comparações de validação foram realizadas dentro da antiga C10.3, embora C10.4/C10.5 tenham sido registradas como não iniciadas enquanto etapas independentes. Esta reorganização transfere as evidências às responsabilidades C10.3, C10.4 e C10.5 sem repetir a execução. Em 2026-11-06, o proprietário aprovou explicitamente a experiência atual e encerrou C10.5/C10. O registro à época não encerrava C9; posteriormente, em 2026-11-07, o proprietário concluiu e aprovou C9 e a Fase C, sem exigir nova validação.
 
 ## Referências
 

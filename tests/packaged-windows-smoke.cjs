@@ -22,7 +22,7 @@ async function launch() {
     timeout: 60000
   })
   const page = await application.firstWindow()
-  await page.waitForFunction(() => !!window.__kqueue && !!window.karaokeDatabase && !!window.karaokeLicense,
+  await page.waitForFunction(() => !!window.__kqueue && !!window.karaokeManagement && !!window.karaokeLicense,
     undefined, { timeout: 30000 })
   const primary = page.locator('#btn-startup-primary')
   if (await primary.isVisible()) await primary.click()
@@ -49,6 +49,8 @@ function inspectDatabase(databasePath) {
 async function run() {
   try {
     assert.ok(fs.existsSync(executable), `packaged executable not found: ${executable}`)
+    fs.mkdirSync(userDataDirectory, { recursive: true })
+    fs.writeFileSync(path.join(userDataDirectory, 'operating-mode.json'), JSON.stringify({ version: 1, mode: 'controller' }))
     let page = await launch()
     const appInfo = await application.evaluate(({ app }) => ({
       packaged: app.isPackaged,
@@ -85,8 +87,8 @@ async function run() {
 
     await close()
     page = await launch()
-    const restored = await page.evaluate(() => window.karaokeDatabase.load())
-    assert.equal(restored.queue.filter(entry => entry.name === 'Packaged Windows smoke' && entry.status === 'pending').length, 1)
+    const restored = await page.evaluate(() => window.karaokeManagement.getSnapshot())
+    assert.equal(restored.state.queue.filter(entry => entry.name === 'Packaged Windows smoke' && entry.status === 'pending').length, 1)
     assert.deepEqual(inspectDatabase(databasePath), beforeRestart)
     const secondTrial = await page.evaluate(() => window.karaokeLicense.getStatus())
     const secondTrialRecord = JSON.parse(fs.readFileSync(licensePath, 'utf8'))

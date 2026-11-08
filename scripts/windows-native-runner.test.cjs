@@ -29,7 +29,6 @@ const {
   verifySnapshotDirectory,
   verifyThenRun
 } = require('./run-windows-native-tests.cjs')
-const { validateTemporaryStagePath } = require('./standalone-c1-windows-manual.cjs')
 
 const head = '0123456789abcdef0123456789abcdef01234567'
 
@@ -64,7 +63,6 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   const standalonePlayback = powershellLauncher('C:\\stage', 'run-standalone-playback', false, '--standalone-playback')
   const standaloneIntegration = powershellLauncher('C:\\stage', 'run-standalone-integration', false, '--standalone-integration')
   const playerRecovery = powershellLauncher('C:\\stage', 'run-player-recovery', false, '--player-recovery')
-  const playerControl = powershellLauncher('C:\\stage', 'run-player-control', false, '--player-control')
   const standaloneOptions = powershellLauncher('C:\\stage', 'run-standalone-options', false, '--standalone-options')
   const standaloneProduction = powershellLauncher('C:\\stage', 'run-standalone-production', false, '--standalone-production')
 
@@ -76,7 +74,6 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.equal(launcherPayload(standalonePlayback).playbackMode, '--standalone-playback')
   assert.equal(launcherPayload(standaloneIntegration).playbackMode, '--standalone-integration')
   assert.equal(launcherPayload(playerRecovery).playbackMode, '--player-recovery')
-  assert.equal(launcherPayload(playerControl).playbackMode, '--player-control')
   assert.equal(launcherPayload(standaloneOptions).playbackMode, '--standalone-options')
   assert.equal(launcherPayload(standaloneProduction).playbackMode, '--standalone-production')
   assert.match(evaluation, /\$workerArgs \+= "--playback-evaluation"/)
@@ -86,12 +83,12 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.match(standalonePlayback, /\$workerArgs \+= "--standalone-playback"/)
   assert.match(standaloneIntegration, /\$workerArgs \+= "--standalone-integration"/)
   assert.match(playerRecovery, /\$workerArgs \+= "--player-recovery"/)
-  assert.match(playerControl, /\$workerArgs \+= "--player-control"/)
   assert.match(standaloneOptions, /\$workerArgs \+= "--standalone-options"/)
   assert.match(standaloneProduction, /\$workerArgs \+= "--standalone-production"/)
   assert.match(evaluation, /& node\.exe \$worker @workerArgs/)
   assert.doesNotMatch(evaluation, /playback-engine-evaluation\.cjs/)
   assert.throws(() => powershellLauncher('C:\\stage', 'run-invalid', false, '--unknown-mode'), /não permitido/)
+  assert.throws(() => powershellLauncher('C:\\stage', 'run-retired-player-control', false, '--player-control'), /não permitido/)
 })
 
 test('focused playback recovery harness does not require unrelated window-focus assertions', () => {
@@ -99,7 +96,6 @@ test('focused playback recovery harness does not require unrelated window-focus 
   assert.equal(requiresWindowFocus('--player-playback'), false)
   assert.equal(requiresWindowFocus('--standalone-playback'), false)
   assert.equal(requiresWindowFocus('--standalone-integration'), false)
-  assert.equal(requiresWindowFocus('--player-control'), false)
   assert.equal(requiresWindowFocus('--standalone-options'), false)
   assert.equal(requiresWindowFocus('--standalone-production'), false)
   assert.equal(requiresWindowFocus('--playback-chromium-final'), false)
@@ -153,9 +149,6 @@ test('focused Windows Player recovery mode runs recovery unit coverage before re
   ])
   assert.deepEqual(selectWindowsTestSuites('--player-playback').map(suite => suite.script), [
     'build/tests/player-playback-electron.js'
-  ])
-  assert.deepEqual(selectWindowsTestSuites('--player-control').map(suite => suite.script), [
-    'build/tests/player-control-electron.js'
   ])
   assert.deepEqual(selectWindowsTestSuites('--standalone-options').map(suite => suite.script), [
     'build/tests/standalone-player-options.test.js',
@@ -321,25 +314,19 @@ test('recognizes production playback renderer and copied assets as generated bui
   ].sort())
 })
 
-test('recognizes Player control and first-launch Welcome bundles and copied assets as generated build outputs', () => {
+test('recognizes first-launch Welcome bundles and copied assets as generated build outputs', () => {
   const manifest = manifestFor([
-    { path: 'src/player-control-renderer.ts', content: 'export {}' },
-    { path: 'src/player-control.html', content: '<main></main>' },
-    { path: 'src/player-control.css', content: '.player {}' },
     { path: 'src/welcome-renderer.ts', content: 'export {}' },
     { path: 'src/welcome.html', content: '<main></main>' },
     { path: 'src/welcome.css', content: '.welcome {}' }
   ])
   assert.deepEqual([...generatedBuildPaths([manifest])].sort(), [
-    'build/src/player-control-renderer.bundle.js',
-    'build/src/player-control-renderer.js',
-    'build/src/player-control.css', 'build/src/player-control.html',
     'build/src/welcome-renderer.bundle.js', 'build/src/welcome-renderer.js',
     'build/src/welcome.css', 'build/src/welcome.html'
   ].sort())
 })
 
-test('recognizes C1 HTML, CSS, renderer bundle, restricted preload, harness and art as generated build outputs', () => {
+test('recognizes Standalone UI harness documents, restricted preloads, bundles and art as build outputs', () => {
   const manifest = manifestFor([
     { path: 'player-preload.ts', content: 'export {}' },
     { path: 'standalone-player-preload.ts', content: 'export {}' },
@@ -361,42 +348,53 @@ test('recognizes C1 HTML, CSS, renderer bundle, restricted preload, harness and 
   ]) assert.ok(generated.has(filePath), filePath)
 })
 
-test('C1 manual export requires a mounted NTFS TEMP path and the native PowerShell launcher owns Electron lifetime', () => {
-  const allowedStage = path.join(os.tmpdir(), 'karaoke-queue-windows-stage-qQWY8y')
-  assert.equal(validateTemporaryStagePath(allowedStage), allowedStage)
-  assert.throws(() => validateTemporaryStagePath(path.join(os.tmpdir(), 'unrelated-temp')), /diretório temporário exclusivo/)
-  assert.throws(() => validateTemporaryStagePath(path.resolve(os.tmpdir(), '..', 'outside-stage')), /diretório temporário exclusivo/)
-  const launcher = fs.readFileSync(path.join(__dirname, 'standalone-c1-windows-native.ps1'), 'utf8')
-  assert.match(launcher, /WslNodePath = '\/home\/chris\/\.nvm\/versions\/node\/v24\.15\.0\/bin\/node'/)
-  assert.match(launcher, /wslNodePath -notmatch/)
-  assert.match(launcher, /wslRuntime\.platform -ne 'linux'/)
-  assert.match(launcher, /--exec \$wslNodePath \/home\/chris\/projetos\/karaoke-queue\/scripts\/standalone-c1-windows-manual\.cjs --export-snapshot --approve-untracked/)
-  assert.match(launcher, /--exec \$wslNodePath \/home\/chris\/projetos\/karaoke-queue\/scripts\/standalone-c1-windows-manual\.cjs --cleanup-snapshot/)
-  assert.doesNotMatch(launcher, /npm run prepare:standalone-c1:windows|bash -lc \$wslCommand/)
-  assert.match(launcher, /--node-info/)
-  assert.match(launcher, /--verify-snapshot/)
-  assert.match(launcher, /--verify-build/)
-  assert.match(launcher, /--import-catalog/)
-  assert.match(launcher, /--electron-path/)
-  assert.doesNotMatch(launcher, /\$nodeExe -e|\$nodeExe -p/)
-  assert.match(launcher, /Digite SYNC para incluir exatamente esta lista/)
-  assert.match(launcher, /\$npmExe ci --cache/)
-  assert.match(launcher, /\$npmExe run compile/)
-  assert.match(launcher, /KQ_STANDALONE_C1_CATALOG_CSV|KQ_PLAYER_TEST_CATALOG_CSV/)
-  assert.match(launcher, /Start-Process -FilePath \$electronExe/)
-  assert.match(launcher, /Get-CimInstance -ClassName Win32_Process/)
-  assert.match(launcher, /Wait-Process -Id \$electronProcess\.Id/)
+test('current build inventory omits outputs belonging only to the retired Player control shell', () => {
+  const manifest = manifestFor([
+    { path: 'main.ts', content: 'export {}' },
+    { path: 'src/standalone-player-renderer.ts', content: 'export {}' },
+    { path: 'standalone-player-preload.ts', content: 'export {}' },
+    { path: 'tests/standalone-player-production-electron.ts', content: 'export {}' }
+  ])
+  const generated = generatedBuildPaths([manifest])
+  for (const filePath of [
+    'build/player-control-preload.js',
+    'build/src/player-control-renderer.js',
+    'build/src/player-control-renderer.bundle.js',
+    'build/tests/player-control-electron.js'
+  ]) assert.equal(generated.has(filePath), false, filePath)
+  assert.ok(generated.has('build/main.js'))
+  assert.ok(generated.has('build/src/standalone-player-renderer.bundle.js'))
+  assert.ok(generated.has('build/tests/standalone-player-production-electron.js'))
+})
+
+test('official manual launcher starts production Main through the shared Windows runner', () => {
+  const launcher = fs.readFileSync(path.join(__dirname, 'standalone-manual-windows.ps1'), 'utf8')
+  assert.match(launcher, /E:\\KaraokeQueue\\manual-windows/)
   assert.match(launcher, /DriveFormat -ne 'NTFS'/)
-  assert.match(launcher, /Copy-Item -Path \(\$sourceStage \+ '\\tree\\\*'\)/)
-  const manualHelper = fs.readFileSync(path.join(__dirname, 'standalone-c1-windows-manual.cjs'), 'utf8')
-  assert.match(manualHelper, /process\.platform/)
-  assert.match(manualHelper, /CSV não produziu registros\/metadados para o código de amostra 1001/)
-  assert.match(launcher, /stagePathLinux -notmatch '\^\/tmp\/karaoke-queue-windows-stage-\[A-Za-z0-9\]\+\$/)
-  assert.match(launcher, /Remove-Item -LiteralPath \$stageRoot -Recurse -Force/)
-  assert.match(launcher, /--cleanup-snapshot/)
-  assert.doesNotMatch(launcher, /powershell\.exe|git reset|\$checkout/i)
+  assert.match(launcher, /Execute este arquivo pelo caminho UNC do WSL/)
+  assert.match(launcher, /run-windows-native-tests\.cjs/)
+  assert.match(launcher, /--manual-launch/)
+  assert.doesNotMatch(launcher, /standalone-player-ui-electron|KQ_STANDALONE_C1_UI_MAIN|KQ_STANDALONE_C1_MANUAL/)
+
+  const manualRun = powershellLauncher('C:\\stage', 'run-manual-production', false, null, {
+    profileKind: 'new', profileName: 'fresh-runner-test'
+  })
+  const encodedPayload = manualRun.match(/FromBase64String\('([^']+)'\)/)
+  assert.ok(encodedPayload, 'the runner embeds the snapshot and profile request as JSON')
+  assert.deepEqual(JSON.parse(Buffer.from(encodedPayload[1], 'base64').toString('utf8')), {
+    stagePath: 'C:\\stage', runId: 'run-manual-production', profileKind: 'new', profileName: 'fresh-runner-test'
+  })
+  assert.match(manualRun, /--manual-launch/)
+  assert.match(manualRun, /Get-CimInstance Win32_Process/)
+  assert.doesNotMatch(manualRun, /standalone-player-ui-electron|KQ_STANDALONE_C1_UI_MAIN/)
+  const runner = fs.readFileSync(path.join(__dirname, 'run-windows-native-tests.cjs'), 'utf8')
+  assert.match(runner, /npm\.cmd run compile no Windows/)
+  assert.match(runner, /packageJson\.main !== 'build\/main\.js'/)
+  assert.throws(() => powershellLauncher('C:\\stage', 'invalid-profile', false, null, {
+    profileKind: 'new', profileName: '..\\profile'
+  }), /seleção do perfil/)
+
   const harness = fs.readFileSync(path.join(__dirname, '..', 'tests', 'standalone-player-ui-electron.ts'), 'utf8')
-  assert.match(launcher, /KQ_STANDALONE_C1_MANUAL = '1'/)
   assert.match(harness, /KQ_STANDALONE_C1_MANUAL === '1'/)
   assert.match(harness, /!\['F10', 'F11'\]\.includes\(input\.code\)/)
   const manualHookStart = harness.indexOf('// Manual-only validation hooks')
@@ -405,14 +403,6 @@ test('C1 manual export requires a mounted NTFS TEMP path and the native PowerShe
   assert.doesNotMatch(harness.slice(manualHookStart, manualHookEnd), /\bF9\b|seedPlayback/)
   assert.match(harness, /input\.code === 'F10'/)
   assert.match(harness, /input\.code === 'F11'/)
-})
-
-test('C1 Windows helper exposes native Node metadata through an argument-safe command', () => {
-  const { getNodeInfo } = require('./standalone-c1-windows-manual.cjs')
-  assert.deepEqual(getNodeInfo(), {
-    platform: process.platform,
-    version: process.version
-  })
 })
 
 test('blocks environment secrets, token/password files, and SQLite journal sidecars from transfer', () => {
@@ -559,7 +549,7 @@ test('preserves and restores an original build containing HTML notes and unknown
     files: ['build/main.js', 'build/src/index.html']
   })
 
-  restorePreviousBuild(root, state, [manifest])
+  restorePreviousBuild(root, state, manifest)
 
   assert.equal(fs.existsSync(state.backupPath), false)
   assert.equal(fs.readFileSync(path.join(build, 'operator-note.html'), 'utf8'), '<p>operator content</p>')
@@ -584,7 +574,7 @@ test('unexpected generated build inventory blocks cleanup and restoration of the
   fs.writeFileSync(path.join(build, 'operator-note.html'), '<p>unexpected generated file</p>')
 
   assert.throws(() => verifyBuildOutput(root, manifest), /Inventário do build diverge/)
-  assert.throws(() => restorePreviousBuild(root, state, [manifest]), /Inventário do build diverge/)
+  assert.throws(() => restorePreviousBuild(root, state, manifest), /Inventário do build diverge/)
   assert.equal(fs.readFileSync(path.join(build, 'main.js'), 'utf8'), 'compiled javascript')
   assert.equal(fs.readFileSync(path.join(build, 'src', 'index.html'), 'utf8'), '<main></main>')
   assert.equal(fs.readFileSync(path.join(build, 'operator-note.html'), 'utf8'), '<p>unexpected generated file</p>')
@@ -606,7 +596,7 @@ test('unexpected generated extension blocks restoration and keeps the original b
   fs.writeFileSync(path.join(build, 'custom.exe'), 'operator data')
   const manifest = manifestFor([{ path: 'main.ts', content: 'export {}' }])
 
-  assert.throws(() => restorePreviousBuild(root, state, [manifest]), /Inventário do build diverge/)
+  assert.throws(() => restorePreviousBuild(root, state, manifest), /Inventário do build diverge/)
   assert.equal(fs.readFileSync(path.join(build, 'main.js'), 'utf8'), 'compiled javascript')
   assert.equal(fs.readFileSync(path.join(build, 'custom.exe'), 'utf8'), 'operator data')
   assert.equal(fs.readFileSync(path.join(state.backupPath, 'operator-note.html'), 'utf8'), '<p>original note</p>')

@@ -121,12 +121,36 @@ async function waitForSnapshot(
   sequence: StandalonePlayerSequence,
   predicate: (snapshot: ReturnType<StandalonePlayerSequence['getSnapshot']>) => boolean
 ): Promise<ReturnType<StandalonePlayerSequence['getSnapshot']>> {
-  for (let turn = 0; turn < 100; turn++) {
-    const snapshot = sequence.getSnapshot()
-    if (predicate(snapshot)) return snapshot
-    await new Promise<void>(resolve => setImmediate(resolve))
-  }
-  assert.fail('O estado esperado da sequência não foi publicado.')
+  const current = sequence.getSnapshot()
+  if (predicate(current)) return current
+
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let unsubscribe: () => void = () => undefined
+    const timeout = setTimeout(() => {
+      if (settled) return
+      settled = true
+      unsubscribe()
+      reject(new Error(`Timeout aguardando snapshot da sequência; estado atual=${JSON.stringify(sequence.getSnapshot())}`))
+    }, 15000)
+    unsubscribe = sequence.subscribe(snapshot => {
+      if (settled || !predicate(snapshot)) return
+      settled = true
+      clearTimeout(timeout)
+      unsubscribe()
+      resolve(snapshot)
+    })
+
+    // Subscribe before re-reading to avoid missing a transition between the
+    // initial snapshot check and listener registration.
+    const latest = sequence.getSnapshot()
+    if (predicate(latest)) {
+      settled = true
+      clearTimeout(timeout)
+      unsubscribe()
+      resolve(latest)
+    }
+  })
 }
 
 interface FixtureOptions {

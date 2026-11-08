@@ -133,10 +133,13 @@ async function run() {
     assert.equal(await page.locator('#license-lock-message').isVisible(), true)
     assert.match(await page.locator('#license-trial-label').textContent(), /Teste expirado/)
     await page.screenshot({ path: path.join(screenshots, 'trial-expired.png') })
-    const visibleData = await page.evaluate(() => window.karaokeDatabase.load())
-    assert.ok(visibleData.queue.some(entry => entry.name === 'Fila preservada'), 'expired users can still read their queue')
-    await assert.rejects(page.evaluate(state => window.karaokeDatabase.save({ ...state, queue: [] }), visibleData), /LICENSE_EXPIRED/)
-    assert.deepEqual(readDatabase(expiredProfile), beforeExpired, 'blocked save leaves SQLite sessions and entries intact')
+    const visibleData = await page.evaluate(() => window.karaokeManagement.getSnapshot())
+    assert.ok(visibleData.state.queue.some(entry => entry.name === 'Fila preservada'), 'expired users can still read their confirmed queue projection')
+    await assert.rejects(page.evaluate(() => window.karaokeManagement.command({
+      operationId: 'expired-write-check',
+      command: { type: 'addEntries', entries: [{ name: 'Forbidden', songNumber: '1', songNumber2: '', table: '8' }], selectCurrent: true }
+    })), /LICENSE_EXPIRED/)
+    assert.deepEqual(readDatabase(expiredProfile), beforeExpired, 'blocked application command leaves SQLite sessions and entries intact')
 
     const closedWithoutEnding = await app.evaluate(({ BrowserWindow }) => new Promise(resolve => {
       const window = BrowserWindow.getAllWindows()[0]
