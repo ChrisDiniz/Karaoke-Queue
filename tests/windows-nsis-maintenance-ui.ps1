@@ -1,5 +1,5 @@
 param([Parameter(Mandatory=$true)][string]$InstallDirectory,
-      [Parameter(Mandatory=$true)][string]$ControlDirectory)
+      [Parameter(Mandatory=$true)][string]$ControlDirectory, [switch]$ConfiguredRole)
 $ErrorActionPreference='Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows') {
   throw 'NSIS GUI proof requires a disposable hosted Windows runner.'
@@ -75,6 +75,10 @@ try {
   } while([DateTime]::UtcNow -lt $deadline)
   if(-not $maintenance){throw 'Control Panel repair did not launch the protected cached installer.'}
   $repairInstall=Wait-Control $maintenance 'Reparar / reinstalar mantendo o modo atual'
+  if($ConfiguredRole) {
+    [void](Wait-Control $maintenance 'Trocar para Reprodutor')
+    [void](Wait-Control $maintenance 'Trocar para Tudo em um')
+  }
   if([KqNsisUI]::SendMessage($repairInstall,0xF0,[IntPtr]::Zero,[IntPtr]::Zero).ToInt32() -ne 1){throw 'Reinstall must default to preserving the role.'}
   if([IO.File]::ReadAllText($manifest) -cne $before){throw 'Uncommitted maintenance modified the role/operation generation.'}
   Close-NSIS $maintenance

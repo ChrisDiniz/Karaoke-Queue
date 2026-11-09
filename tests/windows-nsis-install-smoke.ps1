@@ -31,6 +31,7 @@ $desktopShortcut = Join-Path ([Environment]::GetFolderPath([Environment+SpecialF
 $startMenuShortcut = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonPrograms)) 'Karaoke Queue\Karaoke Queue.lnk'
 $installStarted = $false
 $fixtureInstallationId = $null
+$roleShortcutNames = @()
 $fixtureProcesses = [Collections.Generic.List[System.Diagnostics.Process]]::new()
 
 foreach ($path in @($installDirectory, $controlDirectory, $desktopShortcut, $startMenuShortcut, $expectedUserData)) {
@@ -139,6 +140,8 @@ try {
   & (Join-Path $PSScriptRoot 'windows-nsis-maintenance-ui.ps1') -InstallDirectory $installDirectory -ControlDirectory $controlDirectory
 
   $env:KQ_NSI_SMOKE_EXECUTABLE = Join-Path $installDirectory 'Karaoke Queue.exe'
+  & node.exe (Join-Path $PSScriptRoot 'windows-nsis-trusted-path.cjs')
+  if ($LASTEXITCODE -ne 0) { throw 'O binding não comprovou proteção do local customizado ou sua recuperação.' }
   $probeOutput = @(& node.exe (Join-Path $PSScriptRoot 'windows-nsis-userdata-path.cjs') 2>&1)
   $probeExitCode = $LASTEXITCODE
   if ($probeExitCode -ne 0) { throw "O Main empacotado não confirmou userData: $($probeOutput -join "`n")" }
@@ -180,6 +183,28 @@ fs.writeFileSync(path.join(process.env.KQ_NSI_SMOKE_USERDATA, 'operating-mode.js
   if (-not $profileHashes.ContainsKey('karaoke.sqlite') -or -not $profileHashes.ContainsKey('operating-mode.json')) {
     throw 'A fixture não contém o SQLite e a configuração esperados no userData real.'
   }
+  # Exercise the actual elevated helper on this disposable, already-admin runner.
+  # This is NOT an interactive UAC/broker proof, and never runs on the owner's host.
+  $beforeConfirmation = Get-Content -LiteralPath $controlManifest -Raw | ConvertFrom-Json
+  $initialOperation = [guid]::NewGuid().ToString()
+  Invoke-FixtureProcess (Join-Path $installDirectory 'Karaoke Queue.exe') @('--kq-install-admin','confirm-initial',
+    '--operation-id',$initialOperation,'--expected-generation',[string]$beforeConfirmation.generation,
+    '--role','combined','--installation-id',$fixtureInstallationId) | Out-Null
+  $confirmed = Get-Content -LiteralPath $controlManifest -Raw | ConvertFrom-Json
+  if ($confirmed.status -ne 'ready' -or $confirmed.role -ne 'combined' -or
+      $confirmed.lastCompletedOperation.operationId -ne $initialOperation) { throw 'The actual helper did not confirm the synthetic Combined role.' }
+  & (Join-Path $PSScriptRoot 'windows-nsis-maintenance-ui.ps1') -InstallDirectory $installDirectory -ControlDirectory $controlDirectory -ConfiguredRole
+  foreach ($entry in $profileHashes.GetEnumerator()) {
+    if ((Get-FileHash -LiteralPath (Join-Path $userDataDirectory $entry.Key) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.Value) {
+      throw "Administrative confirmation/GUI cancellation changed userData: $($entry.Key)"
+    }
+  }
+  $identityModule = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\build\src\windows-function-identity.js'))
+  $roleShortcutNames = @(& node.exe -e "const i=require(process.argv[1]); console.log(JSON.stringify(['player','combined'].map(m=>i.getWindowsFunctionIdentity(m).displayName+'.lnk')))" $identityModule | ConvertFrom-Json)
+  if ($LASTEXITCODE -ne 0 -or $roleShortcutNames.Count -ne 2) { throw 'Não foi possível resolver os nomes reais dos atalhos.' }
+  $configuredName = $roleShortcutNames[1]
+  Assert-ShortcutTarget (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory)) $configuredName)
+  Assert-ShortcutTarget (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonPrograms)) ('Karaoke Queue\'+$configuredName))
   $uninstaller = Join-Path $installDirectory 'Uninstall Karaoke Queue.exe'
   $uninstallPrefix = '"' + [IO.Path]::GetFullPath($uninstaller) + '"'
   $expectedDisplayName = Get-ExpectedUninstallDisplayName
@@ -202,7 +227,7 @@ fs.writeFileSync(path.join(process.env.KQ_NSI_SMOKE_USERDATA, 'operating-mode.js
   }
   $uninstalledManifest = Get-Content -LiteralPath $controlManifest -Raw | ConvertFrom-Json
   if ($uninstalledManifest.installationId -ne $fixtureInstallationId -or $uninstalledManifest.status -ne 'pending' -or
-      $uninstalledManifest.pending.kind -ne 'uninstall' -or $null -ne $uninstalledManifest.role) {
+      $uninstalledManifest.pending.kind -ne 'uninstall' -or $uninstalledManifest.role -ne 'combined') {
     throw 'Uninstall não deixou a barreira durável com a função anterior preservada.'
   }
   foreach ($entry in $profileHashes.GetEnumerator()) {
@@ -220,6 +245,12 @@ fs.writeFileSync(path.join(process.env.KQ_NSI_SMOKE_USERDATA, 'operating-mode.js
   if (Test-Path -LiteralPath $desktopShortcut -PathType Leaf) { throw 'Uninstall deixou atalho gerenciado no Desktop público.' }
   if (Test-Path -LiteralPath $startMenuShortcut -PathType Leaf) { throw 'Uninstall deixou atalho gerenciado no Menu Iniciar.' }
 
+  foreach ($name in $roleShortcutNames) {
+    foreach ($folder in @([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory),
+        (Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonPrograms)) 'Karaoke Queue'))) {
+      if (Test-Path -LiteralPath (Join-Path $folder $name)) { throw "Uninstall deixou atalho de função: $name" }
+    }
+  }
   $reinstall = Invoke-FixtureProcess $installer @('/S', "/D=$installDirectory")
   if ($reinstall.ExitCode -ne 0) { throw "Reinstall após uninstall terminou com exit code $($reinstall.ExitCode)." }
   $reinstalledManifest = Get-Content -LiteralPath $controlManifest -Raw | ConvertFrom-Json
@@ -230,6 +261,11 @@ fs.writeFileSync(path.join(process.env.KQ_NSI_SMOKE_USERDATA, 'operating-mode.js
   }
   Assert-ShortcutTarget $desktopShortcut
   Assert-ShortcutTarget $startMenuShortcut
+  foreach ($entry in $profileHashes.GetEnumerator()) {
+    if ((Get-FileHash -LiteralPath (Join-Path $userDataDirectory $entry.Key) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.Value) {
+      throw "Reinstall changed preserved userData: $($entry.Key)"
+    }
+  }
   $env:KQ_NSI_FIXTURE_INSTALLATION_ID = $fixtureInstallationId
   & node.exe (Join-Path $PSScriptRoot 'windows-nsis-active-app.cjs')
   if ($LASTEXITCODE -ne 0) { throw 'Reinstall não abriu novamente a escolha de modo ou perdeu a exclusão.' }
@@ -265,7 +301,12 @@ finally {
     }
   } catch { $cleanupErrors.Add("userData sintético da conta hosted: $($_.Exception.Message)") }
   if ($installStarted -and $safeToCleanFixtures) {
-    foreach ($linkPath in @($desktopShortcut, $startMenuShortcut)) {
+    $fixtureLinks = @($desktopShortcut, $startMenuShortcut)
+    foreach ($name in $roleShortcutNames) {
+      $fixtureLinks += Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory)) $name
+      $fixtureLinks += Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonPrograms)) ('Karaoke Queue\'+$name)
+    }
+    foreach ($linkPath in $fixtureLinks) {
       if (Test-Path -LiteralPath $linkPath -PathType Leaf) {
         try {
           $shell = New-Object -ComObject WScript.Shell

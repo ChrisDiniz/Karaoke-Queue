@@ -21,3 +21,15 @@ Testes novos cobrem ambas as funções, SQLite real isolado, cancelamento, pagin
 - Build oficial NSIS x64 + binding real + verificador: PASS no snapshot `51905237c8681865cb6f23f8fc4e21b1cc94c5cfd13cfb73ca3e1af3a79bf799`; inputs selados `e128adc02f615c388eee569f0b4f27cd6de64a755b6ea04ddb74af7ec8de61a7`; SHA-256 `1adb23ab6ed626d71ba7e91dfb5b87cb2a923ec6911a02a209e095523e9e1a2d`. Log `/tmp/kq-location-build4.log`. Mudanças posteriores em testes invalidam o selo anterior: CI deve gerar novo candidato; não atribuir esse binário ao novo snapshot.
 - Falhas encontradas/corrigidas: inventário do novo CSS, verificador ainda exigindo alvo fixo e expansão precoce `${isUpdated}` antes do registro de plugins. Macro atual usa flag calculada no customUnInit. O E2E aguarda entrega real dos eventos antes da asserção, pois resposta invoke e eventos são assíncronos; nenhuma asserção removida. Um build interrompido pelo inventário foi preservado com seu lock/backup; restauração só ocorreu após confirmar worker morto, checkout sem processos e ausência de sync pendente.
 - **Pendente neste ponto:** smoke de instalação/GUI no runner hosted e artifact do código novo. Não executar esses smokes no host operacional. Resultados do CI serão registrados após execução.
+
+### Provas complementares do commit enviado
+
+Runner oficial `--installation-coordination`: PASS no commit `3cf3e312516c042c70ee9979958f0af6d7c67889`, fingerprint `104e263f32ea3b56c17768eca2b9b79fc93406646eedb1f67b13e87defccae10`; N-API real, mutex/thread ownership/contenção/abandono/ACL readback, árvore administrativa e fences NSIS. Log `/tmp/kq-location-native-proof.log`.
+
+Smoke hosted acrescenta provas negativas da fronteira nova: pelo Electron empacotado em Run-As-Node, o binding aceita o caminho customizado protegido, recusa escrita AU na própria raiz (sem mudar ACL do exe) e recusa InstallLocation HKLM divergente. Cada alteração é restrita à fixture identificada e revertida em finally antes de iniciar Main/helper. O script recusa execução fora de runner hospedado; execução ainda pendente de CI. Não é prova entre contas ou UAC.
+
+### Primeira execução CI deste ajuste
+
+Run [42695735985](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42695735985): Linux completo PASS; Windows build, pacote e provas N-API/NSIS PASS. Novo E2E encontrou fixture sob alias 8.3 `RUNNER~1`, recusada corretamente pelo guard de caminhos do CSV. A fixture passa a usar `fs.realpathSync.native(os.tmpdir())`; nenhuma proteção de produção foi relaxada. Instalação/artifact desta run NOT RUN devido à falha anterior.
+
+O smoke também exercita confirmação pelo helper real em runner já administrativo (sem fingir prova do UAC): confirma Combined, verifica as duas opções de troca na manutenção, cancela sem alteração e faz uninstall/reinstall de uma função efetivamente confirmada. Exige retorno a unconfigured e Welcome mesmo com o modo legado/SQLite preservados, além dos hashes de todos os arquivos antes/depois. Provas negativas de caminho e os novos passos ainda aguardam a próxima run.

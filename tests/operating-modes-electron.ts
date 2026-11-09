@@ -16,7 +16,7 @@ const electronPath = require('electron')
 const configuredTempRoot = process.env.KARAOKE_TEST_TEMP_ROOT
 const tempRoot = configuredTempRoot
   ? path.resolve(configuredTempRoot)
-  : fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-operating-modes-'))
+  : fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), 'karaoke-operating-modes-'))
 if (configuredTempRoot) {
   if (fs.existsSync(tempRoot)) throw new Error('The requested isolated test root already exists: ' + tempRoot)
   fs.mkdirSync(tempRoot, { recursive: false })
