@@ -9,8 +9,8 @@
   "scripts": {
     "compile": "tsc -p tsconfig.json && node build/scripts/copy-assets.js",
     "start": "npm run compile && electron .",
-    "build": "npm run compile && electron-builder --win nsis --x64 --publish never",
-    "test:unit": "npm run compile && node build/tests/queue-rules.test.js && node build/tests/debut-cadence-rules.test.js && node build/tests/round-robin-rules.test.js && node build/tests/fixed-turn-rules.test.js && node build/tests/frozen-queue-rules.test.js && node build/tests/application.test.js && node build/tests/persistence.test.js && node build/tests/app-state-validation.test.js && node build/tests/round-robin-application.test.js && node build/tests/licensing.test.js && node build/tests/database-migration.test.js && node build/tests/operating-mode.test.js && node build/tests/video-library.test.js && node build/tests/music-catalog.test.js && node build/tests/player-ui-contracts.test.js && node build/tests/player-playback.test.js && node build/tests/manual-playback.test.js && node build/tests/chromium-playback-host.test.js && node build/tests/player-video-window.test.js && node build/tests/player-playback-recovery.test.js && node build/tests/main-ipc-policy.test.js && node build/tests/main-player-ipc.test.js && node build/tests/main-controller-ipc.test.js && node build/tests/main-window-factories.test.js && node build/tests/main-media-runtime.test.js && node build/tests/main-standalone-shutdown.test.js && node build/tests/main-management-close.test.js && node build/tests/main-management-host.test.js && node build/tests/main-management-ipc.test.js && node build/tests/management-client.test.js && node --test build/tests/ui-scale.test.js build/tests/logging.test.js build/tests/singer-suggestions.test.js build/tests/sidebar-display-name.test.js && node scripts/windows-native-runner.test.cjs && node scripts/playback-engine-evaluation.test.cjs",
+    "build": "npm run compile && node scripts/build-windows-package.cjs",
+    "test:unit": "npm run compile && node build/tests/queue-rules.test.js && node build/tests/debut-cadence-rules.test.js && node build/tests/round-robin-rules.test.js && node build/tests/fixed-turn-rules.test.js && node build/tests/frozen-queue-rules.test.js && node build/tests/application.test.js && node build/tests/persistence.test.js && node build/tests/app-state-validation.test.js && node build/tests/round-robin-application.test.js && node build/tests/licensing.test.js && node build/tests/database-migration.test.js && node build/tests/operating-mode.test.js && node build/tests/installation-control.test.js && node build/tests/installation-admin.test.js && node build/tests/installation-bootstrap.test.js && node build/tests/installation-shortcuts.test.js && node build/tests/installation-runtime-gate.test.js && node build/tests/windows-function-identity.test.js && node build/tests/video-library.test.js && node build/tests/music-catalog.test.js && node build/tests/player-ui-contracts.test.js && node build/tests/player-playback.test.js && node build/tests/manual-playback.test.js && node build/tests/chromium-playback-host.test.js && node build/tests/player-video-window.test.js && node build/tests/player-playback-recovery.test.js && node build/tests/main-ipc-policy.test.js && node build/tests/main-player-ipc.test.js && node build/tests/main-controller-ipc.test.js && node build/tests/main-window-factories.test.js && node build/tests/main-media-runtime.test.js && node build/tests/main-standalone-shutdown.test.js && node build/tests/main-management-close.test.js && node build/tests/main-management-host.test.js && node build/tests/main-management-ipc.test.js && node build/tests/management-client.test.js && node --test build/tests/ui-scale.test.js build/tests/logging.test.js build/tests/singer-suggestions.test.js build/tests/sidebar-display-name.test.js && node scripts/installation-binding-build.test.cjs && node scripts/windows-native-runner.test.cjs && node scripts/playback-engine-evaluation.test.cjs",
     "test:unit:standalone-contracts": "npm run compile && node build/tests/standalone-player-contracts.test.js",
     "test:unit:standalone-runtime": "npm run compile && node build/tests/standalone-player-contracts.test.js && node build/tests/standalone-player-runtime.test.js && node build/tests/player-playback-recovery.test.js",
     "test:unit:standalone-sequence": "npm run compile && node build/tests/standalone-player-sequence.test.js",
@@ -18,6 +18,8 @@
     "test:unit:standalone-interaction-transport": "npm run compile && node build/tests/standalone-player-interaction-transport.test.js",
     "test:unit:standalone-playback-adapter": "npm run compile && node build/tests/standalone-player-playback-adapter.test.js",
     "test:unit:standalone-options": "npm run compile && node build/tests/standalone-player-options.test.js",
+    "test:unit:installation-control": "npm run compile && node --test build/tests/installation-control.test.js build/tests/installation-admin.test.js build/tests/installation-bootstrap.test.js build/tests/installation-runtime-gate.test.js build/tests/installation-role-broker.test.js build/tests/welcome-setup.test.js && node --test scripts/installation-binding-build.test.cjs",
+    "test:unit:welcome": "npm run compile && node --test build/tests/installation-role-broker.test.js build/tests/welcome-setup.test.js",
     "test:unit:standalone-ipc": "npm run compile && node build/tests/standalone-player-ipc.test.js",
     "test:unit:standalone-ui": "npm run compile && node build/tests/standalone-player-interaction.test.js && node build/tests/standalone-player-metadata-preview.test.js && node build/tests/standalone-player-ipc.test.js && node build/tests/standalone-player-options.test.js && node build/tests/music-catalog.test.js",
     "test:e2e:drag:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/drag-electron.js",
@@ -26,6 +28,7 @@
     "test:e2e:management-legacy-import:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/management-legacy-import-electron.js",
     "test:e2e:multi-instance:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/multi-instance-electron.js",
     "test:e2e:multi-instance:windows": "node scripts/run-windows-native-tests.cjs",
+    "package:windows:candidate": "node scripts/run-windows-native-tests.cjs --package-candidate",
     "test:e2e:operating-modes:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/operating-modes-electron.js",
     "test:e2e:video-library:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/video-library-electron.js",
     "test:e2e:music-catalog:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/music-catalog-electron.js",
@@ -56,7 +59,7 @@
     "test:e2e:singer-autocomplete:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/singer-autocomplete-electron.js",
     "test:e2e:sidebar-name:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/sidebar-display-name-electron.js",
     "build:windows": "npm run build",
-    "test:release-workflow": "node --test scripts/release-workflow.test.cjs scripts/packaging-config.test.cjs",
+    "test:release-workflow": "node --test scripts/release-workflow.test.cjs scripts/packaging-config.test.cjs scripts/windows-build-provenance.test.cjs",
     "verify:windows-build": "node scripts/verify-windows-build.cjs",
     "test:e2e:linux": "npm run compile && node scripts/run-e2e-linux.cjs"
   },
@@ -64,6 +67,7 @@
     "@types/node": "^24.19.2",
     "electron": "^45.0.0",
     "electron-builder": "^26.18.0",
+    "node-gyp": "^12.4.0",
     "playwright": "^1.64.1",
     "typescript": "^5.9.3"
   },
@@ -76,6 +80,7 @@
       "output": "dist",
       "buildResources": "build-resources"
     },
+    "beforePack": "./scripts/build-windows-installation-binding.cjs",
     "files": [
       "build/**/*",
       "!build/tests/**",
@@ -92,15 +97,35 @@
         }
       ],
       "icon": "build-resources/karaoke-queue.ico",
+      "extraResources": [
+        {
+          "from": "build-resources/native/win32-x64",
+          "to": "native/win32-x64",
+          "filter": [
+            "kq_win32.node"
+          ]
+        },
+        {
+          "from": "build-resources/identity",
+          "to": "identity",
+          "filter": [
+            "karaoke-player.png",
+            "karaoke-player.ico",
+            "karaoke-combined.png",
+            "karaoke-combined.ico"
+          ]
+        }
+      ],
       "forceCodeSigning": false
     },
     "nsis": {
       "oneClick": false,
-      "perMachine": false,
+      "perMachine": true,
       "allowElevation": true,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
+      "allowToChangeInstallationDirectory": false,
+      "include": "installer.nsh",
+      "createDesktopShortcut": false,
+      "createStartMenuShortcut": false,
       "shortcutName": "Karaoke Queue",
       "runAfterFinish": false
     }

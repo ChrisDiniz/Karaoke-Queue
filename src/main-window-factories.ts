@@ -1,4 +1,5 @@
 import type { BrowserWindow, BrowserWindowConstructorOptions } from 'electron'
+import type { WindowsFunctionIdentity } from './windows-function-identity'
 
 type BrowserWindowConstructor = new (options: BrowserWindowConstructorOptions) => BrowserWindow
 
@@ -7,14 +8,17 @@ export interface MainWindowFactoryDependencies {
   preloadPath: string
 }
 
-export function createWelcomeWindow(deps: MainWindowFactoryDependencies): BrowserWindow {
+export function createWelcomeWindow(
+  deps: MainWindowFactoryDependencies & { identity?: WindowsFunctionIdentity; iconPath?: string }
+): BrowserWindow {
   return new deps.BrowserWindow({
-    width: 1100,
-    height: 720,
-    minWidth: 820,
-    minHeight: 620,
+    width: 1280,
+    height: 800,
+    minWidth: 960,
+    minHeight: 600,
     show: true,
-    title: 'Karaoke Queue · Configuração inicial',
+    title: deps.identity?.windowTitle ?? 'Karaoke Queue · Configuração inicial',
+    ...(deps.iconPath ? { icon: deps.iconPath } : {}),
     autoHideMenuBar: true,
     webPreferences: {
       preload: deps.preloadPath,
@@ -27,7 +31,11 @@ export function createWelcomeWindow(deps: MainWindowFactoryDependencies): Browse
 }
 
 export function createManagementWindow(
-  deps: MainWindowFactoryDependencies & { zoomFactor: number }
+  deps: MainWindowFactoryDependencies & {
+    zoomFactor: number
+    identity: WindowsFunctionIdentity
+    iconPath: string
+  }
 ): BrowserWindow {
   return new deps.BrowserWindow({
     width: 1280,
@@ -40,19 +48,23 @@ export function createManagementWindow(
       preload: deps.preloadPath,
       zoomFactor: deps.zoomFactor
     },
-    title: 'Karaoke Queue',
+    title: deps.identity.windowTitle,
+    icon: deps.iconPath,
     autoHideMenuBar: true
   })
 }
 
-export function createStandaloneWindow(deps: MainWindowFactoryDependencies): BrowserWindow {
+export function createStandaloneWindow(
+  deps: MainWindowFactoryDependencies & { identity: WindowsFunctionIdentity; iconPath: string }
+): BrowserWindow {
   return new deps.BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 800,
     minHeight: 600,
     show: true,
-    title: 'Karaoke Queue · Reprodutor',
+    title: deps.identity.windowTitle,
+    icon: deps.iconPath,
     autoHideMenuBar: true,
     webPreferences: {
       preload: deps.preloadPath,

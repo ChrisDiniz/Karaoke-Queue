@@ -64,10 +64,7 @@ contextBridge.exposeInMainWorld('karaokeUiScale', {
 
 contextBridge.exposeInMainWorld('karaokePreferences', {
   getSidebarDisplayName: () => invokeLogged<string>('ui-preferences:sidebar-name:get'),
-  setSidebarDisplayName: (name: string) =>
-    invokeLogged<string>('ui-preferences:sidebar-name:set', name),
-  changeOperatingMode: (mode: 'player') =>
-    invokeLogged<{ outcome: 'restarting'; mode: 'player' }>('settings:operating-mode:change', mode)
+  setSidebarDisplayName: (name: string) => invokeLogged<string>('ui-preferences:sidebar-name:set', name)
 })
 
 contextBridge.exposeInMainWorld('karaokeDiagnostics', {

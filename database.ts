@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { createSqliteMigrationBackup } from './src/sqlite-migration-backup'
 import {
   MusicCatalogError,
   calculateMusicCatalogRevision,
@@ -790,6 +791,7 @@ export function createPlayerMusicCatalogDatabase(userDataPath: string): PlayerMu
   const databasePath = path.join(userDataPath, PLAYER_MUSIC_CATALOG_FILENAME)
   fs.mkdirSync(path.dirname(databasePath), { recursive: true })
   assertPlayerCatalogDatabasePathsSafe(userDataPath, databasePath)
+  const existingDatabase = optionalLstat(databasePath)
   ensurePlayerCatalogFileExists(databasePath)
   assertPlayerCatalogDatabasePathsSafe(userDataPath, databasePath)
   const beforeOpen = optionalLstat(databasePath)
@@ -807,6 +809,9 @@ export function createPlayerMusicCatalogDatabase(userDataPath: string): PlayerMu
     database.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;')
     let version = Number(database.prepare('PRAGMA user_version').get()?.user_version ?? 0)
     if (version > PLAYER_CATALOG_SCHEMA_VERSION) throw new Error('Player music catalog database version is newer than this application.')
+    if (existingDatabase && existingDatabase.size > 0 && version < PLAYER_CATALOG_SCHEMA_VERSION) {
+      createSqliteMigrationBackup({ database, databasePath, userDataDirectory: userDataPath, sourceSchemaVersion: version })
+    }
     if (version === 1) transaction(database, () => {
       database.exec(`ALTER TABLE music_catalog_metadata ADD COLUMN source_name TEXT
         CHECK (source_name IS NULL OR length(source_name) <= 255);`)
@@ -874,11 +879,23 @@ export function createPlayerMusicCatalogDatabase(userDataPath: string): PlayerMu
 export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
   const databasePath = path.join(userDataPath, DATABASE_FILENAME)
   fs.mkdirSync(path.dirname(databasePath), { recursive: true })
+  const existingDatabase = optionalLstat(databasePath)
+  if (existingDatabase) {
+    const attributes = (existingDatabase as fs.BigIntStats & { attributes?: number }).attributes ?? 0
+    if (!existingDatabase.isFile() || existingDatabase.isSymbolicLink() ||
+        (process.platform === 'win32' && (attributes & 0x400) !== 0)) {
+      throw new Error('Operational database must be a regular file without reparse points.')
+    }
+  }
 
   const database = new DatabaseSync(databasePath)
   try {
     database.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;')
     database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;')
+    const version = Number(database.prepare('PRAGMA user_version').get()?.user_version ?? 0)
+    if (existingDatabase && existingDatabase.size > 0 && version < SCHEMA_VERSION) {
+      createSqliteMigrationBackup({ database, databasePath, userDataDirectory: userDataPath, sourceSchemaVersion: version })
+    }
     initializeSchema(database)
     migrateLegacyStore(database, path.join(userDataPath, LEGACY_FILENAME))
   } catch (error) {

@@ -101,7 +101,6 @@ export interface KaraokePlayerBridge {
   playNow(code: string): Promise<ManualPlaybackResult>
   addToSequence(code: string): Promise<ManualPlaybackResult>
   addBatchToSequence(rawText: string, requestId: string): Promise<ManualBatchPlaybackResult>
-  changeOperatingMode(mode: 'controller' | 'combined'): Promise<{ outcome: 'restarting'; mode: 'controller' }>
   removeFromSequence(itemId: string): Promise<ManualPlaybackResult>
   removeCurrent(itemId: string | null, attemptId: string): Promise<ManualPlaybackResult>
   reorderSequence(itemIds: string[]): Promise<ManualPlaybackResult>

@@ -791,6 +791,17 @@ test('Player catalog schema v2 migrates transactionally to import-report storage
           catalogRevision: null, generation: 0, total: 0, offset: 0, issues: []
         })
       } finally { check.close() }
+      const backupsDirectory = path.join(temp.directory, 'migration-backups')
+      const backupManifestPath = fs.readdirSync(backupsDirectory).find(name => name.endsWith('.json'))
+      assert.ok(backupManifestPath, 'Player catalog schema migration must retain a consistent pre-migration snapshot')
+      const backupManifest = JSON.parse(fs.readFileSync(path.join(backupsDirectory, backupManifestPath), 'utf8'))
+      assert.equal(backupManifest.sourceFile, 'player-music-catalog.sqlite')
+      assert.equal(backupManifest.sourceSchemaVersion, 2)
+      const backup = new DatabaseSync(path.join(backupsDirectory, backupManifest.backupFile), { readOnly: true })
+      try {
+        assert.equal((backup.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 2)
+        assert.equal((backup.prepare('PRAGMA integrity_check').get() as { integrity_check: string }).integrity_check, 'ok')
+      } finally { backup.close() }
     } finally { migrated.close() }
   } finally { temp.cleanup() }
 })

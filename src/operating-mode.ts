@@ -3,11 +3,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { TextDecoder } from 'node:util'
 
-export type OperatingMode = 'controller' | 'player' | 'combined'
+/** Final product functions. Controller is accepted only when reading old profiles. */
+export type OperatingMode = 'player' | 'combined'
+export type PersistedOperatingMode = OperatingMode | 'controller'
 
 export interface OperatingModeConfiguration {
   version: 1
-  mode: OperatingMode
+  mode: PersistedOperatingMode
 }
 
 export interface OperatingModeCapabilities {
@@ -26,15 +28,29 @@ export const OPERATING_MODE_CONFIGURATION_FILENAME = 'operating-mode.json'
 
 const CONFIGURATION_VERSION = 1
 const MAX_CONFIGURATION_BYTES = 4096
-const VALID_MODES = new Set<OperatingMode>(['controller', 'player', 'combined'])
+const VALID_MODES = new Set<OperatingMode>(['player', 'combined'])
+const VALID_PERSISTED_MODES = new Set<PersistedOperatingMode>(['controller', 'player', 'combined'])
 
 export function isOperatingMode(value: unknown): value is OperatingMode {
   return typeof value === 'string' && VALID_MODES.has(value as OperatingMode)
 }
 
+function isPersistedOperatingMode(value: unknown): value is PersistedOperatingMode {
+  return typeof value === 'string' && VALID_PERSISTED_MODES.has(value as PersistedOperatingMode)
+}
+
+/** Resolve the legacy persisted label in memory without rewriting its profile. */
+export function resolveOperatingMode(mode: PersistedOperatingMode): OperatingMode {
+  switch (mode) {
+    case 'controller': return 'combined'
+    case 'player':
+    case 'combined': return mode
+    default: throw new OperatingModeConfigurationError('O modo de operação não é reconhecido.')
+  }
+}
+
 export function getOperatingModeCapabilities(mode: OperatingMode): OperatingModeCapabilities {
   switch (mode) {
-    case 'controller': return { controller: true, player: false }
     case 'player': return { controller: false, player: true }
     case 'combined': return { controller: true, player: true }
     default: throw new OperatingModeConfigurationError('O modo de operação não é reconhecido.')
@@ -75,14 +91,14 @@ function parseConfiguration(value: unknown): OperatingModeConfiguration {
   if (record.version !== CONFIGURATION_VERSION) {
     throw new OperatingModeConfigurationError('A versão do arquivo de modo não é compatível com esta versão do aplicativo.')
   }
-  if (!isOperatingMode(record.mode)) {
-    throw new OperatingModeConfigurationError('O modo configurado é inválido. Use controller, player ou combined.')
+  if (!isPersistedOperatingMode(record.mode)) {
+    throw new OperatingModeConfigurationError('O modo configurado é inválido. Use controller (legado), player ou combined.')
   }
 
   return { version: CONFIGURATION_VERSION, mode: record.mode }
 }
 
-/** Missing configuration preserves the historical Controller startup behavior. */
+/** Missing configuration uses the historical Controller value as a legacy Combined alias. */
 export function readOperatingModeConfiguration(userDataDirectory: string): OperatingModeConfiguration {
   const filePath = configurationPath(userDataDirectory)
   let descriptor: number
@@ -133,10 +149,10 @@ export function readOperatingModeConfiguration(userDataDirectory: string): Opera
   return parseConfiguration(parsed)
 }
 
-/** Persist only the next-start mode; the current process keeps its resolved mode. */
+/** Persist only a final product function; the current process keeps its resolved mode. */
 export function writeOperatingModeConfiguration(userDataDirectory: string, mode: OperatingMode): void {
   if (!isOperatingMode(mode)) {
-    throw new OperatingModeConfigurationError('O modo de operação é inválido. Use controller, player ou combined.')
+    throw new OperatingModeConfigurationError('O modo de operação é inválido. Use player ou combined.')
   }
 
   const targetPath = configurationPath(userDataDirectory)

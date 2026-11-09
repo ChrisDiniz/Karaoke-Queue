@@ -7,7 +7,6 @@ function setup(options: {
   responses?: number[]
   failFlush?: boolean
   startupComplete?: boolean
-  modeChange?: boolean
   licensed?: boolean
   prepareToClose?: () => Promise<void>
 } = {}) {
@@ -29,7 +28,6 @@ function setup(options: {
       return { response: responses.shift() ?? 0, checkboxChecked: false }
     },
     isStartupComplete: () => options.startupComplete ?? true,
-    isOperatingModeChangeScheduled: () => options.modeChange ?? false,
     isLicenseOperationallyAllowed: () => options.licensed ?? true,
     closeWindow: () => { calls.push('close'); destroyed = true },
     logger: { info: (_origin, event) => calls.push(`info:${event}`), error: (_origin, event) => calls.push(`error:${event}`) }
@@ -46,13 +44,13 @@ async function drainMicrotasks(): Promise<void> {
   await new Promise<void>(resolve => setImmediate(resolve))
 }
 
-test('mode change drains state and closes without prompting or ending the session', async () => {
-  const context = setup({ modeChange: true })
+test('closing with no active session flushes state without prompting', async () => {
+  const context = setup({ summary: { sessionActive: false, uncompletedCount: 0, sessionId: null } })
   const close = closeEvent()
   context.coordinator.handleClose(close.event)
   assert.equal(close.wasPrevented(), true)
   await drainMicrotasks()
-  assert.deepEqual(context.calls.slice(0, 5), ['info:APP_CLOSE_REQUESTED', 'prepare', 'summary', 'flush', 'info:OPERATING_MODE_CHANGE_PRESERVED_SESSION'])
+  assert.deepEqual(context.calls.slice(0, 5), ['info:APP_CLOSE_REQUESTED', 'prepare', 'summary', 'flush', 'info:APP_CLOSE_DECISION'])
   assert.equal(context.calls.includes('dialog:Karaoke Queue'), false)
   assert.equal(context.calls.includes('end-session'), false)
   assert.equal(context.calls.at(-1), 'close')
@@ -77,7 +75,7 @@ test('session end asks confirmation for pending turns and closes only after conf
 })
 
 test('persistence failure keeps window open, reports failure, and cancels close admission', async () => {
-  const context = setup({ modeChange: true, failFlush: true })
+  const context = setup({ licensed: false, failFlush: true })
   context.coordinator.handleClose(closeEvent().event)
   await drainMicrotasks()
   assert.equal(context.calls.includes('close'), false)
@@ -88,7 +86,7 @@ test('persistence failure keeps window open, reports failure, and cancels close 
 test('concurrent close events share one close flow', async () => {
   let release!: () => void
   const pending = new Promise<void>(resolve => { release = resolve })
-  const context = setup({ modeChange: true, prepareToClose: () => pending })
+  const context = setup({ summary: { sessionActive: false, uncompletedCount: 0, sessionId: null }, prepareToClose: () => pending })
   const first = closeEvent()
   const second = closeEvent()
   context.coordinator.handleClose(first.event)

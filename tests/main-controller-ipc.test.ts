@@ -42,9 +42,7 @@ function setup() {
     assertControllerIpcSender: (_event: IpcMainEvent | IpcMainInvokeEvent) => {
       if (!allowed) throw new Error('CONTROLLER_IPC_FORBIDDEN')
     },
-    reportSessionEvent: (...args: unknown[]) => { sessionEvents.push(args) },
-    registerModeChange: true,
-    changeOperatingMode: async (mode: unknown) => ({ mode })
+    reportSessionEvent: (...args: unknown[]) => { sessionEvents.push(args) }
   } as unknown as MainControllerIpcDependencies
   const dispose = registerMainControllerIpcHandlers(deps)
   return { ipcMain, logs, sessionEvents, setAllowed: (value: boolean) => { allowed = value },
@@ -76,14 +74,14 @@ test('unauthorized Management event messages do not reach diagnostics or session
   context.dispose()
 })
 
-test('Management IPC registration owns handler and event cleanup and mode-change dispatch', async () => {
+test('Management IPC registration owns handler and event cleanup without a mode-change route', async () => {
   const context = setup()
-  assert.deepEqual(await invoke(context.ipcMain, 'settings:operating-mode:change', {}, 'player'), { mode: 'player' })
+  assert.equal(context.ipcMain.handlers.has('settings:operating-mode:change'), false)
   context.dispose()
   context.dispose()
   assert.equal(context.ipcMain.handlers.size, 0)
   assert.equal(context.ipcMain.listeners.size, 0)
-  assert.equal(context.ipcMain.removedHandlers.length, 4)
+  assert.equal(context.ipcMain.removedHandlers.length, 3)
   assert.equal(context.ipcMain.removedListeners.length, 2)
 })
 

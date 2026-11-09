@@ -9,6 +9,7 @@ const path = require('node:path')
 const {
   isExcludedPath,
   isSensitivePath,
+  isExpectedManualElectronProcess,
   lastNonEmptyLine,
   observeWorkerInputErrors,
   makeFingerprint,
@@ -17,6 +18,7 @@ const {
   prepareFreshBuild,
   powershellCancellation,
   powershellLauncher,
+  recoverNoopInterruptedSync,
   requiresWindowFocus,
   selectWindowsTestSuites,
   stageSnapshot,
@@ -31,6 +33,26 @@ const {
 } = require('./run-windows-native-tests.cjs')
 
 const head = '0123456789abcdef0123456789abcdef01234567'
+
+test('manual launch confirms PID, exact image, app root and profile even when WMI omits ExecutablePath', () => {
+  const expected = {
+    ProcessId: 24508,
+    ExecutablePath: null,
+    CommandLine: '"E:\\Karaoke Queue\\checkout\\node_modules\\electron\\dist\\electron.exe" ' +
+      '"E:\\Karaoke Queue\\checkout" "--user-data-dir=E:\\Karaoke Queue\\profiles\\fresh-test"'
+  }
+  const executable = 'E:\\Karaoke Queue\\checkout\\node_modules\\electron\\dist\\electron.exe'
+  const appRoot = 'E:\\Karaoke Queue\\checkout'
+  const profilePath = 'E:\\Karaoke Queue\\profiles\\fresh-test'
+
+  assert.equal(isExpectedManualElectronProcess(expected, 24508, executable, appRoot, profilePath), true)
+  assert.equal(isExpectedManualElectronProcess({ ...expected, ExecutablePath: executable }, 24508, executable, appRoot, profilePath), true)
+  assert.equal(isExpectedManualElectronProcess({ ...expected, ProcessId: 24509 }, 24508, executable, appRoot, profilePath), false)
+  assert.equal(isExpectedManualElectronProcess({ ...expected, CommandLine: expected.CommandLine.replace('electron.exe', 'other.exe') }, 24508, executable, appRoot, profilePath), false)
+  assert.equal(isExpectedManualElectronProcess({ ...expected, CommandLine: expected.CommandLine.replace('fresh-test', 'other-profile') }, 24508, executable, appRoot, profilePath), false)
+  assert.equal(isExpectedManualElectronProcess({ ...expected, ExecutablePath: 'E:\\other\\electron.exe' }, 24508, executable, appRoot, profilePath), false)
+  assert.equal(isExpectedManualElectronProcess({ ...expected, CommandLine: expected.CommandLine + ' --another-profile' }, 24508, executable, appRoot, profilePath), false)
+})
 
 test('runner consumes only an EPIPE caused by its verified cancellation path', () => {
   const { PassThrough } = require('node:stream')
@@ -65,6 +87,9 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   const playerRecovery = powershellLauncher('C:\\stage', 'run-player-recovery', false, '--player-recovery')
   const standaloneOptions = powershellLauncher('C:\\stage', 'run-standalone-options', false, '--standalone-options')
   const standaloneProduction = powershellLauncher('C:\\stage', 'run-standalone-production', false, '--standalone-production')
+  const packageCandidate = powershellLauncher('C:\\stage', 'run-package-candidate', false, null, null, null, true)
+  const screenshots = powershellLauncher('C:\\stage', 'run-screenshots', false, null, null,
+    'E:\\KaraokeQueue\\e1-03-validation\\ui-screenshots')
 
   assert.equal(launcherPayload(standard).playbackEvaluation, false)
   assert.equal(launcherPayload(evaluation).playbackEvaluation, true)
@@ -76,6 +101,8 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.equal(launcherPayload(playerRecovery).playbackMode, '--player-recovery')
   assert.equal(launcherPayload(standaloneOptions).playbackMode, '--standalone-options')
   assert.equal(launcherPayload(standaloneProduction).playbackMode, '--standalone-production')
+  assert.equal(launcherPayload(packageCandidate).packageCandidate, true)
+  assert.equal(launcherPayload(screenshots).screenshotRoot, 'E:\\KaraokeQueue\\e1-03-validation\\ui-screenshots')
   assert.match(evaluation, /\$workerArgs \+= "--playback-evaluation"/)
   assert.match(chromiumFinal, /\$workerArgs \+= "--playback-chromium-final"/)
   assert.match(chromiumInteractive, /\$workerArgs \+= "--playback-chromium-interactive"/)
@@ -85,10 +112,16 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.match(playerRecovery, /\$workerArgs \+= "--player-recovery"/)
   assert.match(standaloneOptions, /\$workerArgs \+= "--standalone-options"/)
   assert.match(standaloneProduction, /\$workerArgs \+= "--standalone-production"/)
+  assert.match(packageCandidate, /\$workerArgs \+= "--package-candidate"/)
+  assert.match(screenshots, /\$env:KQ_PLAYER_SCREENSHOT_DIR = \$screenshotRoot/)
+  assert.match(screenshots, /não pode ficar dentro do checkout Windows/)
   assert.match(evaluation, /& node\.exe \$worker @workerArgs/)
   assert.doesNotMatch(evaluation, /playback-engine-evaluation\.cjs/)
   assert.throws(() => powershellLauncher('C:\\stage', 'run-invalid', false, '--unknown-mode'), /não permitido/)
+  assert.throws(() => powershellLauncher('C:\\stage', 'run-package-with-tests', false, '--standalone-production', null, null, true), /não combina/)
   assert.throws(() => powershellLauncher('C:\\stage', 'run-retired-player-control', false, '--player-control'), /não permitido/)
+  assert.throws(() => powershellLauncher('C:\\stage', 'run-unc-screenshots', false, null, null,
+    '\\\\wsl.localhost\\Ubuntu\\tmp\\screenshots'), /caminho absoluto em unidade Windows local/)
 })
 
 test('focused playback recovery harness does not require unrelated window-focus assertions', () => {
@@ -168,6 +201,11 @@ test('focused Windows Player recovery mode runs recovery unit coverage before re
   ])
 })
 
+test('the standard Windows Electron regression includes native shell shortcut readback', () => {
+  assert.equal(selectWindowsTestSuites(null)[0].script, 'tests/windows-shell-shortcut-electron.cjs')
+  assert.equal(selectWindowsTestSuites(null)[1].script, 'scripts/windows-runtime-mutex-electron.cjs')
+})
+
 test('focused Windows Standalone mode runs affected Standalone/playback tests and its real Electron harness', () => {
   assert.deepEqual(selectWindowsTestSuites('--standalone-playback').map(suite => suite.script), [
     'build/tests/standalone-player-contracts.test.js',
@@ -219,6 +257,14 @@ function tempDirectory(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-windows-runner-test-'))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
   return directory
+}
+
+function gitAt(root, args) {
+  const result = require('node:child_process').spawnSync('git', args, {
+    cwd: root, encoding: 'utf8', shell: false
+  })
+  assert.equal(result.status, 0, result.stderr || result.error?.message || `git ${args.join(' ')} failed`)
+  return result.stdout.trim()
 }
 
 test('normalizes safe relative paths and fingerprints snapshot content deterministically', () => {
@@ -294,6 +340,10 @@ test('classifies generated artifacts separately from source and personal data', 
   for (const candidate of ['node_modules/electron/index.js', 'build/main.js', 'out/result.log', '.npm-cache/data']) {
     assert.equal(isExcludedPath(candidate), true, candidate)
   }
+  assert.equal(isExcludedPath('build-resources/native/win32-x64/kq_win32.node'), true,
+    'the generated addon is ignored in the source tree and rebuilt by beforePack')
+  assert.equal(isExcludedPath('assets/kq_win32.node'), false,
+    'the Windows runner must exclude only the exact generated native output path')
   assert.equal(isExcludedPath('docs/sqlite-persistence-safety.md'), false)
   assert.equal(isSensitivePath('.env'), true)
   assert.equal(isSensitivePath('data/session.sqlite'), true)
@@ -474,6 +524,102 @@ test('removes incomplete staging when a source file changes after snapshot hashi
   assert.deepEqual(fs.readdirSync(stagingRoot), [])
 })
 
+test('incremental source bundle advertises and fetches the explicit branch ref', t => {
+  const root = tempDirectory(t)
+  const stagingRoot = tempDirectory(t)
+  const branch = 'feature/manual-launch'
+  gitAt(root, ['init'])
+  gitAt(root, ['checkout', '-b', branch])
+  gitAt(root, ['config', 'user.name', 'Karaoke Queue Test'])
+  gitAt(root, ['config', 'user.email', 'kqueue-test@example.invalid'])
+
+  const oldContent = 'previous source\n'
+  fs.writeFileSync(path.join(root, 'app.ts'), oldContent)
+  gitAt(root, ['add', 'app.ts'])
+  gitAt(root, ['commit', '-m', 'previous source'])
+  const oldHead = gitAt(root, ['rev-parse', 'HEAD'])
+
+  const newContent = 'current source\n'
+  fs.writeFileSync(path.join(root, 'app.ts'), newContent)
+  gitAt(root, ['commit', '-am', 'current source'])
+  const newHead = gitAt(root, ['rev-parse', 'HEAD'])
+  const marker = validateManifest({
+    version: 1, branch, head: oldHead, trackedPaths: ['app.ts'],
+    files: [{ path: 'app.ts', sha256: hash(oldContent), kind: 'tracked' }]
+  })
+  const manifest = validateManifest({
+    version: 1, branch, head: newHead, trackedPaths: ['app.ts'],
+    files: [{ path: 'app.ts', sha256: hash(newContent), kind: 'tracked' }]
+  })
+
+  const stage = stageSnapshot(root, manifest, marker, stagingRoot)
+  const bundle = path.join(stage, 'metadata', 'source-head.bundle')
+  const branchRef = `refs/heads/${branch}`
+  assert.equal(gitAt(root, ['bundle', 'list-heads', bundle]), `${newHead} ${branchRef}`)
+  gitAt(root, ['fetch', '--no-tags', bundle, branchRef])
+  assert.equal(gitAt(root, ['rev-parse', 'FETCH_HEAD']), newHead)
+})
+
+test('recovers a pending sync only after confirming the old snapshot and empty backup', t => {
+  const root = tempDirectory(t)
+  const gitDir = path.join(root, '.git')
+  fs.mkdirSync(gitDir)
+  const oldContent = 'confirmed source\n'
+  fs.writeFileSync(path.join(root, 'app.ts'), oldContent)
+  const marker = manifestFor([{ path: 'app.ts', content: oldContent }])
+  const runId = 'staging-4212c976-171b-440e-8016-05c63ac31c42'
+  const pendingPath = path.join(gitDir, 'karaoke-queue-wsl-sync-pending.json')
+  const backupRoot = path.join(gitDir, 'karaoke-queue-sync-backup-' + runId)
+  fs.mkdirSync(backupRoot)
+  fs.writeFileSync(pendingPath, JSON.stringify({
+    runId,
+    fromFingerprint: marker.fingerprint,
+    targetFingerprint: hash('next snapshot'),
+    startedAt: new Date().toISOString()
+  }))
+  const checks = []
+
+  assert.equal(recoverNoopInterruptedSync(root, marker, pendingPath, {
+    gitState: () => ({ branch: marker.branch, head: marker.head }),
+    assertIndexMatchesHead: () => { checks.push('index') }
+  }), true)
+  assert.deepEqual(checks, ['index'])
+  assert.equal(fs.existsSync(pendingPath), false)
+  assert.equal(fs.existsSync(backupRoot), false)
+})
+
+test('keeps pending sync evidence when backup contains files or snapshot verification fails', t => {
+  const root = tempDirectory(t)
+  const gitDir = path.join(root, '.git')
+  fs.mkdirSync(gitDir)
+  const oldContent = 'confirmed source\n'
+  fs.writeFileSync(path.join(root, 'app.ts'), oldContent)
+  const marker = manifestFor([{ path: 'app.ts', content: oldContent }])
+  const runId = 'staging-4212c976-171b-440e-8016-05c63ac31c42'
+  const pendingPath = path.join(gitDir, 'karaoke-queue-wsl-sync-pending.json')
+  const backupRoot = path.join(gitDir, 'karaoke-queue-sync-backup-' + runId)
+  fs.mkdirSync(backupRoot)
+  fs.writeFileSync(path.join(backupRoot, 'preserve.bin'), 'backup evidence')
+  const pending = {
+    runId,
+    fromFingerprint: marker.fingerprint,
+    targetFingerprint: hash('next snapshot'),
+    startedAt: new Date().toISOString()
+  }
+  fs.writeFileSync(pendingPath, JSON.stringify(pending))
+  const dependencies = { gitState: () => ({ branch: marker.branch, head: marker.head }) }
+
+  assert.throws(() => recoverNoopInterruptedSync(root, marker, pendingPath, dependencies), /backup contém arquivos/)
+  assert.equal(fs.existsSync(pendingPath), true)
+  assert.equal(fs.readFileSync(path.join(backupRoot, 'preserve.bin'), 'utf8'), 'backup evidence')
+
+  fs.rmSync(path.join(backupRoot, 'preserve.bin'))
+  fs.writeFileSync(path.join(root, 'app.ts'), 'changed source\n')
+  assert.throws(() => recoverNoopInterruptedSync(root, marker, pendingPath, dependencies), /Divergência no checkout Windows/)
+  assert.equal(fs.existsSync(pendingPath), true)
+  assert.equal(fs.existsSync(backupRoot), true)
+})
+
 test('replaces only content matching the previous marker and validates its backup before cleanup', t => {
   const root = tempDirectory(t)
   const stage = tempDirectory(t)
@@ -614,4 +760,12 @@ test('rejects an extra destination file outside generated artifact directories',
     /local-only\.txt \(inesperado no destino\)/
   )
   assert.equal(fs.readFileSync(path.join(root, 'local-only.txt'), 'utf8'), 'unexpected destination file\n')
+})
+
+test('installation coordination uses the official runner without unrelated UI focus or profile bypass', () => {
+  const { selectWindowsTestSuites, requiresWindowFocus } = require('./run-windows-native-tests.cjs')
+  assert.equal(requiresWindowFocus('--installation-coordination'), false)
+  const suites = selectWindowsTestSuites('--installation-coordination')
+  assert.deepEqual(suites.map(suite => suite.name), ['installation-admin-unit', 'installation-control-unit',
+    'installation-bootstrap-unit', 'windows-runtime-mutex-electron'])
 })

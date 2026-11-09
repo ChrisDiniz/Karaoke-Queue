@@ -6,6 +6,7 @@ import {
   createStandaloneWindow,
   createWelcomeWindow
 } from '../src/main-window-factories'
+import { getWindowsFunctionIdentity } from '../src/windows-function-identity'
 
 function constructorCapture() {
   const options: BrowserWindowConstructorOptions[] = []
@@ -19,7 +20,7 @@ test('Welcome factory preserves its dimensions, preload, and restricted security
   const capture = constructorCapture()
   createWelcomeWindow({ ...capture, preloadPath: '/build/welcome-preload.js' })
   assert.deepEqual(capture.options, [{
-    width: 1100, height: 720, minWidth: 820, minHeight: 620, show: true,
+    width: 1280, height: 800, minWidth: 960, minHeight: 600, show: true,
     title: 'Karaoke Queue · Configuração inicial', autoHideMenuBar: true,
     webPreferences: {
       preload: '/build/welcome-preload.js', nodeIntegration: false,
@@ -28,25 +29,35 @@ test('Welcome factory preserves its dimensions, preload, and restricted security
   }])
 })
 
+test('confirmed-role welcome setup uses the persisted function title and icon', () => {
+  const capture = constructorCapture()
+  createWelcomeWindow({ ...capture, preloadPath: '/build/welcome-preload.js',
+    identity: getWindowsFunctionIdentity('player'), iconPath: '/resources/player.png' })
+  assert.equal(capture.options[0]?.title, 'Karaoke Queue · Reprodutor')
+  assert.equal(capture.options[0]?.icon, '/resources/player.png')
+})
+
 test('Management factory preserves the Controller surface preferences and injected startup zoom', () => {
   const capture = constructorCapture()
-  createManagementWindow({ ...capture, preloadPath: '/build/preload.js', zoomFactor: 1.15 })
+  createManagementWindow({ ...capture, preloadPath: '/build/preload.js', zoomFactor: 1.15,
+    identity: getWindowsFunctionIdentity('combined'), iconPath: '/resources/combined.png' })
   assert.deepEqual(capture.options, [{
     width: 1280, height: 800, minWidth: 960, minHeight: 600,
     webPreferences: {
       nodeIntegration: false, contextIsolation: true,
       preload: '/build/preload.js', zoomFactor: 1.15
     },
-    title: 'Karaoke Queue', autoHideMenuBar: true
+    title: 'Karaoke Queue · Tudo em um', icon: '/resources/combined.png', autoHideMenuBar: true
   }])
 })
 
 test('Standalone factory preserves the one-screen Player dimensions and sandboxed preload', () => {
   const capture = constructorCapture()
-  createStandaloneWindow({ ...capture, preloadPath: '/build/standalone-player-preload.bundle.js' })
+  createStandaloneWindow({ ...capture, preloadPath: '/build/standalone-player-preload.bundle.js',
+    identity: getWindowsFunctionIdentity('player'), iconPath: '/resources/player.png' })
   assert.deepEqual(capture.options, [{
     width: 1280, height: 800, minWidth: 800, minHeight: 600, show: true,
-    title: 'Karaoke Queue · Reprodutor', autoHideMenuBar: true,
+    title: 'Karaoke Queue · Reprodutor', icon: '/resources/player.png', autoHideMenuBar: true,
     webPreferences: {
       preload: '/build/standalone-player-preload.bundle.js', nodeIntegration: false,
       contextIsolation: true, sandbox: true, webSecurity: true

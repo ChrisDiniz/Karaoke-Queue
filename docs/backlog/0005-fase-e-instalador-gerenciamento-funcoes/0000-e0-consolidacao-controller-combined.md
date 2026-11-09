@@ -5,7 +5,7 @@
 - Ticket: 0005/0000
 - Ticket pai: 0005 — Fase E: Consolidação de funções, instalador e gerenciamento
 - Etapa canônica: E0
-- Status: Planejado / Não iniciado
+- Status: Concluído — E0 aprovada explicitamente pelo proprietário em 2026-11-08
 - Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
 
 ## Objetivo
@@ -70,6 +70,42 @@ Usar testes unitários de capacidades/configuração e compatibilidade; integra�
 - Não antecipar instalação, onboarding, identidade, exclusividade, rede ou reprodução local H8.
 - A mudança de escopo transfere para E0 a remoção de Controller como função independente, anteriormente atribuída ao planejamento de H1; H1 permanece responsável pela Gestão no contexto de integração operacional remota.
 
+## Aprovação final — 2026-11-08
+
+O proprietário concluiu a validação manual da E0 no Windows nativo: **PASS, nenhum problema encontrado**, e aprovou explicitamente a E0. E0-01, E0-02 e E0-03 estão concluídos e a pendência de revisão/aceitação das superfícies entregues está encerrada. As evidências abaixo são preservadas como registro da campanha anterior ao aceite; suas menções a aprovação pendente descrevem aquele momento. Não atribuir a esse aceite resultados individuais de cenários não executados. Naquele registro de transição, o proprietário havia autorizado somente E1-01; essa autorização limitada foi substituída por autorizações posteriores documentadas nos tickets e no ledger executivo.
+
+## Progresso e evidências de execução — 2026-11-08
+
+### E0-01 — PASS
+
+- `controller` e a ausência de configuração são lidos como entrada legada e resolvidos em memória para `combined`; a leitura não regrava `operating-mode.json` nem cria arquivo quando ele está ausente.
+- Gravações novas aceitam apenas `player` e `combined`. Parser estrito, preservação de configuração inválida e prevenção de onboarding sobre perfil existente permanecem cobertos.
+- `npm run compile`: PASS. `node build/tests/operating-mode.test.js`: 9/9 PASS. `node build/tests/persistence.test.js`: 29/29 PASS. `node build/tests/main-media-runtime.test.js`: 4/4 PASS.
+- `node build/tests/operating-modes-electron.js` sob Xvfb: PASS com Electron real, Playwright e perfis/SQLite temporários. Cobriu Controller explícito sem regravação, fallback sem arquivo, escolha inicial e reinicialização de Player/Combined, sessão/fila SQLite após restart e configuração inválida preservada.
+
+### E0-02 — PASS técnico; aceite final registrado abaixo
+
+- Welcome apresenta somente Reprodutor e Tudo em um, seguindo o frame `rKUlA0rV8m` em 1280×800. A configuração inicial salva a função e o restart abre o modo escolhido.
+- A seção de troca de função das Configurações foi removida conforme A7; as rotas Main/Preload/IPC de troca normal foram removidas. Não foi adicionado novo conteúdo ou layout às Configurações.
+- Configuração de biblioteca inválida em Combined agora emite `VIDEO_LIBRARY_CONFIGURATION_INVALID`, mantém o arquivo intacto e permite que a Gestão e SQLite iniciem com biblioteca vazia. Em Player, a configuração inválida continua bloqueando o startup.
+- PASS focados: `main-window-factories` 3/3; `main-player-ipc` 4/4; `main-controller-ipc` 4/4; `video-library.test` 16/16; `video-library-electron.js` 4 cenários; `music-catalog-electron.js` 3 cenários. Também passou novamente a suíte `operating-modes-electron.js`.
+- Os frames de Welcome (`rKUlA0rV8m`) e biblioteca/catálogo (`gFR_COs4VP`) estão `ready_for_dev`; não foi alterado Doop. Não há frame Doop aprovado para Configurações. A captura Electron foi inspecionada para verificar a remoção sem criar uma tela substituta, mas a aceitação visual final pertence ao proprietário.
+
+### E0-03 — PASS técnico; aprovação final registrada abaixo
+
+- `npm run compile`, `npm run test:unit` e `npm run test:release-workflow`: PASS. Os unitários Standalone `test:unit:standalone-runtime` (35), `test:unit:standalone-sequence` (73), `test:unit:standalone-ipc` (35) e `test:unit:standalone-options` (5) também passaram.
+- Electron real Linux/Xvfb com perfis/SQLite temporários: PASS em `multi-instance`, `operating-modes`, `persistence`, `ipc-validation`, `management-legacy-import`, `round-robin`, `debut-cadence`, `previous-sessions`, `session-close`, `drag`, `video-library` (4 cenários), `music-catalog` (3 cenários), `standalone-player-production` com MP4 real e `player-playback-recovery` com MP4 real. `management-legacy-import` passou após a fixture criar diretamente JSON Controller legado, em vez de usar o escritor que agora aceita apenas funções finais.
+- Regressão Windows nativa oficial — `npm run test:e2e:multi-instance:windows -- --approve-untracked`: PASS no fingerprint `0cb00f62bfe6787775b53d354457299a78ae4df2f9ecf383edba6ccc2a74113d`, branch `feature/remote-player-lan-integration`, HEAD `10548d54e80825c6e6ddbdaf8f7038207bdabee3`. Node 24.11, npm 11.6.1, Electron/Playwright Windows, perfis e SQLite temporários. Migração, modos legado/novos, biblioteca, catálogo e Main de produção passaram; minimizar/restaurar e foco passaram; cleanup sem processos residuais.
+- Regressão Windows nativa oficial — `npm run test:e2e:standalone-production:windows -- --approve-untracked`: PASS no mesmo fingerprint, Main/Preload/IPC Standalone de produção, MP4 real read-only, SQLite/perfil isolados, playback, recovery, shutdown e cleanup. A asserção de foco passou com clique OS Win32 `SendInput` e evento confiável no Renderer. O relatório do runner para este modo indica `WINDOW_FOCUS NOT APPLICABLE`; a suíte multi-instância confirmou foco nativo separadamente.
+- T3: `npm.cmd run build:windows`, `npm.cmd run verify:windows-build` e `node tests/packaged-windows-smoke.cjs "dist\win-unpacked\Karaoke Queue.exe"`: PASS. Installer NSIS local `Karaoke-Queue-Setup-0.5.0-x64.exe`; ASAR com 97 arquivos e `node:sqlite`, sem addon SQLite nativo. Smoke `app.isPackaged=true`, trial inicializado, escrita/leitura Renderer→Preload→IPC→SQLite e persistência após restart. SHA-256 do installer `7495D527EE797850C1D155B9FAB2C0FAB08E4B4ADC170E8FBCE65414A3B35301`; Authenticode `NotSigned`, sem signatário. O pacote não foi instalado, publicado nem anexado a Release. `npm ci` no Windows reportou 6 advisories moderados existentes; nenhuma dependência foi alterada.
+- Uma primeira execução Windows falhou numa expectativa de viewport que confundia a moldura nativa com o viewport do Renderer; a validação passou a fixar o Renderer de produção em 1280×800 via Playwright, dimensão usada pelo frame Doop. O smoke de foco Player também revelou que clique CDP não ativa HWND; foi substituído por clique Win32 nativo com verificação de foco, sem enfraquecer a asserção. A execução interrompida pela reinicialização deixou um lock sem PID ativo e sem sync/build backup pendente; o clone foi preservado, sem remover o lock, e a campanha final passou em um clone NTFS novo.
+- Nenhum cenário obrigatório T0/T1/T2/T3 ficou NOT RUN. T4 (instalação NSIS interativa) é fora do escopo E0 e não foi executado; T5/manual do proprietário não está concluído. A captura Welcome Electron foi comparada ao frame aprovado `rKUlA0rV8m` em 1280×800. Não existe frame Doop aprovado para Configurações; a remoção do seletor foi inspecionada, mas a aceitação visual final do proprietário permanece pendente.
+- Naquele snapshot, E0 estava tecnicamente pronta para revisão, mas ainda não havia aprovação. O estado foi superado pela validação manual Windows PASS e aprovação explícita do proprietário registradas a seguir.
+
+## Aprovação final do proprietário — 2026-11-08
+
+O proprietário validou manualmente a E0 no Windows nativo: **PASS, nenhum problema encontrado**, e aprovou explicitamente a etapa. E0-01, E0-02 e E0-03 estão concluídos e E0 está encerrada. As evidências automatizadas e seus limites históricos permanecem preservados acima; a aprovação não converte cenários individuais não executados em PASS. Posteriormente, o proprietário autorizou o desenvolvimento sequencial E1-03→E5-03, incluindo correções e validações pendentes de E1-02; essa autorização não aprova nenhuma etapa E1–E5.
+
 ## Riscos
 
 - Diferenças não inventariadas entre os caminhos podem alterar startup, licenciamento, IPC ou dados de perfis existentes.
@@ -79,7 +115,7 @@ Usar testes unitários de capacidades/configuração e compatibilidade; integra�
 
 ## Histórico
 
-Nova etapa aprovada para anteceder E1. O planejamento anterior deixava a retirada de Controller como função final para H1; o proprietário transferiu essa consolidação para E0, antes do instalador, preservando em H1 as atividades próprias da integração operacional remota. A Fase D segue concluída e aprovada; E0 continua planejada, não iniciada.
+Nova etapa aprovada para anteceder E1. O planejamento anterior deixava a retirada de Controller como função final para H1; o proprietário transferiu essa consolidação para E0, antes do instalador, preservando em H1 as atividades próprias da integração operacional remota. A Fase D segue concluída e aprovada. Na criação do ticket, E0 estava planejada e não iniciada; a autorização explícita para E0-01→E0-03 foi registrada em 2026-11-08, com status atual no topo e evidências acima.
 
 ## Referências
 

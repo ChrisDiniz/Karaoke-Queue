@@ -5,12 +5,12 @@
 - Ticket: 0005/0005
 - Ticket pai: 0005 — Fase E: Consolidação de funções, instalador e gerenciamento
 - Etapa canônica: E5
-- Status: Planejado
+- Status: Em revisão — protocolo, runner Windows e novo candidato NSIS PASS; matriz instalada/recovery/homologação pendentes
 - Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
 
 ## Objetivo
 
-Implementar e validar os fluxos de atualização, migração, rollback e preservação de dados conforme a estratégia definida e aprovada na E3.
+Implementar e validar os fluxos de atualização, migração, rollback e preservação de dados conforme A5/A6 aprovadas, a estratégia técnica detalhada em E1 e a matriz confirmada em E3.
 
 ## Escopo
 
@@ -27,10 +27,10 @@ Implementar e validar os fluxos de atualização, migração, rollback e preserv
 
 ## Dependências
 
-- E3: estratégia de migração e preservação documentada e aprovada.
-- E1: instalador e seleção/exclusividade funcionais.
-- E2: identidade e atalhos funcionais.
-- E4: manutenção e alteração de função funcionais.
+- E3 concluída/aprovada: exclusividade comprovada e matriz de migração/preservação/recuperação confirmada, sob A5/A6 já aprovadas.
+- E1 concluída/aprovada: gate técnico E1-01 aceito e instalador/seleção funcionais; exclusividade global implementada/comprovada em E3.
+- E2 concluída/aprovada: identidade e atalhos funcionais.
+- E4 concluída/aprovada: manutenção e alteração de função funcionais.
 - Autorização explícita do proprietário para iniciar E5.
 
 ## Atividades planejadas
@@ -60,12 +60,12 @@ Executar instalações/updates/reinstalações e cenários de migração em Wind
 - Updates preservam a função escolhida e dados existentes.
 - Alterar função não apaga os dados da função anterior.
 - Não presumir conversão automática de bancos ou fusão de perfis.
-- E3 define a estratégia; E5 implementa e valida os fluxos de dados com dependência de E3–E4.
+- A5/A6 aprovam a direção arquitetural; E1 detalha/verifica a estratégia, E3 confirma a matriz e E5 implementa/valida os fluxos de dados com dependência de E3–E4.
 - O Combined operacional completo permanece na Fase H.
 
 ## Pendências
 
-- Cenários legados, compatibilidade e rollback dependem das decisões aprovadas em E3.
+- Cenários concretos de legado, compatibilidade, backup/restore e rollback ainda dependem do detalhamento verificado em E1-01 e da matriz confirmada em E3; A5/A6 não fornecem evidência de execução nem autorização de restauração com possível descarte de dados posteriores.
 - Limitações de versão/instalador que exigirem decisão de produto devem ser apresentadas ao proprietário antes de mudar o escopo.
 
 ## Riscos
@@ -74,9 +74,54 @@ Executar instalações/updates/reinstalações e cenários de migração em Wind
 - Downgrade não é estratégia segura de rollback para um banco já alterado.
 - Falha parcial pode interromper instalação ou manutenção; dados anteriores devem permanecer recuperáveis conforme E3.
 
+## Aprovações arquiteturais e gates restantes — 2026-11-07
+
+O proprietário aprovou A1–A7 no [plano executivo, seção 3.5](../../fase-e-plano-executivo.md#35-decisões-a1a7-aprovadas-pelo-proprietário--2026-11-07). A5 aprova migração conservadora de instalações legadas: preservar dados/perfis; não mover, converter, fundir ou excluir automaticamente; conflitos não resolvidos bloqueiam operações potencialmente inseguras. A6 exige backups SQLite consistentes, recuperação segura e bloqueio de downgrade incompatível. **Restauração que possa descartar dados posteriores exige autorização específica**, não fornecida pela aprovação arquitetural. Instalar versão anterior não equivale a rollback seguro de SQLite.
+
+A1/A2 mantêm instalação única por máquina, função global e dados operacionais separados por conta Windows; A4 preserva appId e caminhos de dados com identidade por função. Alternativas e riscos da auditoria permanecem no plano como histórico, sem autorização de migração/fusão ou mudança de arquitetura.
+
+**Gates restantes no registro original:** E1-01 verifica viabilidade, implementação, permissões/ACL, NSIS, N-API e recuperação; a matriz de legado/recuperação é detalhada em E1 e confirmada em E3. E5 depende tecnicamente de E1–E4 e de provas reais de backup/restore, upgrade, adoção legada e falhas parciais em ambiente isolado. E0 foi concluída e aprovada pelo proprietário em 2026-11-08. Naquele snapshot, E1-01 documental havia sido executada e E1-02 e posteriores não haviam começado. A autorização posterior de desenvolvimento e o gate vigente estão registrados abaixo; nenhum PASS ou aceite E5 é inferido.
+
+## Atualização E1-01 — 2026-11-08
+
+Seguir também o [contrato técnico E1-01](../../fase-e-e1-01-contrato-instalacao.md), em especial a tabela de ajustes dos lotes desta etapa. A1–A7 permanecem aprovadas; spike S1, aceite do gate e autorização E1-02 ainda pendentes. Esta atualização é documental e não inicia esta etapa nem comprova seus testes.
+
 ## Histórico
 
-Ticket planejado e retransferido para a Fase E; não iniciado. Nenhuma implementação, migração ou validação foi iniciada.
+Ticket planejado e retransferido para a Fase E. O texto inicial registrava a etapa não iniciada; a atualização abaixo documenta a implementação autorizada sem alterar as decisões A5/A6.
+
+## Execução autorizada — 2026-11-08
+
+O proprietário autorizou E5-01→E5-03 como parte do desenvolvimento E1-03→E5-03. A5/A6 e o contrato E1-01 permanecem vinculantes: preservação conservadora, sem mover/converter/fundir/excluir automaticamente, e sem assumir que rollback do instalador reverte schema SQLite. Restore com descarte de dados posteriores exige autorização específica.
+
+- **E5-01 — backup SQLite implementado:** `src/sqlite-migration-backup.ts` cria snapshot consistente via `VACUUM INTO` na conexão owning, publica arquivo+manifesto exclusivos com SHA-256 e valida integridade, FK e `user_version`. `database.ts` cria backup antes de atualizar schema operacional ou catálogo Player. Verificação valida hash/schema e restore copia somente para destino novo e inexistente; não existe caminho que sobrescreva automaticamente o banco ativo.
+- **Testes PASS:** `npm run test:unit` PASS, incluindo migração operacional, catálogo Player, checksum, integridade, WAL com commit ainda não checkpointado, restore isolado, detecção de tampering e preservação do banco vivo. `tests/database-migration.test.ts` e `tests/music-catalog.test.ts` usam SQLite real em diretórios temporários.
+- **E5-02 — política conservadora implementada:** NSIS detecta entrada per-user em HKCU e bloqueia; manifesto global órfão/estado não configurado não comprovado também bloqueia. Não há migração automática de instalação/perfil/banco. Isso satisfaz fail-closed em conflito observado, mas não comprova atualização, reinstall, adoção, preservação de atalhos/dados ou versões antigas.
+- **NOT RUN:** update/reinstall NSIS, troca de função seguida de reboot, N-1 artifact real, downgrade, duas contas, falha de disco/permite Windows, interrupção após replace, restore em cenário de produto, ou limpeza após uninstall no Windows. Nenhum banco/perfil operacional foi aberto ou alterado.
+- **Limites:** backup por banco/schema, não conjunto atômico de `karaoke.sqlite` + catálogo ou perfis de todas as contas; sem retenção/expurgo automático; não restaura automaticamente após falha; restore requer seleção/procedimento explícito em destino isolado. A falha de NSIS após substituir binários pode exigir rerun/repair compatível e não é corrigida por restaurar SQLite. A instalação por usuário detectada e o estado órfão permanecem bloqueados para resolução segura.
+- **E5-03 — fechamento parcial:** `npm run test:unit`, `npm run test:release-workflow`, packaging config, scripts `node --check` e `git diff --check` passaram. A revisão independente em contexto separado não foi executada; o candidato/artifact atual não foi gerado nem inspecionado, e checklist manual/aprovação do proprietário permanecem pendentes.
+
+**Estado:** E5-01 tem cobertura unitária SQLite real PASS; E5-02 tem comportamento de bloqueio documentado, sem homologação de instalação; E5-03 não pode encerrar a fase. E5 e a Fase E continuam sem PASS/aprovação.
+
+**Gate vigente:** a autorização global posterior cobre o desenvolvimento sequencial até E5-03 sem novas autorizações nominais. As dependências técnicas E1–E4 e toda a matriz de preservação/upgrade/recovery continuam necessárias para aceitar/homologar E5; nenhum NOT RUN foi dispensado e o desenvolvimento não autoriza instalação operacional ou restauração destrutiva.
+
+## Revisão independente inicial — 2026-11-08 (histórico)
+
+R4/R6/R8/R10: revisão independente executada; coordenação NSIS/recuperação e preservação precisam de correções. Sentinel não comprova userData e verificador aceitou output NSIS fracassado. SQLite real local PASS não encerra E5. O fingerprint atual, evidências, recomendações e limites estão no [parecer independente](../../fase-e-revisao-independente.md). **NO-GO para PR de validação até correções; nenhuma aprovação da etapa.** Os registros anteriores de implementação/NOT RUN são históricos, sem promover testes omitidos a PASS.
+
+## Correções da revisão independente — 2026-11-08
+
+R10: build Windows remove selo antigo, sela somente após sucesso e verify rejeita uninstaller intermediário, ausência/divergência de fingerprint e hashes/conjunto incompletos. Testes negativos de provenance PASS; dois builds NSIS fracassados foram recusados e o build atual completo/verificador PASS. O teste de backup SQLite no Windows revelou `EPERM` ao `fsync` em handle read-only; a restauração isolada agora abre o destino em `O_RDWR`, sem alterar bytes, e os 11 testes de migração/SQLite passaram no runner Windows. Candidato não assinado: SHA-256 `6ca793dce7fa8ea1cd6c71f948c025e6f88a9e990a7e31e453c61e300bf87b3b`, fingerprint `03aa4d34e91f5aa8bc102d75d5668f29cffe849925f41715221310bb2cdae173`. NSIS install/update/uninstall, artifact hosted, N-1 real, downgrade/rollback e recuperação instalada continuam NOT RUN; E5 e a Fase E permanecem sem homologação/aprovação. Ver [parecer atualizado](../../fase-e-revisao-independente.md).
+
+## Coordenação estrutural F1–F3 — 2026-11-09
+
+Reinstall só consome tombstone depois da árvore anterior terminar; fences obsoletas abortam antes da remoção. Smoke usa cópia temp do uninstaller e aguarda término real, mantém assertions de pasta/registro/links/perfil e cleanup conservador. Checksum oficial do Electron travado evita SHASUMS redundante sem desabilitar SHA/TLS. Selo rejeita parcial/antigo e inclui 223 inputs; nenhum banco operacional foi aberto pelo helper ou migrado/destruído.
+
+**Evidência atual:** unitários/workflow/proveniência e runner Windows oficial Electron/Playwright/SQLite PASS no snapshot `3432e5d295cbffc241747061fd8704766b68d52f467a34da60dec28e654053fe`. Binding real, árvore de processos e probes NSIS GUI/silencioso/crash/falha/fences PASS em fixtures isoladas. Build NSIS x64/verificador/carga do addon final PASS; inputs `0b407cead36fb204ca2168f12a69a03bed81ab2e78ef92b0abaee0bfd530a423`, candidato SHA-256 `ae69327a4f5a0940fa8cae263478a04856b0124d4c3549fbcee6ac6d639bfd5f`. Atualização posterior somente documental.
+
+[Contrato e matriz de interleavings](../../fase-e-coordenacao-instalacao.md); [parecer, status por achado e logs reproduzíveis](../../fase-e-revisao-independente.md#10-correção-estrutural-da-coordenação-f1f3--2026-11-09). Este registro substitui as descrições históricas de release GUI/abandono normal e o NO-GO anterior, sem apagar evidências.
+
+**Gate:** GO técnico condicionado para revisão final/PR somente de validação. Não houve commit/push/PR/dispatch nem instalação no host. Instalação/update/uninstall/reinstall/crash reais, ACL elevada/cross-account, UAC, duas contas/sessões e validação humana continuam NOT RUN/pendentes. S1 PARTIAL, nenhuma E1–E5 homologada/aprovada; F não iniciada.
 
 ## Referências
 

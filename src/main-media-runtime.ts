@@ -11,7 +11,7 @@ import { PlayerPlaybackRecoveryStore } from './player-playback-recovery-store'
 import { StandalonePlayerSequence } from './standalone-player-sequence'
 import type { VideoLibraryService } from './video-library-service'
 import { VideoLibraryService as DefaultVideoLibraryService } from './video-library-service'
-import { readVideoLibraryConfiguration } from './video-library-configuration'
+import { readVideoLibraryConfiguration, VideoLibraryConfigurationError } from './video-library-configuration'
 
 export interface MainMediaRuntimeOptions {
   operatingMode: OperatingMode
@@ -59,8 +59,16 @@ export class MainMediaRuntime {
       this.logRecoveryState(recoveryState)
     }
 
-    const libraryConfiguration = readVideoLibraryConfiguration(this.options.userDataDirectory)
-    this.services.library = new DefaultVideoLibraryService(libraryConfiguration.roots)
+    let libraryRoots: string[]
+    try {
+      libraryRoots = readVideoLibraryConfiguration(this.options.userDataDirectory).roots
+    } catch (error) {
+      if (this.options.operatingMode !== 'combined' || !(error instanceof VideoLibraryConfigurationError)) throw error
+      libraryRoots = []
+      this.options.logger.error('player', 'VIDEO_LIBRARY_CONFIGURATION_INVALID',
+        'A biblioteca de vídeos foi desativada porque sua configuração não pôde ser validada; a Gestão continuará disponível e o arquivo foi preservado.', error)
+    }
+    this.services.library = new DefaultVideoLibraryService(libraryRoots)
     const inventory = await this.services.library.refresh()
     if (this.options.isShutdownStarted()) return undefined
 

@@ -3,6 +3,10 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { ChromiumPlaybackHost } from './chromium-playback-host'
 import type { PlayerPlaybackService } from './player-playback-service'
+import {
+  applyWindowsFunctionWindowIdentity,
+  type WindowsFunctionIdentity
+} from './windows-function-identity'
 
 export type PlayerVideoLocation = 'hidden' | 'inline' | 'window'
 
@@ -31,6 +35,8 @@ export interface PlayerVideoWindowOptions {
   readonly onChange?: () => void
   readonly preloadPath?: string
   readonly documentPath?: string
+  readonly windowIdentity?: WindowsFunctionIdentity
+  readonly iconPaths?: { readonly windowIconPath: string; readonly taskbarIconPath: string }
 }
 
 /** Owns one Chromium media view that can be embedded or detached without replacing its playback host. */
@@ -517,10 +523,14 @@ export class PlayerVideoWindow {
       minHeight: 405,
       show: false,
       backgroundColor: '#000000',
-      title: 'Karaoke Queue · Player',
+      title: this.options.windowIdentity?.windowTitle ?? 'Karaoke Queue · Reprodutor',
+      ...(this.options.iconPaths ? { icon: this.options.iconPaths.windowIconPath } : {}),
       autoHideMenuBar: true,
       webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true }
     })
+    if (this.options.windowIdentity && this.options.iconPaths) {
+      applyWindowsFunctionWindowIdentity(window, process.platform, this.options.windowIdentity.mode, this.options.iconPaths)
+    }
     this.outputWindow = window
     this.observeWindow(window)
     window.on('close', event => {

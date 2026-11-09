@@ -11,8 +11,6 @@ export interface MainControllerIpcDependencies {
   openLogs(): Promise<string>
   assertControllerIpcSender(event: IpcMainEvent | IpcMainInvokeEvent): void
   reportSessionEvent(event: string, sessionId: unknown, result?: string): void
-  registerModeChange: boolean
-  changeOperatingMode(requestedMode: unknown): Promise<unknown>
 }
 
 export interface MainControllerWindowIpcDependencies {
@@ -131,13 +129,6 @@ export function registerMainControllerIpcHandlers(deps: MainControllerIpcDepende
     if (typeof value.event === 'string') deps.reportSessionEvent(value.event,
       value.sessionId, typeof value.result === 'string' ? value.result : undefined)
   }))
-  if (deps.registerModeChange) {
-    handle('settings:operating-mode:change', (event, requestedMode: unknown) => {
-      deps.assertControllerIpcSender(event)
-      return deps.changeOperatingMode(requestedMode)
-    })
-  }
-
   return () => registration.dispose()
 }
 

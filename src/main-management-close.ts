@@ -20,7 +20,6 @@ export interface MainManagementCloseDependencies {
   isWindowDestroyed(): boolean
   showMessageBox(options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue>
   isStartupComplete(): boolean
-  isOperatingModeChangeScheduled(): boolean
   isLicenseOperationallyAllowed(): boolean
   closeWindow(): void
   logger: Pick<FileLogger, 'info' | 'error'>
@@ -48,14 +47,6 @@ export class MainManagementCloseCoordinator {
       const port = this.deps.getPort()
       await port.prepareToClose()
       const closeSummary = await port.closeSummary()
-      if (this.deps.isOperatingModeChangeScheduled()) {
-        await port.flushState()
-        this.deps.logger.info('main', 'OPERATING_MODE_CHANGE_PRESERVED_SESSION', 'O modo mudou sem encerrar a sessão nem alterar a fila ou o histórico.', {
-          sessionId: closeSummary.sessionId, sessionRemainsOpen: closeSummary.sessionActive
-        })
-        this.closeAfterPersisting()
-        return
-      }
       if (!this.deps.isLicenseOperationallyAllowed()) {
         await port.flushState()
         this.deps.logger.info('main', 'APP_CLOSE_DECISION', 'O aplicativo expirado foi fechado sem encerrar nem modificar a sessão.', {

@@ -1,5 +1,11 @@
 # Prioridade 3 — confirmação e recuperação da persistência SQLite
 
+## Proteção de migrações SQLite na Fase E — desenvolvimento em curso
+
+O [contrato E1-01](fase-e-e1-01-contrato-instalacao.md) mantém função global sem compartilhar `userData`/SQLite entre contas. A implementação atual cria snapshots consistentes antes de migrações suportadas de `karaoke.sqlite` e `player-music-catalog.sqlite`, usando `VACUUM INTO` pela conexão SQLite já aberta, manifesto com schema/hash e validação de integridade/FK. O restore só escreve em um caminho absoluto novo, inexistente e isolado; nunca substitui o banco atual. Os testes usam SQLite real e cobrem dados já commitados ainda em WAL, checksum, integridade, restauração e adulteração do backup.
+
+**Limites:** não há snapshot transacional de todos os bancos/perfis de uma conta, política automática de retenção/remoção, recuperação de arquivo operacional após qualquer tipo de crash, nem comprovante de ACL Windows na máquina final. O backup é por conta em `userData`; não é compartilhado. Uma falha de migração não aciona restore automático. Schema incompatível/downgrade permanece bloqueado; instalar executável antigo não equivale a rollback seguro. Restaurar um backup anterior com perda de alterações posteriores exige autorização específica do proprietário. A homologação Windows e o restante da Fase E permanecem pendentes; ver o [ledger executivo](fase-e-plano-executivo.md#12-ledger-da-execução-autorizada-e1-03e5-03).
+
 ## Diagnóstico anterior
 
 `KaraokeApplication` alterava o estado publicado e chamava `void this.persist()` em cadastro, edição, cancelamento, conclusão, movimentação/fixação, liberação de pin, promoção, seleção automática, congelamento/liberação, criação inicial de sessão, reset de mesa e ativação de licença. O repositório capturava snapshots e serializava **gravações**, mas não serializava a preparação/publicação das operações. Os handlers limpavam campos, fechavam modais e exibiam sucesso sem aguardar o banco. Uma rejeição podia ficar como Promise não tratada enquanto a UI já mostrava o resultado.

@@ -175,20 +175,32 @@ async function closeLeavingSessionOpen(app) {
   await app.close()
 }
 
-async function runControllerDefaultAndRecovery() {
-  const profile = makeProfile('controller-default-recovery')
+async function runLegacyControllerAliasAndRecovery() {
+  const profile = makeProfile('legacy-controller-alias-recovery')
   fs.mkdirSync(profile.userData, { recursive: true })
+  const modePath = path.join(profile.userData, 'operating-mode.json')
+  const legacyModeBytes = Buffer.from('{\n  "version": 1,\n  "mode": "controller"\n}\n')
+  fs.writeFileSync(modePath, legacyModeBytes)
+  const libraryPath = path.join(profile.userData, 'video-library.json')
+  const legacyLibraryBytes = Buffer.from('{invalid legacy video-library configuration')
+  fs.writeFileSync(libraryPath, legacyLibraryBytes)
   const legacyDatabase = createKaraokeDatabase(profile.userData)
   legacyDatabase.close()
   let app
   try {
     app = await launch(profile)
     const ready = await waitForLogRecord(profile, 'APP_READY')
-    assert.equal(ready.details.mode, 'controller', 'missing configuration must retain legacy Controller behavior')
+    assert.equal(ready.details.mode, 'combined', 'legacy Controller configuration must resolve to the final Combined function')
     assert.equal(ready.details.controllerServicesInitialized, true)
-    assert.equal(ready.details.playerServicesImplemented, false,
-      'Controller-only mode must not initialize Player playback')
+    assert.equal(ready.details.playerServicesImplemented, true,
+      'legacy Controller profiles must initialize the Combined media runtime')
     assert.equal(ready.details.operationalDatabaseInitialized, true)
+    assert.equal(readLogRecords(profile).some(record => record.event === 'VIDEO_LIBRARY_CONFIGURATION_INVALID'), true,
+      'invalid optional media configuration must be reported while legacy Management starts')
+    assert.deepEqual(fs.readFileSync(modePath), legacyModeBytes,
+      'resolving a legacy Controller profile must not rewrite its mode configuration')
+    assert.deepEqual(fs.readFileSync(libraryPath), legacyLibraryBytes,
+      'resolving a legacy Controller profile must not rewrite invalid media configuration')
 
     const page = await firstPage(app)
     await startSession(page)
@@ -203,7 +215,11 @@ async function runControllerDefaultAndRecovery() {
 
     app = await launch(profile)
     const restartedReady = await waitForLogRecord(profile, 'APP_READY', 15000, previousRunId)
-    assert.equal(restartedReady.details.mode, 'controller')
+    assert.equal(restartedReady.details.mode, 'combined')
+    assert.deepEqual(fs.readFileSync(modePath), legacyModeBytes,
+      'restarting a legacy Controller profile must preserve the original configuration bytes')
+    assert.deepEqual(fs.readFileSync(libraryPath), legacyLibraryBytes,
+      'restarting a legacy Controller profile must preserve invalid media configuration')
     const recoveredPage = await firstPage(app)
     assert.deepEqual(readOperationalState(databasePath), beforeRestart)
     assert.equal(await recoveredPage.evaluate(() => window.__kqueue.queueLength()), 1,
@@ -215,82 +231,163 @@ async function runControllerDefaultAndRecovery() {
   } finally { await forceClose(app) }
 }
 
-async function runControllerSettingsModeSwitchPreservesSession() {
-  const profile = makeProfile('controller-settings-mode-switch')
-  const screenshotRoot = process.env.KQ_PLAYER_SCREENSHOT_DIR
-    ? path.resolve(process.env.KQ_PLAYER_SCREENSHOT_DIR) : profile.root
-  fs.mkdirSync(screenshotRoot, { recursive: true })
+async function runMissingLegacyModeConfigurationResolvesCombined() {
+  const profile = makeProfile('missing-legacy-mode-configuration')
   fs.mkdirSync(profile.userData, { recursive: true })
-  const initialized = createKaraokeDatabase(profile.userData)
-  initialized.close()
+  const legacyDatabase = createKaraokeDatabase(profile.userData)
+  legacyDatabase.close()
   let app
   try {
     app = await launch(profile)
     const ready = await waitForLogRecord(profile, 'APP_READY')
-    assert.equal(ready.details.mode, 'controller')
-    const page = await firstPage(app)
-    await startSession(page)
-    await addEntry(page, 'Mode switch keeps session', '73')
+    assert.equal(ready.details.mode, 'combined', 'a legacy profile without mode configuration must resolve to Combined')
+    assert.equal(ready.details.controllerServicesInitialized, true)
+    assert.equal(ready.details.playerServicesImplemented, true)
+    assert.equal(fs.existsSync(path.join(profile.userData, 'operating-mode.json')), false,
+      'normalizing the missing mode must not create or rewrite a configuration file')
+  } finally { await forceClose(app) }
+}
 
-    const databasePath = path.join(profile.userData, 'karaoke.sqlite')
-    const beforeState = readOperationalState(databasePath)
-    assert.equal(beforeState.sessions.length, 1, 'The mode-switch scenario must retain one active Controller session.')
-    assert.equal(beforeState.entries.length, 1, 'The mode-switch scenario must retain a queued presentation.')
-
-    await page.locator('#nav-settings').click()
-    await page.locator('#settings-page').waitFor({ state: 'visible' })
-    assert.match(await page.locator('.settings-mode-current').textContent(), /Controlador/,
-      'Controller settings must identify Controlador as the active mode.')
-    assert.equal(await page.locator('#settings-mode-player').isDisabled(), false,
-      'Player must be selectable from Controller settings.')
-    assert.equal(await page.locator('#settings-mode-combined').isDisabled(), true,
-      'Combined must remain unavailable until its integration phase is complete.')
-    await page.locator('#toast').waitFor({ state: 'hidden', timeout: 5000 })
-    await page.screenshot({ path: path.join(screenshotRoot, 'controller-settings-mode.png') })
-
-    await page.locator('#settings-mode-player').click()
-    assert.equal(await page.locator('#settings-mode-change').isDisabled(), false,
-      'Selecting Player must enable the explicit mode-change action.')
-    await app.evaluate(({ app: electronApp }) => {
-      electronApp.relaunch = () => undefined
-    })
-
-    const child = app.process()
-    const processExit = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })))
-    const scheduledChange = waitForLogRecord(profile, 'OPERATING_MODE_CHANGE_SCHEDULED')
-    await page.locator('#settings-mode-change').click()
-    let changeRecord
+async function runWelcomeSelectsOnlyFinalModes() {
+  const screenshotRoot = process.env.KQ_PLAYER_SCREENSHOT_DIR
+    ? path.resolve(process.env.KQ_PLAYER_SCREENSHOT_DIR) : undefined
+  for (const mode of ['player', 'combined']) {
+    const profile = makeProfile(`welcome-${mode}`)
+    let app
     try {
-      changeRecord = await scheduledChange
-    } catch (error) {
-      const modeStatus = await page.locator('#settings-mode-status').textContent().catch(() => '')
-      const ipcFailure = readLogRecords(profile).filter(record => record.event === 'RENDERER_IPC_FAILED' &&
-        String(record.message ?? '').includes('settings:operating-mode:change')).at(-1)?.message ?? 'none'
-      throw new Error(`${error.message}; Controller mode UI status=${modeStatus}; IPC diagnostic=${ipcFailure}`)
-    }
-    assert.equal(changeRecord.details.from, 'controller')
-    assert.equal(changeRecord.details.to, 'player')
-    const exit = await processExit
-    assert.equal(exit.code, 0, `The controlled mode switch must exit cleanly; exit=${JSON.stringify(exit)}`)
-    await waitForLogRecord(profile, 'OPERATING_MODE_CHANGE_PRESERVED_SESSION')
+      app = await launch(profile)
+      const page = await app.firstWindow()
+      await page.locator('.mode-card').first().waitFor({ state: 'visible' })
+      await page.setViewportSize({ width: 1280, height: 800 })
+      assert.deepEqual(await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })),
+        { width: 1280, height: 800 }, 'the production Welcome surface must render at the approved 1280×800 frame')
+      assert.equal(await page.locator('.mode-card').count(), 2,
+        'first-run Welcome must present exactly two final product functions')
+      assert.equal(await page.locator('.mode-card[data-mode="controller"]').count(), 0,
+        'Controller must not be a first-run choice')
+      assert.deepEqual(await page.locator('.mode-card').evaluateAll(cards => cards.map(card => card.dataset.mode)),
+        ['player', 'combined'])
+      assert.equal(await page.locator('.subtitle').textContent(),
+        'Escolha como este computador vai funcionar no karaokê. Alterações posteriores serão feitas pela manutenção do instalador.',
+        'the selected function can be changed only through installer maintenance (approved A7)')
+      assert.equal(await page.locator('.saved-note').innerText(),
+        'O modo escolhido ficará salvo neste computador. Alterações posteriores serão feitas pela manutenção do instalador.')
+      assert.deepEqual(await page.locator('.mode-description').allTextContents(), [
+        'Reproduza vídeos localmente, adicione músicas pelo teclado ou receba comandos remotamente de outra instância.',
+        'Gerencie a fila, as mesas e as sessões e reproduza localmente em uma janela para outra tela. Também controle remotamente outro Reprodutor instalado em outra máquina.'
+      ], 'the function descriptions must match the approved Doop frame')
+      assert.match(await page.locator('.saved-note').textContent(), /manutenção do instalador/,
+        'approved installer-maintenance policy takes precedence over stale frame copy that says Settings')
+      if (screenshotRoot && mode === 'combined') {
+        fs.mkdirSync(screenshotRoot, { recursive: true })
+        await page.screenshot({ path: path.join(screenshotRoot, 'welcome-mode-selection.png') })
+      }
+
+      await app.evaluate(({ app: electronApp }) => { electronApp.relaunch = () => undefined })
+      const child = app.process()
+      const processExit = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })))
+      await page.locator(`.mode-card[data-mode="${mode}"]`).click()
+      await page.locator('#welcome-continue').click()
+      await page.locator('#welcome-setup-page').waitFor({ state: 'visible' })
+      assert.equal(await page.locator('#welcome-mode-page').isHidden(), true,
+        'advancing to initial setup must hide the mode selection page')
+      assert.equal(await page.locator('#welcome-setup-page h1').textContent(),
+        'Configure os vídeos e o catálogo de músicas', 'mode selection must continue to the approved library/catalog setup frame')
+      assert.equal(await page.locator('#welcome-configure-later').isEnabled(), true,
+        'the initial media setup must remain optional')
+      assert.deepEqual(await page.locator('.setup-card h2').allTextContents(),
+        ['Biblioteca de vídeos', 'Catálogo de músicas'])
+      assert.deepEqual(await page.locator('.setup-card .tag').allTextContents(),
+        ['Necessária para reprodução local', 'Opcional'])
+      if (screenshotRoot && mode === 'combined') {
+        await page.screenshot({ path: path.join(screenshotRoot, 'welcome-library-catalog.png') })
+      }
+
+      if (mode === 'player') {
+        const libraryRoot = path.join(profile.root, 'media')
+        const catalogFile = path.join(profile.root, 'catalog.csv')
+        fs.mkdirSync(libraryRoot, { recursive: true })
+        fs.writeFileSync(catalogFile, 'numero;artista;nome_musica\n123;Artista;Musica\n')
+        await page.evaluate(({ libraryRoot, catalogFile }) => window.karaokeWelcome.completeSetup({ libraryRoot, catalogFile }),
+          { libraryRoot, catalogFile }).catch(error => {
+          if (!page.isClosed()) throw error
+        })
+      } else {
+        await page.locator('#welcome-configure-later').click().catch(error => {
+          if (!page.isClosed()) throw error
+        })
+      }
+      assert.deepEqual(await processExit, { code: 0, signal: null }, 'saving the selected mode must close Welcome cleanly')
+      await app.close()
+      app = undefined
+
+      const modePath = path.join(profile.userData, 'operating-mode.json')
+      assert.deepEqual(JSON.parse(fs.readFileSync(modePath, 'utf8')), { version: 1, mode },
+        'first-run selection must persist only the selected final function')
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(profile.userData, 'welcome-setup.json'), 'utf8')),
+        { version: 1, status: 'complete' }, 'completed onboarding must persist per-account setup state')
+      if (mode === 'player') {
+        assert.deepEqual(JSON.parse(fs.readFileSync(path.join(profile.userData, 'video-library.json'), 'utf8')),
+          { version: 1, roots: [path.join(profile.root, 'media')] })
+        const catalog = new DatabaseSync(path.join(profile.userData, 'player-music-catalog.sqlite'), { readOnly: true })
+        try {
+          assert.equal(catalog.prepare('SELECT count(*) AS count FROM music_catalog').get().count, 1,
+            'the selected CSV must be imported through the existing Player SQLite catalog')
+        } finally { catalog.close() }
+      } else {
+        assert.equal(fs.existsSync(path.join(profile.userData, 'video-library.json')), false,
+          'Configure later must not create a library configuration')
+        assert.equal(fs.existsSync(path.join(profile.userData, 'karaoke.sqlite')), false,
+          'Configure later must not open or create the Combined operational SQLite database')
+      }
+      app = await launch(profile)
+      const ready = await waitForLogRecord(profile, 'APP_READY')
+      assert.equal(ready.details.mode, mode, 'the selected final function must be used on restart')
+    } finally { await forceClose(app) }
+  }
+}
+
+async function runConfigureLaterAfterInvalidCatalog() {
+  const profile = makeProfile('configure-later-after-invalid-catalog')
+  const libraryRoot = path.join(profile.root, 'media')
+  const invalidCatalog = path.join(profile.root, 'invalid.csv')
+  fs.mkdirSync(libraryRoot, { recursive: true })
+  fs.writeFileSync(invalidCatalog, 'not,a,valid,catalog\n')
+  let app
+  try {
+    app = await launch(profile)
+    const page = await app.firstWindow()
+    await page.locator('.mode-card[data-mode="combined"]').click()
+    await page.locator('#welcome-continue').click()
+    await page.locator('#welcome-setup-page').waitFor({ state: 'visible' })
+    await app.evaluate(({ app: electronApp }) => { electronApp.relaunch = () => undefined })
+    await app.evaluate(({ dialog }, paths) => {
+      let index = 0
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [paths[index++]] })
+    }, [libraryRoot, invalidCatalog])
+    await page.locator('#welcome-library-choose').click()
+    await page.locator('#welcome-catalog-choose').click()
+    await page.locator('#welcome-setup-continue').click()
+    await page.locator('#welcome-setup-error').waitFor({ state: 'visible' })
+    assert.match(await page.locator('#welcome-setup-error').textContent(), /não foi possível salvar/i)
+    await page.locator('#welcome-configure-later').click()
+    const process = app.process()
+    await new Promise((resolve, reject) => {
+      if (process.exitCode !== null) return process.exitCode === 0 ? resolve() : reject(new Error(`Welcome exited ${process.exitCode}`))
+      process.once('exit', code => code === 0 ? resolve() : reject(new Error(`Welcome exited ${code}`)))
+    })
     await app.close()
     app = undefined
 
-    const modePath = path.join(profile.userData, 'operating-mode.json')
-    assert.deepEqual(JSON.parse(fs.readFileSync(modePath, 'utf8')),
-      { version: 1, mode: 'player' }, 'The confirmed Controller-to-Player change must persist the selected mode.')
-    assert.deepEqual(readOperationalState(databasePath), beforeState,
-      'Switching modes must preserve the operational SQLite session, queue, and history state.')
-
-    app = await launch(profile)
-    const playerReady = await waitForLogRecord(profile, 'APP_READY', 15000, ready.runId)
-    assert.equal(playerReady.details.mode, 'player', 'The same isolated profile must restart in Player mode.')
-    assert.equal(playerReady.details.operationalDatabaseInitialized, false,
-      'Player startup must preserve but not open the Controller operational database.')
-    assert.deepEqual(JSON.parse(fs.readFileSync(modePath, 'utf8')),
-      { version: 1, mode: 'player' }, 'Player startup must not overwrite the persisted mode.')
-    assert.deepEqual(readOperationalState(databasePath), beforeState,
-      'Restarting in Player mode must not mutate the preserved Controller session or queue.')
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(profile.userData, 'welcome-setup.json'), 'utf8')),
+      { version: 1, status: 'complete' }, 'deferral completes setup without retrying the rejected CSV')
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(profile.userData, 'video-library.json'), 'utf8')),
+      { version: 1, roots: [libraryRoot] }, 'the previously committed library selection remains intact')
+    const catalog = new DatabaseSync(path.join(profile.userData, 'karaoke.sqlite'), { readOnly: true })
+    try { assert.equal(catalog.prepare('SELECT count(*) AS count FROM music_catalog').get().count, 0) }
+    finally { catalog.close() }
+    assert.equal(readLogRecords(profile).some(record => record.event === 'APP_READY'), false,
+      'the initial setup flow still exits after its explicit defer action')
   } finally { await forceClose(app) }
 }
 
@@ -358,6 +455,8 @@ async function runPlayerWithoutControllerState() {
 
 async function runCombinedOneControllerDatabaseAndRestart() {
   const profile = makeProfile('combined')
+  const screenshotRoot = process.env.KQ_PLAYER_SCREENSHOT_DIR
+    ? path.resolve(process.env.KQ_PLAYER_SCREENSHOT_DIR) : undefined
   writeMode(profile, 'combined')
   let app
   try {
@@ -371,6 +470,17 @@ async function runCombinedOneControllerDatabaseAndRestart() {
     const page = await firstPage(app)
     await startSession(page)
     await addEntry(page, 'Combined mode', '72')
+
+    await page.locator('#nav-settings').click()
+    await page.locator('#settings-page').waitFor({ state: 'visible' })
+    assert.equal(await page.locator('#settings-mode-controller, #settings-mode-player, #settings-mode-combined').count(), 0,
+      'Settings must not present a function selector after the approved A7 decision')
+    assert.equal(await page.evaluate(() => Object.prototype.hasOwnProperty.call(window.karaokePreferences ?? {}, 'changeOperatingMode')), false,
+      'the restricted Management preload must not expose normal mode changes')
+    if (screenshotRoot) {
+      fs.mkdirSync(screenshotRoot, { recursive: true })
+      await page.screenshot({ path: path.join(screenshotRoot, 'combined-settings.png') })
+    }
 
     const databasePath = path.join(profile.userData, 'karaoke.sqlite')
     const sqliteFiles = fs.readdirSync(profile.userData).filter(name => /\.sqlite(?:3)?$/.test(name))
@@ -449,10 +559,14 @@ async function runInvalidConfigurationPreservesDatabase() {
 async function run() {
   let testError
   try {
-    await runControllerDefaultAndRecovery()
-    process.stdout.write('OPERATING_MODE PASS Controller default and SQLite session recovery\n')
-    await runControllerSettingsModeSwitchPreservesSession()
-    process.stdout.write('OPERATING_MODE PASS Controller settings switch to Player preserves the active session and queue\n')
+    await runLegacyControllerAliasAndRecovery()
+    process.stdout.write('OPERATING_MODE PASS legacy Controller alias and SQLite session recovery\n')
+    await runMissingLegacyModeConfigurationResolvesCombined()
+    process.stdout.write('OPERATING_MODE PASS missing legacy mode configuration resolves to Combined without writing\n')
+    await runWelcomeSelectsOnlyFinalModes()
+    process.stdout.write('OPERATING_MODE PASS Welcome presents and persists only Player and Combined\n')
+    await runConfigureLaterAfterInvalidCatalog()
+    process.stdout.write('OPERATING_MODE PASS Configure later skips invalid CSV and preserves confirmed library data\n')
     await runPlayerWithoutControllerState()
     process.stdout.write('OPERATING_MODE PASS Player-only embedded startup without Controller persistence\n')
     await runCombinedOneControllerDatabaseAndRestart()

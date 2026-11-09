@@ -83,6 +83,31 @@ test('Combined media runtime attaches one manual authority to one playback servi
   }
 })
 
+test('Combined keeps the Management runtime available when its optional video-library configuration is invalid', async () => {
+  const userDataDirectory = temporaryDirectory()
+  const protocol = createProtocol()
+  const log = logger()
+  const configPath = path.join(userDataDirectory, 'video-library.json')
+  const originalConfig = Buffer.from('{invalid legacy video-library configuration')
+  fs.writeFileSync(configPath, originalConfig)
+  const runtime = new MainMediaRuntime({ operatingMode: 'combined', userDataDirectory,
+    protocol: protocol.protocol, logger: log, isShutdownStarted: () => false })
+  try {
+    const inventory = await runtime.initializePlayerInfrastructure()
+    assert.ok(inventory)
+    assert.equal(inventory.configuredRootCount, 0)
+    assert.equal(runtime.library?.getSnapshot().counts.availableCodes, 0)
+    assert.ok(runtime.manual, 'Combined playback remains composed with an empty library service')
+    assert.ok(log.events.includes('VIDEO_LIBRARY_CONFIGURATION_INVALID'))
+    assert.deepEqual(fs.readFileSync(configPath), originalConfig,
+      'invalid media configuration must be reported and preserved without an automatic repair')
+    await runtime.disposeAfterFailedStartup(() => undefined)
+    runtime.mediaProtocol?.dispose(protocol.protocol)
+  } finally {
+    fs.rmSync(userDataDirectory, { recursive: true, force: true })
+  }
+})
+
 test('media runtime retains ownership of acquired resources when startup stops after library scan', async () => {
   const userDataDirectory = temporaryDirectory()
   const protocol = createProtocol()

@@ -3,7 +3,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { normalizeCatalogCodeForVideoMatch } from './music-catalog'
 import { writeVideoLibraryConfiguration } from './video-library-configuration'
-import { writeOperatingModeConfiguration, type OperatingMode, type OperatingModeCapabilities } from './operating-mode'
+import type { OperatingMode, OperatingModeCapabilities } from './operating-mode'
 import type { FileLogger } from './logging'
 import type { ManualPlaybackService } from './manual-playback-service'
 import type { PlayerPlaybackService } from './player-playback-service'
@@ -29,8 +29,6 @@ export interface MainPlayerIpcDependencies {
   getMusicCatalogService(): MusicCatalogService | undefined
   getLibraryOperationInProgress(): boolean
   setLibraryOperationInProgress(value: boolean): void
-  getOperatingModeChangeScheduled(): boolean
-  setOperatingModeChangeScheduled(value: boolean): void
   getPlayerOperationsInProgress(): number
   getShutdownApprovedAttemptId(): string | undefined
   setPlayerQuitAllowed(value: boolean): void
@@ -140,38 +138,6 @@ export function registerMainPlayerIpcHandlers(deps: MainPlayerIpcDependencies): 
   registerHandler('player:sequence:clear', event => {
     deps.requirePlayerIpcSender(event); deps.requirePlayerSequenceMode()
     return deps.runPlayerOperation(() => deps.requirePlayerServices().manual.clearSequence())
-  })
-  registerHandler('player:mode:change', (event, requestedMode: unknown) => {
-    deps.requirePlayerIpcSender(event)
-    if (deps.getOperatingModeChangeScheduled()) throw new Error('MODE_CHANGE_IN_PROGRESS')
-    if (deps.getOperatingMode() !== 'player' || !deps.getModeCapabilities()?.player) throw new Error('MODE_CHANGE_UNAVAILABLE')
-    const targetMode: OperatingMode = 'controller'
-    if (requestedMode === 'combined') throw new Error('MODE_NOT_AVAILABLE')
-    if (requestedMode !== targetMode) throw new Error('INVALID_OPERATING_MODE')
-    if (deps.getPlayerOperationsInProgress() > 0 || deps.getLibraryOperationInProgress()) throw new Error('MODE_CHANGE_OPERATION_IN_PROGRESS')
-    const services = deps.requirePlayerServices()
-    const playback = services.playback.getState()
-    if (['loading', 'starting', 'ready', 'playing', 'paused', 'stopping'].includes(playback.status)) {
-      throw new Error('MODE_CHANGE_PLAYER_ACTIVE')
-    }
-    if (playback.status === 'uncertain') throw new Error('RECOVERY_PENDING')
-    if (services.manual.getSequence().pending.length > 0) throw new Error('MODE_CHANGE_PENDING_SEQUENCE')
-    const recovery = services.recovery.getState()
-    if (recovery.status === 'pending') throw new Error('RECOVERY_PENDING')
-    if (recovery.status === 'unreadable' || recovery.status === 'unavailable') throw new Error('RECOVERY_UNAVAILABLE')
-    deps.setOperatingModeChangeScheduled(true)
-    try {
-      writeOperatingModeConfiguration(userDataDirectory, targetMode)
-    } catch (error) {
-      deps.setOperatingModeChangeScheduled(false)
-      throw error
-    }
-    logger.info('main', 'OPERATING_MODE_CHANGE_SCHEDULED', 'A troca para Controlador foi salva e o aplicativo será reiniciado com segurança.', {
-      from: deps.getOperatingMode(), to: targetMode
-    })
-    app.relaunch()
-    app.quit()
-    return { outcome: 'restarting' as const, mode: targetMode }
   })
   registerHandler('player:pause', event => { deps.requirePlayerIpcSender(event); return deps.runPlayerOperation(() => deps.requirePlayerServices().manual.pause()) })
   registerHandler('player:resume', event => { deps.requirePlayerIpcSender(event); return deps.runPlayerOperation(() => deps.requirePlayerServices().manual.resume()) })

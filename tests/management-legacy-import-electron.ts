@@ -8,7 +8,6 @@ const path = require('node:path')
 const { spawnSync } = require('node:child_process')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
-const { writeOperatingModeConfiguration } = require('../src/operating-mode')
 const { LEGACY_STATE_STORAGE_KEYS } = require('../src/persistence-contracts')
 
 const projectRoot = path.resolve(__dirname, '../..')
@@ -17,7 +16,7 @@ const userDataDirectory = path.join(profileRoot, 'profile')
 
 async function run() {
   fs.mkdirSync(userDataDirectory, { recursive: true })
-  writeOperatingModeConfiguration(userDataDirectory, 'controller')
+  fs.writeFileSync(path.join(userDataDirectory, 'operating-mode.json'), '{"version":1,"mode":"controller"}\n')
   const seeded = spawnSync(require('electron'), [
     ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
     path.join(__dirname, 'seed-legacy-local-storage-electron.js')

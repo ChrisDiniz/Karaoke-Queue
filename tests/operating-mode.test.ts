@@ -10,6 +10,7 @@ import {
   OPERATING_MODE_CONFIGURATION_FILENAME,
   readOperatingModeConfiguration,
   requiresFirstLaunchModeSelection,
+  resolveOperatingMode,
   writeOperatingModeConfiguration
 } from '../src/operating-mode'
 
@@ -18,10 +19,13 @@ function profile(): { directory: string; cleanup: () => void } {
   return { directory, cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) }
 }
 
-test('missing operating mode configuration defaults to the legacy Controller mode', () => {
+test('missing operating mode configuration resolves its legacy Controller default to Combined without writing', () => {
   const temp = profile()
   try {
-    assert.deepEqual(readOperatingModeConfiguration(temp.directory), { version: 1, mode: 'controller' })
+    const configuration = readOperatingModeConfiguration(temp.directory)
+    assert.deepEqual(configuration, { version: 1, mode: 'controller' })
+    assert.equal(resolveOperatingMode(configuration.mode), 'combined')
+    assert.equal(fs.existsSync(path.join(temp.directory, OPERATING_MODE_CONFIGURATION_FILENAME)), false)
   } finally { temp.cleanup() }
 })
 
@@ -29,30 +33,54 @@ test('first-launch mode selection is limited to profiles without mode or persist
   const fresh = profile()
   try {
     assert.equal(requiresFirstLaunchModeSelection(fresh.directory), true)
-    fs.writeFileSync(path.join(fresh.directory, 'karaoke.sqlite'), 'legacy marker')
-    assert.equal(requiresFirstLaunchModeSelection(fresh.directory), false,
-      'an existing operational profile must preserve the historical Controller fallback')
-    fs.rmSync(path.join(fresh.directory, 'karaoke.sqlite'))
+    for (const file of [
+      'karaoke.sqlite', 'karaoke.sqlite-wal', 'karaoke.sqlite-shm', 'karaoke-data.json',
+      'ui-preferences.json', 'video-library.json', 'player-music-catalog.sqlite',
+      'player-playback-recovery.json', '.player-playback-recovery-transaction.json',
+      '.player-playback-recovery-previous.json'
+    ]) {
+      const marker = path.join(fresh.directory, file)
+      fs.writeFileSync(marker, 'legacy marker')
+      assert.equal(requiresFirstLaunchModeSelection(fresh.directory), false,
+        `${file} must prevent first-run onboarding from replacing an existing profile`)
+      fs.rmSync(marker)
+    }
     writeOperatingModeConfiguration(fresh.directory, 'player')
     assert.equal(requiresFirstLaunchModeSelection(fresh.directory), false,
       'a selected mode must bypass first-launch selection on subsequent starts')
   } finally { fresh.cleanup() }
 })
 
-test('mode validation and capability composition cover Controller, Player and Combined', () => {
-  assert.equal(isOperatingMode('controller'), true)
+test('only Player and Combined are final operating modes; Controller is legacy input only', () => {
+  assert.equal(isOperatingMode('controller'), false)
   assert.equal(isOperatingMode('player'), true)
   assert.equal(isOperatingMode('combined'), true)
   for (const value of ['', 'Controller', 'remote', null, 1, {}]) assert.equal(isOperatingMode(value), false)
 
-  assert.deepEqual(getOperatingModeCapabilities('controller'), { controller: true, player: false })
+  assert.equal(resolveOperatingMode('controller'), 'combined')
+  assert.equal(resolveOperatingMode('player'), 'player')
+  assert.equal(resolveOperatingMode('combined'), 'combined')
   assert.deepEqual(getOperatingModeCapabilities('player'), { controller: false, player: true })
   assert.deepEqual(getOperatingModeCapabilities('combined'), { controller: true, player: true })
   assert.throws(() => getOperatingModeCapabilities('other' as never), OperatingModeConfigurationError)
 })
 
-test('each valid operating mode is persisted in the versioned configuration schema', () => {
-  for (const mode of ['controller', 'player', 'combined'] as const) {
+test('legacy Controller configuration reads without rewriting and resolves to Combined', () => {
+  const temp = profile()
+  try {
+    const filePath = path.join(temp.directory, OPERATING_MODE_CONFIGURATION_FILENAME)
+    const original = Buffer.from('{\n  "version": 1,\n  "mode": "controller"\n}\n')
+    fs.writeFileSync(filePath, original)
+
+    const configuration = readOperatingModeConfiguration(temp.directory)
+    assert.deepEqual(configuration, { version: 1, mode: 'controller' })
+    assert.equal(resolveOperatingMode(configuration.mode), 'combined')
+    assert.deepEqual(fs.readFileSync(filePath), original)
+  } finally { temp.cleanup() }
+})
+
+test('only final operating modes can be newly persisted in the versioned schema', () => {
+  for (const mode of ['player', 'combined'] as const) {
     const temp = profile()
     try {
       writeOperatingModeConfiguration(temp.directory, mode)
@@ -67,7 +95,7 @@ test('each valid operating mode is persisted in the versioned configuration sche
 test('atomic replacement leaves one complete configuration and ignores abandoned temporary files', () => {
   const temp = profile()
   try {
-    writeOperatingModeConfiguration(temp.directory, 'controller')
+    writeOperatingModeConfiguration(temp.directory, 'player')
     const filePath = path.join(temp.directory, OPERATING_MODE_CONFIGURATION_FILENAME)
     const staleTemporaryPath = path.join(temp.directory, `.operating-mode.${process.pid}.abandoned.tmp`)
     fs.writeFileSync(staleTemporaryPath, '{ partial')
@@ -110,6 +138,7 @@ test('invalid mode writes fail safely and preserve the existing configuration', 
     const filePath = path.join(temp.directory, OPERATING_MODE_CONFIGURATION_FILENAME)
     const original = fs.readFileSync(filePath)
     assert.throws(() => writeOperatingModeConfiguration(temp.directory, 'unknown' as never), OperatingModeConfigurationError)
+    assert.throws(() => writeOperatingModeConfiguration(temp.directory, 'controller' as never), OperatingModeConfigurationError)
     assert.deepEqual(fs.readFileSync(filePath), original)
   } finally { temp.cleanup() }
 })

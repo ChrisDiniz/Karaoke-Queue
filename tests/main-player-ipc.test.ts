@@ -26,7 +26,7 @@ const playerChannels = [
   'player:get-snapshot', 'player:lookup-code', 'player:play-now',
   'player:sequence:add', 'player:sequence:add-batch', 'player:sequence:remove',
   'player:sequence:remove-current', 'player:sequence:reorder', 'player:sequence:clear',
-  'player:mode:change', 'player:pause', 'player:resume', 'player:restart', 'player:stop',
+  'player:pause', 'player:resume', 'player:restart', 'player:stop',
   'player:next', 'player:previous', 'player:catalog:import', 'player:library:select-folder',
   'player:library:refresh', 'player:video:show', 'player:video:window-tip',
   'player-video:window-tip-dismissed', 'player:video:inline', 'player:video:inline-bounds',

@@ -11,14 +11,11 @@ import {
 export class SettingsView {
   private bound = false
   private unsubscribe: (() => void) | undefined
-  private requestedOperatingMode: 'controller' | 'player' = 'controller'
-  private modeChangeInProgress = false
 
   bind(): void {
     if (this.bound) return
     this.bound = true
     this.bindSidebarDisplayName()
-    this.bindOperatingMode()
     const bridge = window.karaokeUiScale
     if (!bridge) {
       this.showError('Não foi possível carregar as preferências de escala.')
@@ -181,71 +178,4 @@ export class SettingsView {
     })
   }
 
-  private bindOperatingMode(): void {
-    const controllerButton = document.getElementById('settings-mode-controller') as HTMLButtonElement | null
-    const playerButton = document.getElementById('settings-mode-player') as HTMLButtonElement | null
-    const combinedButton = document.getElementById('settings-mode-combined') as HTMLButtonElement | null
-    const changeButton = document.getElementById('settings-mode-change') as HTMLButtonElement | null
-    const status = document.getElementById('settings-mode-status')
-    if (!controllerButton || !playerButton || !combinedButton || !changeButton || !status) return
-
-    controllerButton.addEventListener('click', () => this.selectOperatingMode('controller'))
-    playerButton.addEventListener('click', () => this.selectOperatingMode('player'))
-    combinedButton.disabled = true
-    combinedButton.setAttribute('aria-disabled', 'true')
-    changeButton.addEventListener('click', () => { void this.changeOperatingMode() })
-    this.renderOperatingMode()
-  }
-
-  private selectOperatingMode(mode: 'controller' | 'player'): void {
-    if (this.modeChangeInProgress) return
-    this.requestedOperatingMode = mode
-    const status = document.getElementById('settings-mode-status')
-    if (status) { status.textContent = ''; status.dataset.state = '' }
-    this.renderOperatingMode()
-  }
-
-  private renderOperatingMode(): void {
-    const currentMode = 'controller'
-    for (const [mode, id] of [['controller', 'settings-mode-controller'], ['player', 'settings-mode-player'],
-      ['combined', 'settings-mode-combined']] as const) {
-      const button = document.getElementById(id) as HTMLButtonElement | null
-      if (!button) continue
-      const selected = this.requestedOperatingMode === mode
-      button.setAttribute('aria-checked', String(selected))
-      button.classList.toggle('is-selected', selected)
-      button.classList.toggle('is-current', currentMode === mode)
-      button.disabled = mode === 'combined' || (this.modeChangeInProgress && mode !== currentMode)
-    }
-    const changeButton = document.getElementById('settings-mode-change') as HTMLButtonElement | null
-    if (changeButton) changeButton.disabled = this.modeChangeInProgress || this.requestedOperatingMode === currentMode
-  }
-
-  private async changeOperatingMode(): Promise<void> {
-    if (this.modeChangeInProgress || this.requestedOperatingMode !== 'player') return
-    const preferences = window.karaokePreferences
-    const status = document.getElementById('settings-mode-status')
-    if (!preferences || !status) return
-    this.modeChangeInProgress = true
-    status.textContent = 'Salvando estado operacional antes da reinicialização…'
-    status.dataset.state = ''
-    this.renderOperatingMode()
-    try {
-      await preferences.changeOperatingMode('player')
-      status.textContent = 'O aplicativo será reiniciado para aplicar o modo Reprodutor.'
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      const messages: Record<string, string> = {
-        MODE_CHANGE_IN_PROGRESS: 'A troca de modo já está em andamento.',
-        MODE_CHANGE_OPERATION_IN_PROGRESS: 'Não foi possível confirmar a persistência. O modo atual foi mantido.',
-        MODE_CHANGE_UNAVAILABLE: 'A troca de modo não está disponível nesta execução.',
-        MODE_NOT_AVAILABLE: 'O modo Tudo em um ainda não está disponível.',
-        INVALID_OPERATING_MODE: 'O modo selecionado não está disponível.'
-      }
-      status.textContent = messages[detail] ?? 'Não foi possível alterar o modo. Os dados atuais foram preservados.'
-      status.dataset.state = 'error'
-      this.modeChangeInProgress = false
-      this.renderOperatingMode()
-    }
-  }
 }

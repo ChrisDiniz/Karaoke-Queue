@@ -162,16 +162,19 @@ async function runControllerCatalogRestart() {
   const profile = makeProfile('controller')
   writeMode(profile, 'controller')
   const imported = await seedCatalog(profile)
-  fs.writeFileSync(path.join(profile.userData, 'video-library.json'), '{invalid Player-only configuration')
+  const libraryPath = path.join(profile.userData, 'video-library.json')
+  const originalLibraryConfig = Buffer.from('{invalid legacy video-library configuration')
+  fs.writeFileSync(libraryPath, originalLibraryConfig)
   let app
   try {
     app = await launch(profile)
     const ready = await waitForRecord(profile, 'APP_READY')
-    assert.equal(ready.details.mode, 'controller')
+    assert.equal(ready.details.mode, 'combined')
     assert.equal(ready.details.catalogServiceInitialized, true)
-    assert.equal(ready.details.playerLibraryInitialized, false)
+    assert.equal(ready.details.playerLibraryInitialized, true)
     assert.equal(ready.details.operationalDatabaseInitialized, true)
-    assert.equal(readLogRecords(profile).some(record => record.event.startsWith('VIDEO_LIBRARY_SCAN_')), false)
+    assert.equal(readLogRecords(profile).some(record => record.event === 'VIDEO_LIBRARY_CONFIGURATION_INVALID'), true)
+    assert.deepEqual(fs.readFileSync(libraryPath), originalLibraryConfig)
     const previousRunId = ready.runId
     await closeController(app)
     app = undefined
@@ -179,6 +182,8 @@ async function runControllerCatalogRestart() {
     app = await launch(profile)
     const restarted = await waitForRecord(profile, 'APP_READY', previousRunId)
     assert.equal(restarted.details.catalogServiceInitialized, true)
+    assert.equal(restarted.details.mode, 'combined')
+    assert.deepEqual(fs.readFileSync(libraryPath), originalLibraryConfig)
     await closeController(app)
     app = undefined
 

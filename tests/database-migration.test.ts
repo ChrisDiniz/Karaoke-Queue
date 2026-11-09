@@ -5,6 +5,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { createKaraokeDatabase } from '../database'
+import {
+  createSqliteMigrationBackup,
+  restoreSqliteMigrationBackupToNewPath,
+  verifySqliteMigrationBackup
+} from '../src/sqlite-migration-backup'
 import { KaraokeApplication } from '../src/application'
 import { createStateRepository } from '../src/state-repository'
 
@@ -246,8 +251,72 @@ test('upgrades a schema-v5 profile with catalog metadata in place', () => {
         revision: 'a'.repeat(64), imported_at: '2026-01-02T03:04:05.000Z', record_count: 1, source_name: null
       })
     } finally { upgraded.close() }
+    const backupsDirectory = path.join(directory, 'migration-backups')
+    const manifests = fs.readdirSync(backupsDirectory).filter(name => name.endsWith('.json'))
+    assert.equal(manifests.length, 1, 'a migration snapshot must be published before modifying the schema')
+    const backupManifest = JSON.parse(fs.readFileSync(path.join(backupsDirectory, manifests[0]!), 'utf8'))
+    assert.equal(backupManifest.sourceFile, 'karaoke.sqlite')
+    assert.equal(backupManifest.sourceSchemaVersion, 5)
+    const backupPath = path.join(backupsDirectory, backupManifest.backupFile)
+    assert.equal(backupManifest.sha256, require('node:crypto').createHash('sha256').update(fs.readFileSync(backupPath)).digest('hex'))
+    const backup = new DatabaseSync(backupPath, { readOnly: true })
+    try {
+      assert.equal(backup.prepare('PRAGMA user_version').get()?.user_version, 5)
+      assert.deepEqual({ ...backup.prepare('SELECT revision, imported_at, record_count FROM music_catalog_metadata').get() }, {
+        revision: 'a'.repeat(64), imported_at: '2026-01-02T03:04:05.000Z', record_count: 1
+      })
+      assert.equal(backup.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok')
+    } finally { backup.close() }
+    const verified = verifySqliteMigrationBackup(backupsDirectory, manifests[0]!)
+    const restoredPath = path.join(directory, 'restored-karaoke.sqlite')
+    restoreSqliteMigrationBackupToNewPath(backupsDirectory, manifests[0]!, restoredPath)
+    assert.equal(fs.existsSync(restoredPath), true)
+    assert.throws(() => restoreSqliteMigrationBackupToNewPath(backupsDirectory, manifests[0]!, databasePath),
+      /SQLITE_RESTORE_DESTINATION_EXISTS/, 'restore must never overwrite the live database')
+    assert.equal(verified.backupPath, backupPath)
+    const currentAfterBlockedRestore = new DatabaseSync(databasePath, { readOnly: true })
+    try { assert.equal(currentAfterBlockedRestore.prepare('PRAGMA user_version').get()?.user_version, 6) }
+    finally { currentAfterBlockedRestore.close() }
   } finally {
     upgradedDatabase.close()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('SQLite migration backup snapshots committed WAL data, verifies checksum, and restores only to a new path', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-wal-backup-'))
+  const databasePath = path.join(directory, 'karaoke.sqlite')
+  const source = new DatabaseSync(databasePath)
+  source.exec('PRAGMA journal_mode = WAL; CREATE TABLE snapshot_probe (value TEXT NOT NULL); PRAGMA user_version = 0;')
+  const concurrentWriter = new DatabaseSync(databasePath)
+  try {
+    concurrentWriter.prepare('INSERT INTO snapshot_probe (value) VALUES (?)').run('committed-in-wal')
+    assert.ok(fs.statSync(`${databasePath}-wal`).size > 32, 'fixture must retain committed pages in an active WAL')
+    const manifest = createSqliteMigrationBackup({
+      database: source, databasePath, userDataDirectory: directory, sourceSchemaVersion: 0
+    })
+    const backupsDirectory = path.join(directory, 'migration-backups')
+    const verified = verifySqliteMigrationBackup(backupsDirectory, manifest.backupFile.replace(/\.sqlite$/, '.json'))
+    const backup = new DatabaseSync(verified.backupPath, { readOnly: true })
+    try {
+      assert.equal(backup.prepare('SELECT value FROM snapshot_probe').get()?.value, 'committed-in-wal')
+      assert.equal(backup.prepare('PRAGMA integrity_check').get()?.integrity_check, 'ok')
+    } finally { backup.close() }
+
+    const restoredPath = path.join(directory, 'wal-restore.sqlite')
+    restoreSqliteMigrationBackupToNewPath(backupsDirectory, manifest.backupFile.replace(/\.sqlite$/, '.json'), restoredPath)
+    const restored = new DatabaseSync(restoredPath, { readOnly: true })
+    try { assert.equal(restored.prepare('SELECT value FROM snapshot_probe').get()?.value, 'committed-in-wal') }
+    finally { restored.close() }
+
+    fs.appendFileSync(verified.backupPath, 'tamper')
+    assert.throws(() => verifySqliteMigrationBackup(backupsDirectory, manifest.backupFile.replace(/\.sqlite$/, '.json')),
+      /SQLITE_BACKUP_CHECKSUM_MISMATCH/)
+    assert.equal(source.prepare('SELECT value FROM snapshot_probe').get()?.value, 'committed-in-wal',
+      'backup and restore operations must leave the source intact')
+  } finally {
+    concurrentWriter.close()
+    source.close()
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })

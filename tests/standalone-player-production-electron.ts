@@ -338,6 +338,87 @@ async function assertStandaloneInputFocus(page, app) {
   assert.equal(documentFocused, true, 'O documento Standalone deve continuar sendo o destino dos atalhos.')
 }
 
+async function clickStandaloneSurface(page, app, x, y) {
+  if (process.platform !== 'win32') {
+    await page.mouse.click(x, y)
+    return
+  }
+
+  await page.evaluate(() => {
+    window.__e0NativeMouseTrace = []
+    document.addEventListener('mousedown', event => {
+      window.__e0NativeMouseTrace.push({ trusted: event.isTrusted, x: event.clientX, y: event.clientY })
+    }, { capture: true, once: true })
+  })
+  const target = await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows().find(candidate => candidate.webContents.getURL().includes('standalone-player.html'))
+    if (!win || win.isDestroyed()) throw new Error('A janela Standalone não está disponível para clique nativo.')
+    win.show()
+    win.focus()
+    return { hwnd: win.getNativeWindowHandle().readBigUInt64LE(0).toString(16), pid: process.pid }
+  })
+  const nativeClick = String.raw`
+using System;
+using System.Runtime.InteropServices;
+public static class KqNativeMouseClick {
+  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X; public int Y; }
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)] public struct HARDWAREINPUT { public uint uMsg; public ushort wParamL; public ushort wParamH; }
+  [StructLayout(LayoutKind.Explicit)] public struct INPUTUNION {
+    [FieldOffset(0)] public MOUSEINPUT mi;
+    [FieldOffset(0)] public KEYBDINPUT ki;
+    [FieldOffset(0)] public HARDWAREINPUT hi;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public INPUTUNION data; }
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool GetClientRect(IntPtr handle, out RECT rect);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool ClientToScreen(IntPtr handle, ref POINT point);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint GetDpiForWindow(IntPtr handle);
+  [DllImport("user32.dll", SetLastError=true)] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint count, INPUT[] inputs, int size);
+  [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
+  public static uint Click() {
+    INPUT[] inputs = new INPUT[2];
+    inputs[0].type = 0; inputs[0].data.mi.dwFlags = 0x0002;
+    inputs[1].type = 0; inputs[1].data.mi.dwFlags = 0x0004;
+    uint sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+    if (sent != inputs.Length) throw new InvalidOperationException("SendInput aceitou " + sent + " de " + inputs.Length + " eventos; erro=" + Marshal.GetLastWin32Error());
+    return sent;
+  }
+}
+`
+  const command = [
+    "$ErrorActionPreference = 'Stop'",
+    '$targetPid = ' + String(target.pid),
+    '$targetHandle = [IntPtr]([Convert]::ToInt64("' + target.hwnd + '", 16))',
+    '$cssX = ' + String(x),
+    '$cssY = ' + String(y),
+    'Add-Type -TypeDefinition @\'' + nativeClick + "'@",
+    '$windowPid = [uint32]0; [void][KqNativeMouseClick]::GetWindowThreadProcessId($targetHandle, [ref]$windowPid)',
+    'if ($targetHandle -eq [IntPtr]::Zero -or $windowPid -ne $targetPid) { throw "O HWND não pertence ao processo Electron Standalone esperado." }',
+    '$rect = New-Object KqNativeMouseClick+RECT; if (-not [KqNativeMouseClick]::GetClientRect($targetHandle, [ref]$rect)) { throw "GetClientRect falhou." }',
+    '$scale = [KqNativeMouseClick]::GetDpiForWindow($targetHandle) / 96.0',
+    '$point = New-Object KqNativeMouseClick+POINT; $point.X = [int][Math]::Round($cssX * $scale); $point.Y = [int][Math]::Round($cssY * $scale)',
+    'if ($point.X -lt 0 -or $point.Y -lt 0 -or $point.X -ge $rect.Right -or $point.Y -ge $rect.Bottom) { throw "O ponto CSS solicitado está fora da área cliente nativa." }',
+    'if (-not [KqNativeMouseClick]::ClientToScreen($targetHandle, [ref]$point)) { throw "ClientToScreen falhou." }',
+    'if (-not [KqNativeMouseClick]::SetCursorPos($point.X, $point.Y)) { throw "SetCursorPos falhou." }',
+    '$sent = [KqNativeMouseClick]::Click()',
+    '$foreground = [KqNativeMouseClick]::GetForegroundWindow(); $foregroundPid = [uint32]0; [void][KqNativeMouseClick]::GetWindowThreadProcessId($foreground, [ref]$foregroundPid)',
+    'if ($foreground -ne $targetHandle -or $foregroundPid -ne $targetPid) { throw "O clique nativo não ativou a janela Standalone esperada." }',
+    'Write-Output ("NATIVE_MOUSE_CLICK_PASS events=" + $sent + " dpi=" + [KqNativeMouseClick]::GetDpiForWindow($targetHandle))'
+  ].join('\n')
+  const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-Command', command], {
+    encoding: 'utf8', timeout: 10000, shell: false, windowsHide: true
+  })
+  writeProgress(`native mouse click exit=${result.status} stdout=${result.stdout?.trim() ?? ''}`)
+  if (result.error || result.status !== 0) {
+    throw new Error(`Não foi possível clicar na superfície Standalone com entrada nativa: ${result.stderr || result.error || result.status}`)
+  }
+  await page.waitForFunction(() => window.__e0NativeMouseTrace?.some(event => event.trusted), undefined, { timeout: 5000 })
+}
+
 async function captureComposite(page, app, screenshotRoot, name) {
   await waitForIntegratedPlaybackSurface(app, true)
   const outputPath = path.join(screenshotRoot, name)
@@ -1377,7 +1458,7 @@ async function run() {
       'O MP4 precisa continuar avançando visualmente atrás do painel Adicionar.')
     const addComposite = await captureComposite(page, app, screenshotRoot,
       'regression-playing-add-panel-1280x800.png')
-    await page.mouse.click(640, 400)
+    await clickStandaloneSurface(page, app, 640, 400)
     await assertStandaloneInputFocus(page, app)
     await page.keyboard.press('Escape')
     await page.locator('#standalone-playing-panel').waitFor({ state: 'hidden' })
@@ -1467,7 +1548,7 @@ async function run() {
       window.__resumeIndicatorObserver = new MutationObserver(capture)
       window.__resumeIndicatorObserver.observe(element, { attributes: true, attributeFilter: ['hidden', 'data-confirmed'] })
     })
-    await page.mouse.click(640, 400)
+    await clickStandaloneSurface(page, app, 640, 400)
     await assertStandaloneInputFocus(page, app)
     await page.keyboard.press('Space')
     await waitForSnapshot(page, snapshot => snapshot.playbackCondition === 'ready' &&
@@ -1842,13 +1923,13 @@ async function run() {
     await page.locator('#standalone-queue').waitFor({ state: 'visible' })
     await waitForIntegratedPlaybackSurface(app, true)
     const focusMediaBefore = await playbackHostState(app)
-    await page.mouse.click(640, 400)
+    await clickStandaloneSurface(page, app, 640, 400)
     await assertStandaloneInputFocus(page, app)
     await page.keyboard.press('Space')
     await waitForSnapshot(page, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.operationalState === 'paused',
       'Espaço deve continuar funcionando após o primeiro clique sobre o vídeo.')
     await page.locator('#standalone-paused-indicator').waitFor({ state: 'visible' })
-    await page.mouse.click(640, 400)
+    await clickStandaloneSurface(page, app, 640, 400)
     await assertStandaloneInputFocus(page, app)
     await page.keyboard.press('Space')
     await waitForSnapshot(page, snapshot => snapshot.playbackCondition === 'ready' && snapshot.state.operationalState === 'playing',
@@ -1856,7 +1937,7 @@ async function run() {
     await page.locator('#standalone-resuming-indicator').waitFor({ state: 'visible' })
     await page.locator('#standalone-resuming-indicator').waitFor({ state: 'hidden' })
     await page.locator('#standalone-queue').waitFor({ state: 'visible' })
-    await page.mouse.click(640, 400)
+    await clickStandaloneSurface(page, app, 640, 400)
     await assertStandaloneInputFocus(page, app)
     await page.keyboard.press('i')
     await page.locator('#standalone-current-track-info').waitFor({ state: 'visible' })
@@ -1865,11 +1946,11 @@ async function run() {
     await page.keyboard.press('Escape')
     await page.locator('#standalone-current-track-info').waitFor({ state: 'hidden' })
     await page.locator('#standalone-queue').waitFor({ state: 'visible' })
-    await page.mouse.click(640, 400)
+    await clickStandaloneSurface(page, app, 640, 400)
     await assertStandaloneInputFocus(page, app)
     await page.keyboard.type('1001')
     await page.locator('#standalone-playing-panel').waitFor({ state: 'visible' })
-    await page.mouse.click(640, 400)
+    await clickStandaloneSurface(page, app, 640, 400)
     await assertStandaloneInputFocus(page, app)
     await page.keyboard.press('Escape')
     await page.locator('#standalone-playing-panel').waitFor({ state: 'hidden' })
@@ -1878,7 +1959,7 @@ async function run() {
     assert.ok(focusMediaAfterClicks.currentTime > focusMediaBefore.currentTime,
       'Cliques nos overlays e no vídeo não podem reiniciar, pausar ou congelar o MP4.')
 
-    await page.mouse.click(640, 400)
+    await clickStandaloneSurface(page, app, 640, 400)
     await assertStandaloneInputFocus(page, app)
     await page.keyboard.press('Control+ArrowRight')
     const focusedNext = await waitForSnapshot(page, snapshot => snapshot.playbackCondition === 'ready' &&

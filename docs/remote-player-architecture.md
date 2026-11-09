@@ -696,3 +696,13 @@ As decisões funcionais aprovadas nas Fases 1–4 estão incorporadas: bloqueio 
 - Electron Builder: [alternate FFmpeg sem codecs proprietários](https://www.electron.build/docs/api/app-builder-lib.interface.commonconfiguration/).
 - mpv: [manual/API/JSON IPC](https://mpv.io/manual/stable/), [compilação Windows v0.41](https://github.com/mpv-player/mpv/blob/v0.41.0/DOCS/compile-windows.md), [licença v0.41](https://github.com/mpv-player/mpv/blob/v0.41.0/Copyright).
 - VideoLAN: [libVLC, plataformas e licença declarada](https://images.videolan.org/vlc/libvlc.html).
+
+## 22. Execução E0-01/02/03 — 2026-11-08
+
+`OperatingMode` agora representa somente as funções finais `player` e `combined`. `readOperatingModeConfiguration()` ainda aceita o rótulo persistido `controller` e o fallback legado sem arquivo; `resolveOperatingMode()` transforma ambos em `combined` em memória. A leitura não regrava `operating-mode.json` nem abre um fluxo de migração de SQLite. Novas gravações aceitam apenas `player`/`combined`. A capability `controller` continua descrevendo a Gestão interna, que mantém `KaraokeApplication`, `MainManagementHost`, repository, IPC autorizado e `karaoke.sqlite` sob a autoridade única do Main.
+
+O Welcome de primeira abertura mostra somente Reprodutor e Tudo em um conforme `rKUlA0rV8m`, com janela 1280×800. A seleção é persistida e usada no restart. A troca normal foi removida das Configurações e dos canais de Management/Player em Preload/IPC, conforme A7; alterações futuras pertencem exclusivamente à manutenção do instalador. O segundo passo de biblioteca/catálogo permanece em E1.
+
+Combined inicializa o runtime local de mídia já existente. Se `video-library.json` for inválido/inacessível como configuração, o Main registra `VIDEO_LIBRARY_CONFIGURATION_INVALID`, conserva os bytes, usa uma biblioteca vazia e continua inicialização da Gestão. Player continua bloqueando configuração inválida. Esse fallback não corrige, regrava ou migra o arquivo. Electron real com SQLite temporário validou perfil Controller legado, restart com fila/sessão, escolha das duas funções, fallback de biblioteca e regressões de Gestão/Player.
+
+E0-03 e a campanha técnica obrigatória passaram. O runner Windows oficial passou no fingerprint `0cb00f62bfe6787775b53d354457299a78ae4df2f9ecf383edba6ccc2a74113d` para modos/Gestão e para Player de produção com MP4/SQLite isolados. Build NSIS local, verificação ASAR e smoke do executável empacotado também passaram; o installer não foi instalado ou publicado. E0 aguarda revisão/aprovação explícita do proprietário, incluindo aceitação visual final da remoção do seletor das Configurações. E1–E5 permanecem não iniciadas.

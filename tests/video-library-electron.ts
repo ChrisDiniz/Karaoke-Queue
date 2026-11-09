@@ -6,7 +6,6 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { spawn, spawnSync } = require('node:child_process')
 const { _electron: electron } = require('playwright')
 const { writeVideoLibraryConfiguration } = require('../src/video-library-configuration')
 const { createKaraokeDatabase } = require('../database')
@@ -154,22 +153,23 @@ async function closeController(app) {
   } finally { await app.close().catch(() => {}) }
 }
 
-async function runControllerSkipsPlayerConfiguration() {
-  const profile = makeProfile('controller-only')
-  const mediaRoot = path.join(profile.root, 'media')
-  fs.mkdirSync(mediaRoot, { recursive: true })
-  fs.writeFileSync(path.join(mediaRoot, '00001.mp4'), '')
+async function runLegacyControllerInvalidLibraryKeepsManagementAvailable() {
+  const profile = makeProfile('legacy-controller-invalid-library')
   writeMode(profile, 'controller')
-  fs.writeFileSync(path.join(profile.userData, 'video-library.json'), '{invalid Player-only configuration')
+  const configPath = path.join(profile.userData, 'video-library.json')
+  const originalConfig = Buffer.from('{invalid legacy video-library configuration')
+  fs.writeFileSync(configPath, originalConfig)
   let app
   try {
     app = await launch(profile)
     const ready = await waitForRecord(profile, 'APP_READY')
-    assert.equal(ready.details.mode, 'controller')
-    assert.equal(ready.details.playerLibraryInitialized, false)
+    assert.equal(ready.details.mode, 'combined')
+    assert.equal(ready.details.playerLibraryInitialized, true)
     assert.equal(ready.details.operationalDatabaseInitialized, true)
-    assert.equal(readRecords(profile).some(record => record.event.startsWith('VIDEO_LIBRARY_SCAN_')), false,
-      'Controller-only startup must not load or scan Player library state')
+    assert.equal(readRecords(profile).some(record => record.event === 'VIDEO_LIBRARY_CONFIGURATION_INVALID'), true,
+      'Combined must report invalid optional media configuration instead of ignoring it')
+    assert.deepEqual(fs.readFileSync(configPath), originalConfig,
+      'legacy Combined startup must preserve invalid media configuration for explicit repair')
     assert.equal(fs.existsSync(path.join(profile.userData, 'karaoke.sqlite')), true)
     assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1)
   } finally { await closeController(app) }
@@ -285,51 +285,29 @@ async function runInvalidLibraryConfigurationPreservesOperationalData() {
   seeded.close()
   const databasePath = path.join(profile.userData, 'karaoke.sqlite')
   const beforeHash = crypto.createHash('sha256').update(fs.readFileSync(databasePath)).digest('hex')
-  fs.writeFileSync(path.join(profile.userData, 'video-library.json'), '{invalid library configuration')
-  let child
-
+  const configPath = path.join(profile.userData, 'video-library.json')
+  const originalConfig = Buffer.from('{invalid library configuration')
+  fs.writeFileSync(configPath, originalConfig)
+  let app
   try {
-    const electronArgs = [
-      ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
-      '--disable-gpu', projectRoot, `--user-data-dir=${profile.userData}`
-    ]
-    child = spawn(electronPath, electronArgs, {
-      env: profile.env,
-      stdio: 'ignore',
-      detached: process.platform !== 'win32'
-    })
-    await new Promise((resolve, reject) => {
-      child.once('spawn', resolve)
-      child.once('error', reject)
-    })
-
-    const rejected = await waitForRecord(profile, 'APP_INITIALIZATION_FAILED')
-    assert.equal(rejected.level, 'FATAL')
-    assert.equal(readRecords(profile).some(record => record.event === 'APP_READY'), false,
-      'invalid Player configuration must stop Combined before operational startup')
+    app = await launch(profile)
+    const ready = await waitForRecord(profile, 'APP_READY')
+    assert.equal(ready.details.mode, 'combined')
+    assert.equal(ready.details.operationalDatabaseInitialized, true,
+      'invalid optional media configuration must not prevent Management startup')
+    assert.equal(readRecords(profile).some(record => record.event === 'VIDEO_LIBRARY_CONFIGURATION_INVALID'), true)
+    assert.deepEqual(fs.readFileSync(configPath), originalConfig,
+      'invalid media configuration must remain available for explicit repair')
     const afterHash = crypto.createHash('sha256').update(fs.readFileSync(databasePath)).digest('hex')
     assert.equal(afterHash, beforeHash,
-      'invalid Player configuration must not open, migrate, or mutate existing Controller SQLite data')
-  } finally {
-    if (child?.pid && child.exitCode === null && child.signalCode === null) {
-      const exited = new Promise(resolve => child.once('exit', resolve))
-      if (process.platform === 'win32') {
-        const result = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-          stdio: 'ignore', windowsHide: true
-        })
-        if (result.status !== 0) child.kill('SIGTERM')
-      } else {
-        try { process.kill(-child.pid, 'SIGKILL') } catch { child.kill('SIGKILL') }
-      }
-      await exited
-    }
-  }
+      'Combined startup with invalid media configuration must not mutate existing operational SQLite data')
+  } finally { await closeController(app) }
 }
 
 async function run() {
   try {
-    await runControllerSkipsPlayerConfiguration()
-    process.stdout.write('VIDEO_LIBRARY PASS Controller ignores Player-only library configuration\n')
+    await runLegacyControllerInvalidLibraryKeepsManagementAvailable()
+    process.stdout.write('VIDEO_LIBRARY PASS legacy Controller resolves to Combined and preserves invalid media configuration\n')
     await runPlayerScanAndRestart()
     process.stdout.write('VIDEO_LIBRARY PASS Player scan, no Controller database/UI, and restart reconstruction\n')
     await runCombinedReusesControllerAndPlayerOwnership()

@@ -8,36 +8,99 @@
   <title>Karaoke Queue · Configuração inicial</title>
 </head>
 <body>
-  <main class="welcome-shell">
-    <header class="welcome-brand"><img src="assets/karaoke-logo.png" alt=""><span>Karaoke Queue</span></header>
-    <section class="welcome-content">
-      <p class="welcome-kicker">CONFIGURAÇÃO INICIAL</p>
-      <h1>Como deseja usar o Karaoke Queue?</h1>
-      <p class="welcome-intro">Escolha como este computador será utilizado. Você poderá alterar o modo depois nas Configurações.</p>
-      <div class="mode-options" role="radiogroup" aria-label="Modo de operação">
-        <button class="mode-card" type="button" role="radio" aria-checked="false" data-mode="controller">
-          <span class="mode-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4zM8 9h3M8 13h3M15 9h1m-1 4h1"/></svg></span>
-          <span class="mode-copy"><strong>Controlador</strong><span>Gerencie a fila, as mesas e as sessões. A integração com um Reprodutor em outro computador será disponibilizada em uma etapa futura.</span><small>Ideal para computadores separados para a fila e a reprodução.</small></span>
-          <span class="mode-check" aria-hidden="true">✓</span>
-        </button>
-        <button class="mode-card" type="button" role="radio" aria-checked="false" data-mode="player">
-          <span class="mode-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4m-2-9 5-2.5L10 7z"/></svg></span>
-          <span class="mode-copy"><strong>Reprodutor</strong><span>Reproduza vídeos neste computador. Escolha músicas manualmente pelo código; os comandos pela rede serão disponibilizados em uma etapa futura.</span><small>Ideal para o computador conectado à TV ou ao projetor.</small></span>
-          <span class="mode-check" aria-hidden="true">✓</span>
-        </button>
-        <button class="mode-card" type="button" role="radio" aria-checked="false" data-mode="combined">
-          <span class="mode-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="13" height="11" rx="1.5"/><rect x="15.5" y="8" width="6" height="10" rx="1.2"/><path d="M6 19h6m-3-4v4m6-6h1.5"/></svg></span>
-          <span class="mode-copy"><strong>Tudo em um</strong><span>Gerencie a fila e reproduza as músicas no mesmo computador. O vídeo abre em uma janela independente para outra tela.</span><small>Ideal para operar o karaokê inteiro com apenas um computador.</small></span>
-          <span class="mode-check" aria-hidden="true">✓</span>
-        </button>
-      </div>
-      <div class="welcome-footer">
-        <p>O modo escolhido ficará salvo neste computador.</p>
-        <div><button id="welcome-cancel" class="welcome-cancel" type="button">Cancelar</button><button id="welcome-continue" class="welcome-continue" type="button" disabled>Continuar</button></div>
-      </div>
-      <p id="welcome-error" class="welcome-error" role="alert" hidden></p>
+  <main class="welcome" id="welcome-mode-page">
+    <header class="topbar">
+      <div class="brand"><img src="assets/karaoke-logo.png" alt="" aria-hidden="true"><span>Karaoke Queue</span></div>
+      <span class="first-run">Configuração inicial</span>
+    </header>
+    <section class="intro" aria-labelledby="welcome-title">
+      <span class="eyebrow">Bem-vindo</span>
+      <h1 id="welcome-title">Como deseja usar o Karaoke Queue?</h1>
+      <p class="subtitle">Escolha como este computador vai funcionar no karaokê. Alterações posteriores serão feitas pela manutenção do instalador.</p>
     </section>
+    <div class="mode-grid" role="radiogroup" aria-label="Modo de operação">
+      <button class="mode-card" type="button" role="radio" aria-checked="false" data-mode="player">
+        <span class="radio-mark" aria-hidden="true"></span>
+        <span class="mode-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"></rect><path d="M8 21h8m-4-4v4"></path><path d="m10 8 5 2.5-5 2.5z"></path></svg>
+        </span>
+        <span class="mode-title">Reprodutor</span>
+        <span class="mode-description">Reproduza vídeos localmente, adicione músicas pelo teclado ou receba comandos remotamente de outra instância.</span>
+        <span class="card-rule" aria-hidden="true"></span>
+      </button>
+      <button class="mode-card" type="button" role="radio" aria-checked="false" data-mode="combined">
+        <span class="radio-mark" aria-hidden="true"></span>
+        <span class="mode-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="15" rx="2"></rect><path d="M5.5 8h5m-5 3h5"></path><path d="m15 8 4 2.5-4 2.5z"></path><path d="M8 22h8m-4-3v3"></path></svg>
+        </span>
+        <span class="mode-title">Tudo em um</span>
+        <span class="mode-description">Gerencie a fila, as mesas e as sessões e reproduza localmente em uma janela para outra tela. Também controle remotamente outro Reprodutor instalado em outra máquina.</span>
+        <span class="card-rule" aria-hidden="true"></span>
+      </button>
+    </div>
+    <footer class="footer">
+      <p class="saved-note"><span class="info-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 11v5m0-8h.01"></path></svg></span><span>O modo escolhido ficará salvo neste computador. Alterações posteriores serão feitas pela manutenção do instalador.</span></p>
+      <div class="actions">
+        <button class="continue" id="welcome-continue" type="button" disabled>Continuar<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"></path></svg></button>
+      </div>
+    </footer>
+    <p id="welcome-error" class="welcome-error" role="alert" hidden></p>
   </main>
+  <section class="setup" id="welcome-setup-page" hidden>
+    <header class="setup-topbar">
+      <div class="brand"><img src="assets/karaoke-logo.png" alt="" aria-hidden="true"><span>Karaoke Queue</span></div>
+      <span class="step-label">Configuração inicial</span>
+    </header>
+    <main class="setup-main">
+      <section class="hero">
+        <span class="kicker">Acervo e catálogo</span>
+        <h1>Configure os vídeos e o catálogo de músicas</h1>
+        <p class="hero-copy">Selecione a pasta que contém os vídeos. Se quiser, adicione um catálogo CSV para exibir títulos e artistas.</p>
+      </section>
+      <section class="cards" aria-label="Configuração do acervo e catálogo">
+        <article class="setup-card" aria-labelledby="library-title">
+          <div class="card-heading">
+            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 6.5h6l2 2h9v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11Z"></path><path d="M3.5 8.5h17"></path></svg></span>
+            <div class="card-heading-copy">
+              <div class="card-title-row"><h2 id="library-title">Biblioteca de vídeos</h2><span class="tag">Necessária para reprodução local</span></div>
+              <p class="card-description">Selecione a pasta que contém os vídeos utilizados na reprodução das músicas.</p>
+            </div>
+          </div>
+          <div class="divider"></div>
+          <label class="field-label" for="welcome-library-value">Pasta dos vídeos</label>
+          <div class="select-row">
+            <div class="selected-value" id="welcome-library-value" aria-label="Pasta dos vídeos não selecionada"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11Z"></path><path d="M3.5 8.5h17"></path></svg><span>Nenhuma pasta selecionada</span></div>
+            <button class="select-button" id="welcome-library-choose" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Selecionar pasta</button>
+          </div>
+          <p class="card-hint"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 10.5v5M12 7.5h.01"></path></svg><span>Sem biblioteca local, os vídeos não poderão ser reproduzidos neste computador.</span></p>
+        </article>
+        <article class="setup-card" aria-labelledby="catalog-title">
+          <div class="card-heading">
+            <span class="card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 3.5h8l4 4v13H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"></path><path d="M14 3.5v5h5M8 13h8M8 16.5h8"></path></svg></span>
+            <div class="card-heading-copy">
+              <div class="card-title-row"><h2 id="catalog-title">Catálogo de músicas</h2><span class="tag optional">Opcional</span></div>
+              <p class="card-description">Importe um arquivo CSV para exibir títulos e artistas. O catálogo não contém vídeos.</p>
+            </div>
+          </div>
+          <div class="divider"></div>
+          <label class="field-label" for="welcome-catalog-value">Arquivo CSV</label>
+          <div class="select-row">
+            <div class="selected-value" id="welcome-catalog-value" aria-label="Arquivo CSV não selecionado"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4v13H6a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z"></path><path d="M14 3.5v5h5M8 13h8M8 16.5h8"></path></svg><span>Nenhum catálogo selecionado</span></div>
+            <button class="select-button" id="welcome-catalog-choose" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Selecionar CSV</button>
+          </div>
+          <p class="card-hint"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 10.5v5M12 7.5h.01"></path></svg><span>A reprodução por código funciona mesmo sem catálogo.</span></p>
+        </article>
+      </section>
+    </main>
+    <footer class="setup-footer">
+      <p class="footer-note"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 10.5v5M12 7.5h.01"></path></svg><span>Você pode configurar a biblioteca e o catálogo depois em Configurações.</span></p>
+      <div class="actions">
+        <button class="button button-secondary" id="welcome-configure-later" type="button">Configurar depois</button>
+        <button class="button button-primary" id="welcome-setup-continue" type="button" disabled>Continuar<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg></button>
+      </div>
+      <p id="welcome-setup-error" class="setup-error" role="alert" hidden></p>
+    </footer>
+  </section>
   <script src="welcome-renderer.bundle.js"></script>
 </body>
 </html>
