@@ -41,7 +41,7 @@ async function prove(addonPath, scratchRoot) {
     fs.writeFileSync(manifest, '{}')
     const aclInclude = path.join(scratchRoot, 'file-acl.nsh')
     fs.writeFileSync(aclInclude, fs.readFileSync(path.join(__dirname, '../build-resources/installation-fence.nsh'), 'utf8')
-      .replace('S-1-5-32-544', sid)
+      .replace('${AndIf} $8 != "S-1-5-18"', '${AndIf} $8 != "S-1-5-18"\n  ${AndIf} $8 != "'+sid+'"')
       .replace('(A;ID;0x001200a9;;;AU)', `(A;ID;0x001200a9;;;AU)(A;ID;FA;;;${sid})`)
       .replace('(A;OICI;0x001200a9;;;AU)', `(A;OICI;0x001200a9;;;AU)(A;OICI;FA;;;${sid})`))
     const nsi = path.join(scratchRoot, 'file-acl.nsi'), image = path.join(scratchRoot, 'file-acl.exe')
@@ -59,6 +59,10 @@ SectionEnd
 `)
     const compile = spawnSync(compiler.path, ['/V2', nsi], { encoding: 'utf8', env: { ...process.env, ...(compiler.env || {}) } })
     assert.equal(compile.status, 0, compile.stdout + compile.stderr)
+    const readback = spawnSync('powershell.exe', ['-NoProfile', '-Command',
+      '& { param($p) Get-Acl -LiteralPath $p | Select-Object Owner,Sddl | ConvertTo-Json -Compress }', manifest], { encoding: 'utf8' })
+    assert.equal(readback.status, 0, readback.stderr)
+    console.log('NSIS FILE ACL FIXTURE READBACK '+readback.stdout.trim())
     const status = spawnSync(image, ['/S'], { timeout: 30000 }).status
     assert.equal(status, 0, 'NSIS accepts actual inherited file DACL without AI bookkeeping')
     const invalid = spawnSync('icacls.exe', [manifest, '/inheritance:r'], { encoding: 'utf8' })
