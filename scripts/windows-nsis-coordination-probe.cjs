@@ -60,7 +60,9 @@ SectionEnd
     const compile = spawnSync(compiler.path, ['/V2', nsi], { encoding: 'utf8', env: { ...process.env, ...(compiler.env || {}) } })
     assert.equal(compile.status, 0, compile.stdout + compile.stderr)
     const readback = spawnSync('powershell.exe', ['-NoProfile', '-Command',
-      'Get-Acl -LiteralPath $env:KQ_ACL_READBACK_FILE | Select-Object Owner,Sddl | ConvertTo-Json -Compress'],
+      `$ErrorActionPreference='Stop'; $acl=[IO.File]::GetAccessControl($env:KQ_ACL_READBACK_FILE);
+      [ordered]@{ Owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value;
+      Sddl=$acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Owner -bor [Security.AccessControl.AccessControlSections]::Access) } | ConvertTo-Json -Compress`],
       { encoding: 'utf8', env: { ...process.env, KQ_ACL_READBACK_FILE: manifest } })
     assert.equal(readback.status, 0, readback.stderr)
     assert.ok(JSON.parse(readback.stdout).Sddl, 'readback must contain the actual descriptor')
