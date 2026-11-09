@@ -174,7 +174,7 @@ FunctionEnd
 Function un.KQ_TakeUninstallMutexes
   System::Call 'kernel32::WaitForSingleObject(p $KQUninstallAdminMutexHandle, i 30000) i.r0'
   ${If} $0 != 0
-    ${If} $0 == 0x80
+    ${If} $0 == 128
       System::Call 'kernel32::ReleaseMutex(p $KQUninstallAdminMutexHandle) i.r1'
     ${EndIf}
     Call un.KQ_AbortUninstallBusy
@@ -182,7 +182,7 @@ Function un.KQ_TakeUninstallMutexes
   StrCpy $KQUninstallAdminMutexOwned "1"
   System::Call 'kernel32::WaitForSingleObject(p $KQUninstallRuntimeMutexHandle, i 30000) i.r0'
   ${If} $0 != 0
-    ${If} $0 == 0x80
+    ${If} $0 == 128
       System::Call 'kernel32::ReleaseMutex(p $KQUninstallRuntimeMutexHandle) i.r1'
     ${EndIf}
     Call un.KQ_AbortUninstallBusy
@@ -423,7 +423,7 @@ FunctionEnd
 Function KQ_TakeMaintenanceMutexes
   System::Call 'kernel32::WaitForSingleObject(p $KQAdminMutexHandle, i 0) i.r0'
   ${If} $0 != 0
-    ${If} $0 == 0x80
+    ${If} $0 == 128
       System::Call 'kernel32::ReleaseMutex(p $KQAdminMutexHandle) i.r1'
     ${EndIf}
     Call KQ_AbortUnsafeInstallationState
@@ -431,7 +431,7 @@ Function KQ_TakeMaintenanceMutexes
   StrCpy $KQAdminMutexOwned "1"
   System::Call 'kernel32::WaitForSingleObject(p $KQRuntimeMutexHandle, i 0) i.r0'
   ${If} $0 != 0
-    ${If} $0 == 0x80
+    ${If} $0 == 128
       System::Call 'kernel32::ReleaseMutex(p $KQRuntimeMutexHandle) i.r1'
     ${EndIf}
     Call KQ_AbortUnsafeInstallationState
@@ -440,7 +440,7 @@ Function KQ_TakeMaintenanceMutexes
   System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR") i.r0'
   ${If} $0 != -1
     IntOp $1 $0 & 0x410
-    ${If} $1 != 0x10
+    ${If} $1 != 16
       SetErrorLevel 2
       Abort "O diretório da aplicação não é confiável."
     ${EndIf}

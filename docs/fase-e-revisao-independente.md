@@ -467,3 +467,20 @@ Correção somente de E2E: aguardar viewport Renderer 1280x800 e confirmar zoom 
 - Reexecução hosted e Windows/NSIS desta rodada: **NOT RUN**. Mudança restrita aos testes Linux, sem repetir campanhas Windows sem dependência; o próximo CI deve gerar novo pacote/selo porque testes fazem parte dos inputs. O candidato anterior é histórico. Não se declara estabilidade hosted comprovada por um PASS local.
 
 Sem novas funcionalidades, dispatch manual, PR novo, instalação operacional ou Release. S1 PARTIAL, E1–E5 sem homologação; autorização de commit/push do acompanhamento preservada.
+
+
+## 17. Readback do manifesto, atributos NSIS e lifecycle da DLL — 2026-11-09
+
+A execução [42584134942](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42584134942), HEAD `e63ead7b7110c3843f0432de15ed1d003220380c`, passou Linux e build/verificador/provas Windows, mas o preflight empacotado recusou o manifesto com Win32 1336; cleanup posterior também falhou. Diagnóstico nativo em fixture temporária comprovou que o arquivo tem os ACEs herdados corretos **sem** o bit de controle AI, antes e depois de alterar seu proprietário. Portanto a hipótese de que setowner alterava os grants não se confirmou. O comparador literal exigia metadado de propagação além das permissões.
+
+Correção compartilhada entre C e NSIS: remover somente `SE_DACL_AUTO_INHERITED` dos descritores privados de readback/esperado antes da comparação exata. Não modifica ACL no filesystem, owner, SID, ordem/tipo/máscara dos ACEs, herança ID nem proteção P. Diretórios continuam exigindo descritor protegido exato; owner SY/BA continua obrigatório. APIs: [controle do descritor](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-descriptor-control) e [SetSecurityDescriptorControl](https://learn.microsoft.com/en-us/windows/win32/api/securitybaseapi/nf-securitybaseapi-setsecuritydescriptorcontrol).
+
+A prova real NSIS expôs também comparação textual de atributos: `16` retornado por Win32 não corresponde à string `0x10`. Comparações agora usam a representação decimal, inclusive WAIT_ABANDONED=128 nos caminhos de uninstall/manutenção. Foi acrescentado cenário NSIS de mutex previamente abandonado: deve abortar sem remover o sentinel, liberar ownership na thread adquirente e permitir aquisição limpa seguinte. Não aceita abandono como sucesso.
+
+O preflight do smoke agora carrega a DLL em subprocesso e exige término zero; carregar .node no processo pai mantinha o arquivo mapeado até sua saída e impedia cleanup da própria fixture. Regressão carrega cópia real do addon em filho, aguarda saída e exige exclusão imediata da DLL, preservando todas as assertions anteriores de processos vivos, encerramento normal e caminhos equivalentes.
+
+- `npm run test:release-workflow`: **PASS, 19 testes**, `/tmp/kq-ai-release-final.log`.
+- Runner oficial `--installation-coordination`: **PASS**, `/tmp/kq-ai-windows-final.log`, HEAD-base `e63ead7…`, fingerprint `91c16d37e901bc55b5232e08bdaf8be445d52fb5c31db5e9e068397f55c66ffc`; depois somente documentação alterada. Compile, unitários de instalação, addon x64 N-API/Electron real, matriz positiva/negativa de DACL, readback de arquivo real via NSIS, GUI/silencioso, abandono, crash/failure, fencing de identidades/gerações e cleanup passaram.
+- Iterações intermediárias: teste NSIS confirmou strings DACL idênticas mas pasta recusada por comparação 16/0x10; o teste negativo sem grants exigiu restaurar herança **apenas no arquivo sintético** antes de cleanup. Erro de sintaxe intermediário do novo teste foi corrigido; não contado como PASS.
+- Novo build/verify e smokes protegidos de instalação/empacotado: **pendentes no CI deste commit**, não se usa o candidato anterior como prova. O acompanhamento autorizado fará commit/push e verificará os jobs do SHA correspondente, sem dispatch manual, merge ou Release.
+- Nenhuma instalação/elevacão operacional, ProgramData/Program Files/registro ou ACL real alterada. Testes locais só em temp/perfis sintéticos. Cross-account, duas sessões e UAC interativo continuam **NOT RUN**; S1 PARTIAL e E1–E5 sem homologação.

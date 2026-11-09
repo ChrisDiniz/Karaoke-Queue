@@ -94,6 +94,14 @@ async function electronParent(addonPath, scratchRoot) {
   app.setPath('userData', profile)
   await app.whenReady()
   const native = require(addonPath)
+  const inherited = '(A;ID;FA;;;SY)(A;ID;FA;;;BA)(A;ID;0x1200a9;;;AU)'
+  for (const flag of ['', 'AI']) assert.equal(native.testManifestDacl('D:'+flag+inherited).status, 'matched')
+  for (const bad of ['D:P'+inherited, 'D:NO_ACCESS_CONTROL', 'D:',
+    'D:'+inherited.replace('0x1200a9', 'FA'), 'D:'+inherited.replaceAll(';ID;', ';;'),
+    'D:'+inherited+'(A;ID;FA;;;WD)', 'D:'+inherited.replace('(A;ID;FA;;;BA)', '')]) {
+    assert.equal(native.testManifestDacl(bad).status, 'rejected', bad)
+  }
+  process.stdout.write('WINDOWS MANIFEST DACL PASS AI/no-AI equivalence; grants, SIDs, inherited flags and protection remain strict\n')
   assert.deepEqual(native.acquireRuntime(), { status: 'acquired', code: 0 })
   assert.equal(native.acquireRuntime().status, 'recursive_blocked')
   assert.deepEqual(await workerThreadRelease(addonPath), { status: 'wrong_thread', code: 1444 })
@@ -151,7 +159,7 @@ async function run() {
   try {
     const addonPath = buildIsolatedAddon(scratchRoot)
     runElectronFixture(addonPath, scratchRoot)
-    spawn(process.execPath, [path.join(root, 'tests/windows-packaged-cleanup.cjs')], root, 'packaged fixture process lifecycle')
+    spawn(process.execPath, [path.join(root, 'tests/windows-packaged-cleanup.cjs'), addonPath], root, 'packaged fixture process lifecycle')
     spawn(process.execPath, [path.join(root, 'scripts/windows-installation-operation.cjs'), addonPath], root, 'Electron operation-tree lifetime fixture')
     spawn(process.execPath, [path.join(root, 'scripts/windows-nsis-coordination-probe.cjs'), addonPath, scratchRoot], root, 'NSIS production mutex section ownership fixture')
     completed = true

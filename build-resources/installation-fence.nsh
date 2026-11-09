@@ -38,6 +38,19 @@ Function ${PREFIX}KQ_VerifyControlPath
   ${If} $1 == 0
     Goto kq_security_cleanup
   ${EndIf}
+  ; File readback can carry identical inherited ACEs without the AI metadata
+  ; bit. Normalize only AI in these local descriptors, never the filesystem ACL.
+  StrCpy $R9 $KQSecurityExpected 4
+  ${If} $R9 == "D:AI"
+    System::Call 'advapi32::SetSecurityDescriptorControl(p r0, i 0x400, i 0) i.r1'
+    ${If} $1 == 0
+      Goto kq_security_cleanup
+    ${EndIf}
+    System::Call 'advapi32::SetSecurityDescriptorControl(p r2, i 0x400, i 0) i.r1'
+    ${If} $1 == 0
+      Goto kq_security_cleanup
+    ${EndIf}
+  ${EndIf}
   System::Call 'advapi32::ConvertSecurityDescriptorToStringSecurityDescriptorW(p r0, i 1, i 4, *p .r4, p 0) i.r1'
   ${If} $1 == 0
     Goto kq_security_cleanup
@@ -88,7 +101,7 @@ Function ${PREFIX}KQ_AssertControlSecurity
   System::Call 'kernel32::GetFileAttributesW(w "$KQSecurityPath") i.r0'
   IntOp $1 $0 & 0x410
   ${If} $0 == -1
-  ${OrIf} $1 != 0x10
+  ${OrIf} $1 != 16
     Goto kq_control_attributes_error
   ${EndIf}
   StrCpy $KQSecurityExpected "D:P(A;OICI;0x001f01ff;;;SY)(A;OICI;0x001f01ff;;;BA)(A;OICI;0x001200a9;;;AU)"
@@ -97,7 +110,7 @@ Function ${PREFIX}KQ_AssertControlSecurity
   System::Call 'kernel32::GetFileAttributesW(w "$R0") i.r0'
   IntOp $1 $0 & 0x410
   ${If} $0 == -1
-  ${OrIf} $1 != 0x10
+  ${OrIf} $1 != 16
     Goto kq_control_attributes_error
   ${EndIf}
   Return

@@ -50,10 +50,17 @@ function createProtectedControlFixture() {
   store.beginInitialRole('a10329b8-2c44-4aab-ae67-83ce5dd5b9ab', 0, 'combined')
   store.commitInitialRole('a10329b8-2c44-4aab-ae67-83ce5dd5b9ab')
   runIcacls(path.join(fixtureControlDirectory, 'installation.json'), ['/setowner', '*S-1-5-32-544'])
-  const native = require(path.join(fixtureInstallationDirectory, 'resources/native/win32-x64/kq_win32.node'))
-  for (const [name, result] of Object.entries({ directory: native.verifyInstallationDirectory(), manifest: native.verifyInstallationManifest() })) {
-    assert.equal(result.ok, true, `Production binding rejected ${name} fixture: Win32 ${result.code}`)
-  }
+  // A .node DLL stays mapped for the lifetime of its loading process on
+  // Windows. Validate in a child so the parent never locks the fixture image.
+  const validation = spawnSync(process.execPath, ['-e', `
+    const assert = require('node:assert/strict')
+    const native = require(process.argv[1])
+    for (const [name, result] of Object.entries({ directory: native.verifyInstallationDirectory(), manifest: native.verifyInstallationManifest() })) {
+      assert.equal(result.ok, true, 'Production binding rejected '+name+' fixture: Win32 '+result.code)
+    }
+  `, path.join(fixtureInstallationDirectory, 'resources/native/win32-x64/kq_win32.node')], { stdio: 'inherit', shell: false })
+  assert.equal(validation.error, undefined, validation.error?.message)
+  assert.equal(validation.status, 0, 'Production binding preflight child must exit successfully')
   console.log('PACKAGED CONTROL PREFLIGHT PASS canonical owner/ACL verified by production binding')
 }
 

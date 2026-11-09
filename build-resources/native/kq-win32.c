@@ -489,6 +489,43 @@ static napi_value verify_installation_directory(napi_env env, napi_callback_info
   return result;
 }
 
+/* AI is propagation bookkeeping, not an ACE or a grant. CreateFile and
+ * atomic replacement can omit it on an otherwise identical inherited DACL.
+ * Normalize only this bit in the private readback descriptors. Keep P, ACE
+ * type/order/masks/SIDs and ID flags exact; the owner check remains separate. */
+static DWORD compare_manifest_dacl(PSECURITY_DESCRIPTOR actual, PSECURITY_DESCRIPTOR expected) {
+  LPWSTR actual_text = NULL, expected_text = NULL;
+  DWORD code = ERROR_SUCCESS;
+  if (!SetSecurityDescriptorControl(actual, SE_DACL_AUTO_INHERITED, 0) ||
+      !SetSecurityDescriptorControl(expected, SE_DACL_AUTO_INHERITED, 0)) return GetLastError();
+  if (!ConvertSecurityDescriptorToStringSecurityDescriptorW(actual, SDDL_REVISION_1,
+      DACL_SECURITY_INFORMATION, &actual_text, NULL) ||
+      !ConvertSecurityDescriptorToStringSecurityDescriptorW(expected, SDDL_REVISION_1,
+      DACL_SECURITY_INFORMATION, &expected_text, NULL)) code = GetLastError();
+  else if (wcscmp(actual_text, expected_text) != 0) code = ERROR_INVALID_ACL;
+  if (actual_text) LocalFree(actual_text);
+  if (expected_text) LocalFree(expected_text);
+  return code;
+}
+
+#ifdef KQ_TEST_RUNTIME_MUTEX
+static napi_value test_manifest_dacl(napi_env env, napi_callback_info info) {
+  size_t count = 1, length = 0; napi_value args[1]; WCHAR text[4096];
+  PSECURITY_DESCRIPTOR actual = NULL, expected = NULL;
+  napi_get_cb_info(env, info, &count, args, NULL, NULL);
+  if (count != 1 || napi_get_value_string_utf16(env, args[0], NULL, 0, &length) != napi_ok || length >= 4096 ||
+      napi_get_value_string_utf16(env, args[0], (char16_t *)text, 4096, &length) != napi_ok)
+    return make_result(env, "invalid", ERROR_INVALID_PARAMETER);
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(text, 1, &actual, NULL)) return make_result(env, "invalid", GetLastError());
+  if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(INSTALLATION_FILE_SDDL, 1, &expected, NULL)) {
+    DWORD error = GetLastError(); LocalFree(actual); return make_result(env, "invalid", error);
+  }
+  DWORD code = compare_manifest_dacl(actual, expected);
+  LocalFree(actual); LocalFree(expected);
+  return make_result(env, code == 0 ? "matched" : "rejected", code);
+}
+#endif
+
 static napi_value verify_installation_manifest(napi_env env, napi_callback_info info) {
   PWSTR known_folder = NULL;
   WCHAR *manifest_path = NULL;
@@ -526,14 +563,7 @@ static napi_value verify_installation_manifest(napi_env env, napi_callback_info 
   if (code == ERROR_SUCCESS && !ConvertStringSidToSidW(L"S-1-5-32-544", &admins_sid)) code = GetLastError();
   if (code == ERROR_SUCCESS && (!owner || (!EqualSid(owner, system_sid) && !EqualSid(owner, admins_sid)))) code = ERROR_INVALID_OWNER;
   if (code == ERROR_SUCCESS && !IsValidSecurityDescriptor(expected)) code = ERROR_INVALID_SECURITY_DESCR;
-  if (code == ERROR_SUCCESS) {
-    LPWSTR actual_text = NULL, expected_text = NULL;
-    if (!ConvertSecurityDescriptorToStringSecurityDescriptorW(actual, SDDL_REVISION_1, DACL_SECURITY_INFORMATION, &actual_text, NULL) ||
-        !ConvertSecurityDescriptorToStringSecurityDescriptorW(expected, SDDL_REVISION_1, DACL_SECURITY_INFORMATION, &expected_text, NULL)) code = GetLastError();
-    else if (wcscmp(actual_text, expected_text) != 0) code = ERROR_INVALID_ACL;
-    if (actual_text) LocalFree(actual_text);
-    if (expected_text) LocalFree(expected_text);
-  }
+  if (code == ERROR_SUCCESS) code = compare_manifest_dacl(actual, expected);
   if (known_folder) CoTaskMemFree(known_folder);
   if (manifest_path) HeapFree(GetProcessHeap(), 0, manifest_path);
   if (expected) LocalFree(expected);
@@ -715,6 +745,7 @@ static napi_value initialize(napi_env env, napi_value exports) {
     {"launchInitialRoleConfirmation", NULL, launch_initial_role_confirmation, NULL, NULL, NULL, napi_default, NULL},
     {"getInitialRoleConfirmationStatus", NULL, initial_role_confirmation_status, NULL, NULL, NULL, napi_default, NULL}
 #ifdef KQ_TEST_RUNTIME_MUTEX
+    ,{"testManifestDacl", NULL, test_manifest_dacl, NULL, NULL, NULL, napi_default, NULL}
     ,{"openTestProcessReference", NULL, open_test_process, NULL, NULL, NULL, napi_default, NULL}
     ,{"waitTestProcessExit", NULL, wait_test_process, NULL, NULL, NULL, napi_default, NULL}
     ,{"openTestRuntimeReference", NULL, open_test_runtime_reference, NULL, NULL, NULL, napi_default, NULL}

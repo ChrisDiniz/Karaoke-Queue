@@ -30,6 +30,50 @@ async function prove(addonPath, scratchRoot) {
   assert.equal(sidResult.status, 0)
   const sid = sidResult.stdout.trim()
   assert.match(sid, /^S-1-5-[0-9-]+$/)
+  // Exercise the actual NSIS file-ACL reader against a real inherited file.
+  // Only fixture ownership and its extra current-user ACE differ from product.
+  const control = path.join(require('node:os').tmpdir(), 'kq-protected-fixture-' + require('node:crypto').randomUUID())
+  try {
+    const created = spawnSync('powershell.exe', ['-NoProfile', '-File',
+      path.join(__dirname, 'create-windows-smoke-control.ps1'), '-FixturePath', control, '-Synthetic'], { encoding: 'utf8' })
+    assert.equal(created.status, 0, created.stderr)
+    const manifest = path.join(control, 'installation.json')
+    fs.writeFileSync(manifest, '{}')
+    const aclInclude = path.join(scratchRoot, 'file-acl.nsh')
+    fs.writeFileSync(aclInclude, fs.readFileSync(path.join(__dirname, '../build-resources/installation-fence.nsh'), 'utf8')
+      .replace('S-1-5-32-544', sid)
+      .replace('(A;ID;0x001200a9;;;AU)', `(A;ID;0x001200a9;;;AU)(A;ID;FA;;;${sid})`)
+      .replace('(A;OICI;0x001200a9;;;AU)', `(A;OICI;0x001200a9;;;AU)(A;OICI;FA;;;${sid})`))
+    const nsi = path.join(scratchRoot, 'file-acl.nsi'), image = path.join(scratchRoot, 'file-acl.exe')
+    fs.writeFileSync(nsi, `Unicode true
+RequestExecutionLevel user
+OutFile "${image}"
+!include LogicLib.nsh
+!include TextFunc.nsh
+!include "${aclInclude}"
+!insertmacro KQ_OPERATION_FENCE ""
+Section
+ StrCpy $KQFenceManifest "${manifest}"
+ Call KQ_AssertControlSecurity
+SectionEnd
+`)
+    const compile = spawnSync(compiler.path, ['/V2', nsi], { encoding: 'utf8', env: { ...process.env, ...(compiler.env || {}) } })
+    assert.equal(compile.status, 0, compile.stdout + compile.stderr)
+    const status = spawnSync(image, ['/S'], { timeout: 30000 }).status
+    assert.equal(status, 0, 'NSIS accepts actual inherited file DACL without AI bookkeeping')
+    const invalid = spawnSync('icacls.exe', [manifest, '/inheritance:r'], { encoding: 'utf8' })
+    assert.equal(invalid.status, 0, invalid.stderr)
+    assert.equal(spawnSync(image, ['/S'], { timeout: 30000 }).status, 2, 'NSIS still rejects missing inherited ACEs/protection mismatch')
+    console.log('WINDOWS NSIS FILE ACL PASS actual inherited file / invalid ACL refused')
+  } finally {
+    // The negative test deliberately removes every inherited grant. Restore
+    // inheritance only on this synthetic file before ordinary fixture cleanup.
+    if (fs.existsSync(path.join(control, 'installation.json'))) {
+      const restored = spawnSync('icacls.exe', [path.join(control, 'installation.json'), '/reset'], { encoding: 'utf8' })
+      assert.equal(restored.status, 0, restored.stderr)
+    }
+    fs.rmSync(control, { recursive: true, force: true })
+  }
   const gateFile = path.join(scratchRoot, 'operation-gate.nsh')
   fs.writeFileSync(gateFile, fs.readFileSync(path.join(__dirname, '../build-resources/installation-operation.nsh'), 'utf8')
     .replaceAll('Global\\com.karaoke.queue.install-operation.v1', jobName)
@@ -54,7 +98,7 @@ async function prove(addonPath, scratchRoot) {
   }
   assert.equal(native.openTestRuntimeReference().status, 'opened')
   try {
-    for (const mode of ['silent', 'gui', 'crash', 'failure', 'stale', 'stale-operation', 'stale-installation', 'stale-kind', 'fresh']) {
+    for (const mode of ['silent', 'gui', 'abandoned', 'crash', 'failure', 'stale', 'stale-operation', 'stale-installation', 'stale-kind', 'fresh']) {
       const trace = path.join(scratchRoot, `${mode}.trace`)
       const producer = path.join(scratchRoot, `${mode}-producer.exe`)
       const uninstaller = path.join(scratchRoot, `${mode}-uninstall.exe`)
@@ -140,9 +184,19 @@ SectionEnd
 `)
       run(compiler.path, ['/V2', nsi])
       run(producer, ['/S']) // only writes the synthetic uninstaller to scratch
-      run(uninstaller, mode === 'gui' ? [`_?=${scratchRoot}`] : ['/S', `_?=${scratchRoot}`], mode === 'crash' ? 77 : (mode === 'failure' || mode.startsWith('stale')) ? 2 : 0)
+      if (mode === 'abandoned') {
+        const abandoned = spawnSync(process.execPath, ['-e',
+          "const n=require(process.argv[1]); require('node:assert/strict').equal(n.acquireRuntime().status,'acquired'); process.exit(0)", addonPath])
+        assert.equal(abandoned.status, 0)
+      }
+      run(uninstaller, mode === 'gui' ? [`_?=${scratchRoot}`] : ['/S', `_?=${scratchRoot}`], mode === 'crash' ? 77 : (mode === 'failure' || mode === 'abandoned' || mode.startsWith('stale')) ? 2 : 0)
       const events = Object.fromEntries(fs.readFileSync(trace, 'utf8').trim().split(/\r?\n/).map(line => line.split('=')))
-      if (mode === 'crash' || mode === 'failure' || mode.startsWith('stale')) {
+      if (mode === 'abandoned') {
+        assert.equal(events.acquire, undefined, 'abandoned acquisition must abort before any mutation')
+        assert.equal(fs.readFileSync(sentinel, 'utf8'), 'synthetic preserved data')
+        // The final acquisition below must be clean: NSIS released the
+        // ownership returned by WAIT_ABANDONED rather than abandoning it again.
+      } else if (mode === 'crash' || mode === 'failure' || mode.startsWith('stale')) {
         assert.equal(events.release, undefined)
         assert.equal(fs.readFileSync(sentinel, 'utf8'), 'synthetic preserved data')
         assert.equal(native.acquireRuntime().status, 'abandoned')

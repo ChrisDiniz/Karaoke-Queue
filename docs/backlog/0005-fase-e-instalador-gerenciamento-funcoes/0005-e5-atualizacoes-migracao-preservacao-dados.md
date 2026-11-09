@@ -164,3 +164,10 @@ Testes de subprocessos (HTTP504 injetado, reset de exitCode, tarefa não conclu�
 Falha hosted de abertura por teclado após 4K→1280 não reproduzida na primeira execução local original. Corrigida lacuna verificável do harness: 100ms não confirmava resize/zoom Renderer e o botão não era posicionado no scrollport antes do foco. Agora aguarda viewport/zoom efetivos e confirma foco, mantendo a assertion original; diagnóstico enriquecido, sem retry/timeout maior. Regressão dedicada cobre o percurso e foco da primeira ação/retorno após Escape. Produção/segurança/regras de fila não alteradas.
 
 Compile, suíte isolada e `npm run test:e2e:linux` completo: **PASS, 13 suítes**. [Evidências e limites, seção 16](../../fase-e-revisao-independente.md#16-menu-por-teclado-após-retorno-de-4k--2026-11-09). Reexecução hosted e novo pacote Windows pendentes; não se infere estabilidade CI de um PASS local. Commit/push do acompanhamento autorizado; S1 PARTIAL e E1–E5 sem homologação.
+
+
+## Manifesto herdado e lifecycle do preflight — 2026-11-09
+
+CI do HEAD e63ead7 recusou manifesto Win32 1336: ACEs corretos, mas bit AI ausente no readback do arquivo. C/NSIS agora normalizam somente esse metadado nos descritores privados, preservando owner, grants, flags ID/P e ACL dos diretórios. Corrigidas comparações textuais NSIS com constantes hexadecimais (atributos e abandono). Preflight .node migrou para subprocesso para não manter DLL da fixture bloqueada no pai.
+
+Workflow/proveniência **PASS 19 testes**; runner oficial focado **PASS**, fingerprint `91c16d37e901bc55b5232e08bdaf8be445d52fb5c31db5e9e068397f55c66ffc`, incluindo addon/Electron real, ACL positiva/negativa, NSIS GUI/silencioso, abandono antes de mutações, fencing e cleanup. [Evidências, seção 17](../../fase-e-revisao-independente.md#17-readback-do-manifesto-atributos-nsis-e-lifecycle-da-dll--2026-11-09). Novo pacote e smoke protegido serão verificados no CI após commit/push autorizados; sem atribuir PASS ao candidato anterior. S1 PARTIAL e homologação E1–E5 pendente.
