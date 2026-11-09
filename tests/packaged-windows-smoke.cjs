@@ -7,6 +7,7 @@ const path = require('node:path')
 const { spawnSync } = require('node:child_process')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
+const { waitForFixtureProcesses } = require('../scripts/windows-fixture-processes.cjs')
 const { createUnconfiguredManifest, InstallationControlStore } = require('../build/src/installation-control.js')
 
 const appPackage = require('../package.json')
@@ -54,8 +55,9 @@ function createProtectedControlFixture() {
 function stageUnderProgramFiles() {
   if (!fixtureInstallationDirectory || !fs.existsSync(programFilesDirectory)) throw new Error('Program Files is unavailable for packaged smoke fixture')
   if (fs.existsSync(fixtureInstallationDirectory)) throw new Error('Packaged smoke installation fixture already exists; refusing to reuse it')
-  fs.cpSync(path.dirname(sourceExecutable), fixtureInstallationDirectory, { recursive: true, errorOnExist: true })
+  fs.mkdirSync(fixtureInstallationDirectory)
   createdInstallationFixture = true
+  fs.cpSync(path.dirname(sourceExecutable), fixtureInstallationDirectory, { recursive: true, errorOnExist: true })
   executable = path.join(fixtureInstallationDirectory, path.basename(sourceExecutable))
 }
 
@@ -76,9 +78,12 @@ async function launch() {
 
 async function close() {
   if (!application) return
-  await application.evaluate(({ app }) => app.exit(0)).catch(() => {})
-  await application.close().catch(() => {})
+  const child = application.process()
+  await application.close() // Playwright requests app.quit and waits for Main.
+  assert.notEqual(child.exitCode, null, 'Main must actually exit before fixture cleanup')
+  assert.equal(child.exitCode, 0, 'Main shutdown must succeed')
   application = undefined
+  waitForFixtureProcesses(fixtureInstallationDirectory) // also before restart
 }
 
 function inspectDatabase(databasePath) {
@@ -92,6 +97,8 @@ function inspectDatabase(databasePath) {
 }
 
 async function run() {
+  let failure
+  let result
   try {
     assert.equal(process.platform, 'win32', 'protected packaged smoke fixture is Windows-only')
     assert.equal(process.env.GITHUB_ACTIONS, 'true', 'protected Program Files/ProgramData fixtures are permitted only on GitHub-hosted Windows')
@@ -151,17 +158,31 @@ async function run() {
     assert.equal(secondTrialRecord.trialStartedAt, firstTrialRecord.trialStartedAt)
     assert.equal(secondTrialRecord.policyVersion, 1)
 
-    console.log(JSON.stringify({
+    result = {
       result: 'PASS', appInfo, firstRunTrial: firstTrial, trialTimestampPersisted: true,
       sqliteIpcWriteRead: true, restartPersistence: true, profilePreserved: true,
       protectedGlobalFunction: 'combined', perAccountLegacyModePreserved: true
-    }, null, 2))
-  } finally {
+    }
+  } catch (error) { failure = error }
+  const cleanupErrors = []
+  let processesExited = false
+  try {
     await close()
-    fs.rmSync(tempRoot, { recursive: true, force: true })
-    if (createdInstallationFixture) fs.rmSync(fixtureInstallationDirectory, { recursive: true, force: true })
-    if (createdControlFixture) fs.rmSync(fixtureControlDirectory, { recursive: true, force: true })
+    if (createdInstallationFixture) waitForFixtureProcesses(fixtureInstallationDirectory)
+    processesExited = true
+  } catch (error) { cleanupErrors.push(error) }
+  if (processesExited) {
+    for (const directory of [tempRoot, ...(createdInstallationFixture ? [fixtureInstallationDirectory] : []),
+      ...(createdControlFixture ? [fixtureControlDirectory] : [])]) {
+      try { fs.rmSync(directory, { recursive: true, force: true }) }
+      catch (error) { cleanupErrors.push(error) }
+    }
   }
+  if (failure || cleanupErrors.length) {
+    throw new AggregateError([...(failure ? [failure] : []), ...cleanupErrors],
+      'Packaged smoke failed; original failure and cleanup errors follow')
+  }
+  console.log(JSON.stringify(result, null, 2)) // PASS only after cleanup succeeds
 }
 
 run().catch(error => {

@@ -134,3 +134,9 @@ Reinstall só consome tombstone depois da árvore anterior terminar; fences obso
 - [SQLite persistence safety](../../sqlite-persistence-safety.md)
 - [Legacy session compatibility](../../legacy-session-compatibility.md)
 - [Windows native testing](../../windows-native-testing.md)
+
+## Cleanup do smoke empacotado no CI — 2026-11-09
+
+EPERM no finally podia ocultar falha anterior e o fechamento suprimia erros. Smoke agora fecha via app.quit/Playwright, exige exit0, aguarda processos da fixture por handles Windows antes de restart/remover e preserva arquivos se término não for comprovado; erros original/cleanup agregados e PASS só após limpeza. Cópia parcial também é registrada como fixture própria. Sem kill, retry arbitrário, mudança de ACL ou relaxamento das assertions SQLite/trial/IPC.
+
+Teste Electron real em cópia temp cobre processo vivo/recusa sem kill, fechamento normal, descendentes e remoção com arquivo readonly. Integrado ao step existente do CI. Runner oficial focado **PASS**, snapshot `396f02660ea56287666ebe2a974a4bbdf420a2c0c0ed6dce9c8417127f5f49a3`; workflow/configuração/proveniência **PASS**. [Parecer, seção 12](../../fase-e-revisao-independente.md#12-cleanup-do-smoke-empacotado-windows--2026-11-09) contém logs e limites. Smoke completo protegido continua NOT RUN localmente e deverá ser confirmado pelo CI após push autorizado. Nenhuma homologação ou instalação operacional.

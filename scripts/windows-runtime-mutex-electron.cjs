@@ -151,6 +151,7 @@ async function run() {
   try {
     const addonPath = buildIsolatedAddon(scratchRoot)
     runElectronFixture(addonPath, scratchRoot)
+    spawn(process.execPath, [path.join(root, 'tests/windows-packaged-cleanup.cjs')], root, 'packaged fixture process lifecycle')
     spawn(process.execPath, [path.join(root, 'scripts/windows-installation-operation.cjs'), addonPath], root, 'Electron operation-tree lifetime fixture')
     spawn(process.execPath, [path.join(root, 'scripts/windows-nsis-coordination-probe.cjs'), addonPath, scratchRoot], root, 'NSIS production mutex section ownership fixture')
     completed = true
