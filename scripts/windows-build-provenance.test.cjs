@@ -5,6 +5,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { spawnSync } = require('node:child_process')
 const { buildInputFingerprint, writeBuildSeal, verifyBuildSeal } = require('./windows-build-provenance.cjs')
 
 const sourceInputs = [
@@ -97,4 +98,33 @@ test('packaging keeps official Electron checksum validation without depending on
   const electron = require('electron/package.json')
   const official = require('electron/checksums.json')
   assert.ok(electronChecksumOptions(electron.version, official).checksums[`electron-v${electron.version}-win32-x64.zip`])
+})
+
+test('build supervisor rejects HTTP failures, reset exit codes, unsettled builds and stale output', () => {
+  const supervisor = require.resolve('./build-windows-package.cjs')
+  for (const [label, body, expected] of [
+    ['HTTP 504', "throw new Error('HTTP 504 Gateway Time-out')", /worker failed: exit=1/],
+    ['reset exit code', "process.on('exit',()=>{process.exitCode=0}); throw new Error('HTTP 504 Gateway Time-out')", /No completed Windows build seal/],
+    ['unsettled task', "console.error('HTTP 504 Gateway Time-out'); new Promise(()=>{})", /No completed Windows build seal/],
+    ['zero exit without build', 'process.exit(0)', /No completed Windows build seal/]
+  ]) {
+    const f = fixture()
+    try {
+      fs.writeFileSync(path.join(f.root, 'package.json'), JSON.stringify(require('../package.json')))
+      const worker = path.join(f.root, 'scripts', 'fake-builder.cjs')
+      fs.writeFileSync(worker, body)
+      writeBuildSeal(f.root, f.outputs) // old complete-looking output must never authorize this attempt
+      const parent = path.join(f.root, 'scripts', 'supervisor-test.cjs')
+      fs.writeFileSync(parent, `
+        try { require(${JSON.stringify(supervisor)}).runSupervisedBuild(${JSON.stringify(f.root)}, ${JSON.stringify(worker)}) }
+        catch(error) { console.error(error.message); process.exitCode=1 }
+      `)
+      const result = spawnSync(process.execPath, [parent], { encoding: 'utf8' })
+      assert.equal(result.error, undefined, result.error?.message)
+      assert.equal(result.status, 1, label)
+      assert.match(result.stderr, expected, label)
+      if (label !== 'zero exit without build') assert.match(result.stderr, /HTTP 504/)
+      assert.equal(fs.existsSync(path.join(f.root, 'dist', '.kq-windows-build-seal.json')), false)
+    } finally { f.cleanup() }
+  }
 })

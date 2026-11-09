@@ -2,8 +2,9 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
-const { Arch, Platform, build } = require('electron-builder')
+const { spawnSync } = require('node:child_process')
 const { SEAL_NAME, buildInputFingerprint, writeBuildSeal } = require('./windows-build-provenance.cjs')
+const { verifyWindowsBuild } = require('./verify-windows-build.cjs')
 
 function electronChecksumOptions(version, checksums) {
   const artifact = `electron-v${version}-win32-x64.zip`
@@ -17,6 +18,7 @@ function electronChecksumOptions(version, checksums) {
 }
 
 async function buildWindowsPackage(root = path.resolve(__dirname, '..')) {
+  const { Arch, Platform, build } = require('electron-builder')
   const outputDirectory = path.join(root, 'dist')
   fs.mkdirSync(outputDirectory, { recursive: true })
   const sealPath = path.join(outputDirectory, SEAL_NAME)
@@ -52,11 +54,32 @@ async function buildWindowsPackage(root = path.resolve(__dirname, '..')) {
   return seal
 }
 
-if (require.main === module) {
-  buildWindowsPackage().catch(error => {
-    console.error(error)
-    process.exitCode = 1
+// Do not trust the builder process's exit code alone. A dependency can reset it
+// during cleanup (electron-builder's own CLI installs a sticky exit handler).
+// A fresh seal AND the full package verifier are the completion handshake.
+function runSupervisedBuild(root = path.resolve(__dirname, '..'), workerFile = __filename) {
+  fs.rmSync(path.join(root, 'dist', SEAL_NAME), { force: true })
+  const result = spawnSync(process.execPath, [workerFile, '--build-worker'], {
+    cwd: root, stdio: 'inherit', shell: false
   })
+  if (result.error) throw result.error
+  if (result.status !== 0) throw new Error(`Windows build worker failed: exit=${result.status} signal=${result.signal}`)
+  const report = verifyWindowsBuild(root)
+  process.stdout.write(`Windows supervised build verified inputFingerprint=${report.sourceFingerprint}\n`)
+  return report
 }
 
-module.exports = { buildWindowsPackage, electronChecksumOptions }
+function reportFailure(error) {
+  console.error(error)
+  process.exitCode = 1
+  process.on('exit', () => { process.exitCode = 1 })
+}
+
+if (require.main === module) {
+  if (process.argv[2] === '--build-worker') buildWindowsPackage().catch(reportFailure)
+  else {
+    try { runSupervisedBuild() } catch (error) { reportFailure(error) }
+  }
+}
+
+module.exports = { buildWindowsPackage, electronChecksumOptions, runSupervisedBuild }
