@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict')
 const path = require('node:path')
 const { _electron: electron } = require('playwright')
+const { waitForFixtureProcesses } = require('../scripts/windows-fixture-processes.cjs')
 
 async function run() {
   assert.equal(process.platform, 'win32')
@@ -31,7 +32,10 @@ async function run() {
     await application.evaluate(({ app }) => app.quit())
     await exited
     process.stdout.write(`KQ_NSI_USERDATA ${JSON.stringify(result)}\n`)
-  } finally { await application.close().catch(() => {}) }
+  } finally {
+    await application.close()
+    waitForFixtureProcesses(path.dirname(executablePath))
+  }
 }
 
 run().catch(error => {

@@ -208,3 +208,8 @@ Bootstrap inicial usa pending/prepare-update generation0 e confirma unconfigured
 - [Windows release process](../../windows-release-process.md)
 - [SQLite persistence safety](../../sqlite-persistence-safety.md)
 - [Windows native testing](../../windows-native-testing.md)
+
+
+### Correção do bootstrap administrativo durante CI — 2026-11-09
+
+Aguardar ready no helper modificava ShaderCache/index do perfil operacional, reproduzido no Main real em comando administrativo recusado. Dispatcher agora síncrono antes de ready; sem nova autoridade/executável, preservando fences, token, ACL e mutexes. Shell .lnk pré-ready e preservação de todos os arquivos (perfil aquecido/novo) passaram em Windows real, fingerprint `9eedc1950675625bad917dfa4bd7550a64282198a67228750e42e4bdc70e98ae`. Contêiner vazio criado nativamente antes do JS é baseline explicitamente testado, sem dados operacionais. [Parecer, seção 23](../../fase-e-revisao-independente.md#23-helper-administrativo-sem-inicialização-do-perfil-chromium--2026-11-09). Nova homologação CI NSIS pendente; não aprova E1.

@@ -76,6 +76,53 @@ $b.ToString()
     await application.close(); application = undefined
     assert.equal(mainProcess.exitCode, 0)
     waitForFixtureProcesses(runtime)
+    function profileHashes() {
+      const result = {}
+      function visit(directory, prefix = '') {
+        for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+          const full = path.join(directory, entry.name), relative = path.join(prefix, entry.name)
+          if (entry.isDirectory()) visit(full, relative)
+          else if (entry.isFile()) result[relative] = crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex')
+        }
+      }
+      visit(path.join(scratch, 'profile'))
+      return result
+    }
+    const beforeAdmin = profileHashes()
+    // Electron creates its user-data container before the first JS statement.
+    // Prove that baseline explicitly; an empty directory is not a loaded profile.
+    const containerEntry = path.join(scratch, 'empty-container.cjs')
+    const containerProfile = path.join(scratch, 'empty-container-profile')
+    fs.writeFileSync(containerEntry, `const fs=require('node:fs'),{app}=require('electron');const p=${JSON.stringify(containerProfile)};console.log('KQ_EMPTY_CONTAINER '+JSON.stringify({ready:app.isReady(),entries:fs.existsSync(p)?fs.readdirSync(p):[]}));app.exit(0)`)
+    const container = spawnSync(executable, [containerEntry, '--user-data-dir='+containerProfile], { encoding: 'utf8', timeout: 30000 })
+    assert.equal(container.status, 0, container.stderr)
+    waitForFixtureProcesses(runtime)
+    const observation = JSON.parse(container.stdout.split(/\r?\n/).find(line => line.startsWith('KQ_EMPTY_CONTAINER ')).slice(19))
+    assert.equal(observation.ready, false)
+    assert.deepEqual(observation.entries, [], 'no operational files may exist before Main')
+    const absentProfile = path.join(scratch, 'uncreated-profile')
+    for (const profile of [path.join(scratch, 'profile'), absentProfile]) {
+      const refused = spawnSync(executable, [path.resolve(__dirname, '..'), '--kq-install-admin', 'invalid-operation',
+        '--user-data-dir='+profile], { encoding: 'utf8', timeout: 30000 })
+      assert.equal(refused.error, undefined, refused.error?.message)
+      assert.equal(refused.status, 2)
+      assert.match(refused.stderr, /INSTALLATION_ADMIN_ARGUMENTS_INVALID/)
+      waitForFixtureProcesses(runtime)
+      assert.deepEqual(profileHashes(), beforeAdmin, 'administrative rejection must not initialize or mutate the operational profile')
+      assert.deepEqual(fs.existsSync(absentProfile) ? fs.readdirSync(absentProfile) : [], [],
+        'administrative rejection must leave the startup container entirely empty')
+    }
+    const early = path.join(scratch, 'before-ready.cjs'), link = path.join(scratch, 'before-ready.lnk')
+    fs.writeFileSync(early, `const {app,shell}=require('electron');const a=require('node:assert/strict');a.equal(app.isReady(),false);a.equal(shell.writeShortcutLink(${JSON.stringify(link)},'create',{target:${JSON.stringify(executable)}}),true);a.equal(require('node:fs').realpathSync.native(shell.readShortcutLink(${JSON.stringify(link)}).target),require('node:fs').realpathSync.native(${JSON.stringify(executable)}));app.exit(0)`)
+    for (const profile of [path.join(scratch, 'profile'), absentProfile]) {
+      const linked = spawnSync(executable, [early, '--user-data-dir='+profile], { encoding: 'utf8', timeout: 30000 })
+      assert.equal(linked.status, 0, linked.stderr)
+      waitForFixtureProcesses(runtime)
+      assert.deepEqual(profileHashes(), beforeAdmin, 'synchronous pre-ready shell operations must leave operational data untouched')
+      assert.deepEqual(fs.existsSync(absentProfile) ? fs.readdirSync(absentProfile) : [], [],
+        'pre-ready shell operations must create no Chromium data or subdirectories')
+    }
+    console.log('WINDOWS ADMIN PROFILE PASS actual Main rejection / pre-ready shell read-write / every profile file preserved')
     fs.writeFileSync(path.join(runtime, 'readonly-fixture'), 'fixture')
     fs.chmodSync(path.join(runtime, 'readonly-fixture'), 0o444)
     fs.rmSync(runtime, { recursive: true, force: true })

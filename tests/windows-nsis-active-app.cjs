@@ -6,6 +6,7 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const { spawnSync } = require('node:child_process')
 const { _electron: electron } = require('playwright')
+const { waitForFixtureProcesses } = require('../scripts/windows-fixture-processes.cjs')
 
 async function run() {
   assert.equal(process.platform, 'win32')
@@ -37,6 +38,7 @@ async function run() {
     console.log('NSIS ACTIVE APP DENIAL PASS exit=32 manifest_unchanged=true main_alive=true')
   } finally {
     if (application) await application.close()
+    waitForFixtureProcesses(root)
     fs.rmSync(scratch, { recursive: true })
   }
 }

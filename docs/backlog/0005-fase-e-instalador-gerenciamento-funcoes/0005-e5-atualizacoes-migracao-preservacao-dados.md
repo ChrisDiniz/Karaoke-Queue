@@ -192,3 +192,10 @@ Run 42614670826: primeira tentativa build sofreu crash Node 0xc0000409 e foi rec
 
 
 CI 42617458239 localizou o aborto da primeira instalação em FileOpen (215), após Linux/build/verify/provas/smoke empacotado PASS. ClearErrors delimita agora a flag dessa abertura; falha de IO continua fechada e informa 215000+Win32. Diagnóstico read-only usa Write-Host para não ser absorvido pelo retorno da função PowerShell. Origem hosted ainda a comprovar. Runner focado **PASS**, fingerprint `063d5795922f2a67716a8ed0d376351ce6b055d1dcd54308814064b8948b47c6`; prova positiva/negativa de initializer mantida. Instrumentação LF/CRLF validada por novo unitário; workflow/proveniência **PASS 20**. [Seção 22](../../fase-e-revisao-independente.md#22-abertura-do-manifesto-inicial--2026-11-09). Artifact e instalação real ainda pendentes.
+
+
+## Preservação integral do perfil pelo helper — 2026-11-09
+
+Run 42619186632: instalação NSIS e ACL de produção passaram; uninstall com Main ativo foi recusado com exit32/estado intacto. Uninstall normal detectou alteração de ShaderCache/index no userData. Reproduzido com Main real/rejeição administrativa em perfil sintético após drenagem: aguardar ready inicializava cache Chromium. Dispatcher passou a executar síncrono antes de ready, com os mesmos controles e sem runtime/Renderer/SQLite. Nenhum arquivo foi excluído da comparação.
+
+Compile, 47 unitários de instalação+5 de binding e 20 de workflow/proveniência **PASS**. Runner Windows real **PASS**, fingerprint `9eedc1950675625bad917dfa4bd7550a64282198a67228750e42e4bdc70e98ae`: perfil aquecido byte a byte igual, perfil novo sem conteúdo, shell .lnk pré-ready validado. Electron cria contêiner vazio antes do JS; controle mínimo comprova esse baseline, sem contar diretório vazio como perfil operacional inicializado. Probes NSIS drenam descendentes antes dos hashes/cleanup. [Seção 23](../../fase-e-revisao-independente.md#23-helper-administrativo-sem-inicialização-do-perfil-chromium--2026-11-09). Smoke NSIS completo e artifact do novo SHA continuam a validar no CI; E1–E5 sem homologação.
