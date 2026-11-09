@@ -38,7 +38,7 @@ if (process.argv[2] === '--child') {
     ps("$acl=[IO.Directory]::GetAccessControl($env:KQ_TRUST_ROOT); $sid=[Security.Principal.SecurityIdentifier]::new('S-1-5-11'); $rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::Write,[Security.AccessControl.AccessControlType]::Allow); [void]$acl.AddAccessRule($rule); [IO.Directory]::SetAccessControl($env:KQ_TRUST_ROOT,$acl)")
     assert.equal(trusted(),false,'a writable installation root must fail closed')
   } finally {
-    ps('$acl=[Security.AccessControl.DirectorySecurity]::new(); $acl.SetSecurityDescriptorSddlForm($env:KQ_TRUST_SDDL); [IO.Directory]::SetAccessControl($env:KQ_TRUST_ROOT,$acl)',{KQ_TRUST_SDDL:sddl})
+    ps('$acl=[Security.AccessControl.DirectorySecurity]::new(); $acl.SetSecurityDescriptorSddlForm($env:KQ_TRUST_SDDL,[Security.AccessControl.AccessControlSections]::Access); [IO.Directory]::SetAccessControl($env:KQ_TRUST_ROOT,$acl)',{KQ_TRUST_SDDL:sddl})
   }
   assert.equal(trusted(),true,'exact protected root restored before any Main/helper execution')
   const key='HKLM:\\Software\\7792ee38-9a49-5e2e-a032-ba1be2d8f3a5'

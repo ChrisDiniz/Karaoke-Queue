@@ -33,3 +33,19 @@ Smoke hosted acrescenta provas negativas da fronteira nova: pelo Electron empaco
 Run [42695735985](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42695735985): Linux completo PASS; Windows build, pacote e provas N-API/NSIS PASS. Novo E2E encontrou fixture sob alias 8.3 `RUNNER~1`, recusada corretamente pelo guard de caminhos do CSV. A fixture passa a usar `fs.realpathSync.native(os.tmpdir())`; nenhuma proteção de produção foi relaxada. Instalação/artifact desta run NOT RUN devido à falha anterior.
 
 O smoke também exercita confirmação pelo helper real em runner já administrativo (sem fingir prova do UAC): confirma Combined, verifica as duas opções de troca na manutenção, cancela sem alteração e faz uninstall/reinstall de uma função efetivamente confirmada. Exige retorno a unconfigured e Welcome mesmo com o modo legado/SQLite preservados, além dos hashes de todos os arquivos antes/depois. Provas negativas de caminho e os novos passos ainda aguardam a próxima run.
+
+
+Runner completo repetido no commit `9799dfcd07b233eceb50c6d07b639116eeac1542`: PASS, fingerprint `99dc74e52be887bf7d813aaa9bb77a62cdb5dcaf79b3e524f7bb5e266fb75f2d`. Log `/tmp/kq-onboarding-final-windows.log`. Capturas de ambas as funções em conteúdo 1280×800, escala CSS, comparadas visualmente ao frame `gFR_COs4VP`; mantidos estrutura/cartões, referências e diálogo compartilhado, com estados funcionais acrescentados. Sem aceite humano implícito. O smoke hosted inclui também repair/update efetivo após confirmação Combined, exigindo mesma identidade/função, avanço de geração e hashes do userData preservados. Restauração da prova negativa limita-se à DACL que o teste alterou, preservando owner/group/SACL.
+
+
+Run [42697261744](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42697261744): Linux, build/verificador Windows, N-API/NSIS, onboarding real e smoke empacotado PASS. Instalação silenciosa inicial `/S /D` recusada com 230: o template Builder faz SetOutPath antes de customInit e cria o destino com ACL herdada, fora da criação protegida do guard. Recusa preservada, sem relaxar ACL. O smoke inicial agora usa o seletor MUI gráfico real, seleciona o caminho antes da seção protegida e exige manifesto confirmado/arquivo/Finish/término. Isso testa diretamente o requisito solicitado. Repair/reinstall silenciosos usam o ancestral protegido criado nessa primeira instalação. Instalação silenciosa em local novo exige ancestral previamente protegido; não se alteram permissões de pastas de terceiros.
+
+### Checklist manual do proprietário (após artifact CI)
+
+- Em ambiente de teste, abrir o instalador sem /S, escolher outra pasta local protegida e conferir os atalhos/primeira abertura.
+- Escolher cada função em instalações separadas; autorizar/cancelar UAC interativo e verificar retomada sem função selecionada automaticamente.
+- No Welcome, selecionar acervo, observar indexação/conferir contagens e importar CSV parcial; conferir confirmação, registros ignorados, paginação e Configurar depois.
+- Executar novamente o instalador: conferir mensagem de instalação existente, reparar mantendo função e trocar função preservando bancos/históricos/acervo.
+- Painel de Controle: conferir as duas opções; cancelar sem efeitos, reparar e desinstalar explicitamente.
+- Após uninstall/reinstall, escolher novamente a função; confirmar dados anteriores preservados nas respectivas contas e ausência de fusão dos bancos.
+- Homologação entre contas/sessões, UAC real, legado/N-1, interrupções/reboot e julgamento visual/áudio continuam separados do CI. Não usar a aprovação automatizada como homologação E1–E5.

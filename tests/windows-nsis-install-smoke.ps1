@@ -54,10 +54,11 @@ function Invoke-FixtureProcess([string]$Image, [string[]]$Arguments) {
   $process.WaitForExit()
   if (-not $process.HasExited -or $process.ExitCode -ne 0) {
     Write-Host "NSIS_FAILURE image=$Image exit=$($process.ExitCode)"
-    foreach ($fixturePath in @($installDirectory, $controlDirectory, $controlManifest)) {
+    foreach ($fixturePath in @($installDirectory, $fixtureParent, $controlDirectory, $controlManifest)) {
       if (Test-Path -LiteralPath $fixturePath) {
         $item = Get-Item -LiteralPath $fixturePath -Force
         Write-Host "NSIS_FIXTURE path=$fixturePath attributes=$($item.Attributes)"
+        if ($item.PSIsContainer) { Write-Host ("NSIS_PATH_SECURITY " + (Get-Acl -LiteralPath $fixturePath).Sddl) }
       } else { Write-Host "NSIS_FIXTURE absent=$fixturePath" }
     }
     if (Test-Path -LiteralPath $controlDirectory -PathType Container) {
@@ -128,8 +129,7 @@ function Assert-ShortcutTarget([string]$LinkPath) {
 try {
   $installerHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
   $installStarted = $true
-  $install = Invoke-FixtureProcess $installer @('/S', "/D=$installDirectory")
-  if ($install.ExitCode -ne 0) { throw "NSIS instalação terminou com exit code $($install.ExitCode)." }
+  & (Join-Path $PSScriptRoot 'windows-nsis-maintenance-ui.ps1') -InstallDirectory $installDirectory -ControlDirectory $controlDirectory -InstallerPath $installer -FreshInstall
   if (-not (Test-Path -LiteralPath (Join-Path $installDirectory 'Karaoke Queue.exe') -PathType Leaf)) {
     throw 'NSIS não instalou o executável no local personalizado escolhido.'
   }
@@ -193,6 +193,12 @@ fs.writeFileSync(path.join(process.env.KQ_NSI_SMOKE_USERDATA, 'operating-mode.js
   $confirmed = Get-Content -LiteralPath $controlManifest -Raw | ConvertFrom-Json
   if ($confirmed.status -ne 'ready' -or $confirmed.role -ne 'combined' -or
       $confirmed.lastCompletedOperation.operationId -ne $initialOperation) { throw 'The actual helper did not confirm the synthetic Combined role.' }
+  Invoke-FixtureProcess $installer @('/S', "/D=$installDirectory") | Out-Null
+  $repaired = Get-Content -LiteralPath $controlManifest -Raw | ConvertFrom-Json
+  if ($repaired.installationId -ne $fixtureInstallationId -or $repaired.role -ne 'combined' -or
+      $repaired.status -ne 'ready' -or $repaired.generation -le $confirmed.generation -or $repaired.pending) {
+    throw 'Repair/update must preserve the confirmed role and installation identity while completing its new generation.'
+  }
   & (Join-Path $PSScriptRoot 'windows-nsis-maintenance-ui.ps1') -InstallDirectory $installDirectory -ControlDirectory $controlDirectory -ConfiguredRole
   foreach ($entry in $profileHashes.GetEnumerator()) {
     if ((Get-FileHash -LiteralPath (Join-Path $userDataDirectory $entry.Key) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.Value) {
