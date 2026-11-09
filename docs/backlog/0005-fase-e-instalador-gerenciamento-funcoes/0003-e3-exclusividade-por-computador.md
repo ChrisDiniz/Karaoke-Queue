@@ -108,3 +108,9 @@ Job Object global coordena árvores NSIS/helper sem substituir o mutex runtime A
 - [Remote player architecture](../../remote-player-architecture.md)
 - [Legacy session compatibility](../../legacy-session-compatibility.md)
 - [Windows native testing](../../windows-native-testing.md)
+
+## Correção de instrumentação CRLF no CI — 2026-11-09
+
+Falha informada após `7cc18d1`: probe mediu acquire mas não release, porque substituição literal LF não encontrava o cabeçalho CRLF. Instrumentação agora aceita ambos, exige um único alvo e o probe Windows real força CRLF nas funções extraídas. Assertions de ownership/abandono permanecem; código de produção e proteções não alterados.
+
+`npm run test:release-workflow` **PASS** (LF/CRLF, ausência e duplicação); runner oficial `--installation-coordination` **PASS**, com addon recompilado, Electron Win32, NSIS GUI/silencioso/crash/falha/fences e cleanup. Fingerprint `1002fcde3ec89fbac3baa27b075524fc0811d945f5792b28866f1bd167f545f9`. [Evidências e limites, seção 11](../../fase-e-revisao-independente.md#11-correção-do-probe-nsis-no-ci-windows--2026-11-09). GitHub Actions e novo pacote do produto não executados nesta correção; candidato anterior não prova o novo snapshot. Commit local autorizado pelo proprietário, sem push/dispatch. Homologação E3/cross-account/sessões/UAC continua pendente; S1 PARTIAL.

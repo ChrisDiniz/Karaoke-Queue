@@ -9,6 +9,22 @@ const root = path.resolve(__dirname, '..')
 const installerSmokeSource = () => fs.readFileSync(path.join(root, 'tests/windows-nsis-install-smoke.ps1'), 'utf8')
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 
+test('NSIS ownership instrumentation handles LF and CRLF and rejects missing or duplicate targets', () => {
+  const { instrumentUninstallRelease } = require('./windows-nsis-coordination-probe.cjs')
+  const source = fs.readFileSync(path.join(root, 'build-resources/installer.nsh'), 'utf8')
+  for (const newline of ['\n', '\r\n']) {
+    const input = source.replace(/\r?\n/g, newline)
+    const output = instrumentUninstallRelease(input, 'C:\\fixture\\release.trace')
+    assert.equal((output.match(/FileWrite \$9 "release=/g) || []).length, 1)
+    const inserted = output.slice(output.indexOf('Function un.KQ_ReleaseUninstallMutexOwnership'))
+    assert.ok(inserted.indexOf('GetCurrentThreadId') < inserted.indexOf('ReleaseMutex'))
+    assert.match(inserted, /FileWrite \$9 "release=\$8\$\\r\$\\n"/)
+    assert.match(inserted, /ReleaseMutex\(p \$KQUninstallRuntimeMutexHandle\)/)
+    assert.throws(() => instrumentUninstallRelease(output + input, 'trace'), /exactly one/)
+  }
+  assert.throws(() => instrumentUninstallRelease('Function un.other\nFunctionEnd', 'trace'), /exactly one/)
+})
+
 test('package metadata and Windows target describe the x64 NSIS product', () => {
   assert.match(pkg.version, /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/)
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'))

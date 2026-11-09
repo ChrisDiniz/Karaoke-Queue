@@ -5,6 +5,19 @@ const path = require('node:path')
 const { spawnSync } = require('node:child_process')
 const { getMakeNsisPath } = require('app-builder-lib/out/toolsets/windows')
 
+function instrumentUninstallRelease(functions, trace) {
+  const header = /^Function un\.KQ_ReleaseUninstallMutexOwnership\r?\n/gm
+  assert.equal([...functions.matchAll(header)].length, 1,
+    'the probe must instrument exactly one production release function')
+  return functions.replace(header, () => `Function un.KQ_ReleaseUninstallMutexOwnership
+  System::Call 'kernel32::GetCurrentThreadId() i.r8'
+  FileOpen $9 "${trace}" a
+  FileSeek $9 0 END
+  FileWrite $9 "release=$8$\\r$\\n"
+  FileClose $9
+`)
+}
+
 async function prove(addonPath, scratchRoot) {
   assert.equal(process.platform, 'win32')
   const native = require(addonPath)
@@ -64,13 +77,9 @@ async function prove(addonPath, scratchRoot) {
         : { ...state, generation: 8 }
       fs.writeFileSync(mutator, `require('node:fs').writeFileSync(${JSON.stringify(manifest)}, ${JSON.stringify(JSON.stringify(advanced, null, 2) + '\n')})`)
 
-      const traced = functions.replace('Function un.KQ_ReleaseUninstallMutexOwnership\n', `Function un.KQ_ReleaseUninstallMutexOwnership
-  System::Call 'kernel32::GetCurrentThreadId() i.r8'
-  FileOpen $9 "${trace}" a
-  FileSeek $9 0 END
-  FileWrite $9 "release=$8$\\r$\\n"
-  FileClose $9
-`)
+      // Exercise the Windows checkout representation even when the official
+      // WSL snapshot transferred LF files instead of Git's usual CRLF checkout.
+      const traced = instrumentUninstallRelease(functions.replace(/\r?\n/g, '\r\n'), trace)
       fs.writeFileSync(nsi, `Unicode true
 RequestExecutionLevel user
 Name "KQ isolated ownership proof"
@@ -150,4 +159,5 @@ SectionEnd
     console.log('WINDOWS NSIS PRODUCTION MUTEX SECTIONS PASS GUI/silent owner-thread / crash-abandonment / failure-recovery')
   } finally { assert.equal(native.closeTestRuntimeReference().status, 'closed') }
 }
-prove(process.argv[2], process.argv[3]).catch(error => { console.error(error); process.exitCode = 1 })
+module.exports = { instrumentUninstallRelease }
+if (require.main === module) prove(process.argv[2], process.argv[3]).catch(error => { console.error(error); process.exitCode = 1 })
