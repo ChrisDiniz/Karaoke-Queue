@@ -163,6 +163,12 @@ test('system-path package and NSIS smokes are guarded to disposable hosted Windo
   assert.match(packagedSmoke, /RUNNER_OS, 'Windows'/)
   assert.match(packagedSmoke, /RUNNER_ENVIRONMENT, 'github-hosted'/)
   assert.match(installerSmoke, /RUNNER_ENVIRONMENT -ne 'github-hosted'/)
+  assert.match(packagedSmoke, /create-windows-smoke-control\.ps1/)
+  assert.doesNotMatch(packagedSmoke, /runIcacls\(fixtureControlDirectory/,
+    'icacls directory edits do not preserve the canonical creation-time descriptor')
+  assert.match(packagedSmoke, /native\.verifyInstallationDirectory\(\)/)
+  assert.match(packagedSmoke, /native\.verifyInstallationManifest\(\)/,
+    'the actual packaged binding validates both ACLs before Playwright launch')
   assert.match(installerSmoke, /GetFolderPath\(\[Environment\+SpecialFolder\]::ApplicationData\)/,
     'Electron resolves the account known folder instead of an APPDATA override')
   assert.doesNotMatch(installerSmoke, /\$env:APPDATA\s*=/,

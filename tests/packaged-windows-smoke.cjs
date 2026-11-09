@@ -39,17 +39,22 @@ function runIcacls(target, args) {
 function createProtectedControlFixture() {
   if (!fixtureControlDirectory) throw new Error('ProgramData is unavailable for packaged smoke fixture')
   if (fs.existsSync(fixtureControlDirectory)) throw new Error('KaraokeQueue ProgramData fixture already exists; refusing to reuse it')
-  fs.mkdirSync(fixtureControlDirectory)
-  createdControlFixture = true
-  runIcacls(fixtureControlDirectory, ['/inheritance:r'])
-  runIcacls(fixtureControlDirectory, ['/grant:r', '*S-1-5-18:(OI)(CI)(F)', '*S-1-5-32-544:(OI)(CI)(F)', '*S-1-5-11:(OI)(CI)(RX)'])
-  runIcacls(fixtureControlDirectory, ['/setowner', '*S-1-5-32-544'])
+  const created = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File',
+    path.resolve(__dirname, '../scripts/create-windows-smoke-control.ps1'), '-FixturePath', fixtureControlDirectory],
+    { encoding: 'utf8', shell: false })
+  createdControlFixture = fs.existsSync(fixtureControlDirectory)
+  assert.equal(created.status, 0, `Canonical fixture creation failed: ${created.error?.message || created.stderr || created.stdout}`)
   const store = new InstallationControlStore(fixtureControlDirectory)
   store.initialize(createUnconfiguredManifest())
   runIcacls(path.join(fixtureControlDirectory, 'installation.json'), ['/setowner', '*S-1-5-32-544'])
   store.beginInitialRole('a10329b8-2c44-4aab-ae67-83ce5dd5b9ab', 0, 'combined')
   store.commitInitialRole('a10329b8-2c44-4aab-ae67-83ce5dd5b9ab')
   runIcacls(path.join(fixtureControlDirectory, 'installation.json'), ['/setowner', '*S-1-5-32-544'])
+  const native = require(path.join(fixtureInstallationDirectory, 'resources/native/win32-x64/kq_win32.node'))
+  for (const [name, result] of Object.entries({ directory: native.verifyInstallationDirectory(), manifest: native.verifyInstallationManifest() })) {
+    assert.equal(result.ok, true, `Production binding rejected ${name} fixture: Win32 ${result.code}`)
+  }
+  console.log('PACKAGED CONTROL PREFLIGHT PASS canonical owner/ACL verified by production binding')
 }
 
 function stageUnderProgramFiles() {

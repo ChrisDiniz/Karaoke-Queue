@@ -4,6 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { spawn, spawnSync } = require('node:child_process')
+const crypto = require('node:crypto')
 const { once } = require('node:events')
 const { _electron: electron } = require('playwright')
 const { waitForFixtureProcesses } = require('../scripts/windows-fixture-processes.cjs')
@@ -12,8 +13,15 @@ async function run() {
   assert.equal(process.platform, 'win32')
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'kq-packaged-cleanup-'))
   const runtime = path.join(scratch, 'runtime')
+  const control = path.join(os.tmpdir(), 'kq-protected-fixture-' + crypto.randomUUID())
   let application, child
   try {
+    const created = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-File',
+      path.resolve(__dirname, '../scripts/create-windows-smoke-control.ps1'), '-FixturePath', control, '-Synthetic'],
+      { encoding: 'utf8', shell: false })
+    assert.equal(created.status, 0, created.error?.message || created.stderr || created.stdout)
+    assert.match(created.stdout, /CANONICAL CONTROL FIXTURE PASS/)
+    console.log('WINDOWS CANONICAL CONTROL CREATION PASS synthetic owner / native descriptor readback')
     fs.cpSync(path.dirname(require('electron')), runtime, { recursive: true })
     const executable = path.join(runtime, 'electron.exe')
     const holder = path.join(scratch, 'holder.cjs')
@@ -69,6 +77,7 @@ $b.ToString()
     if (application) await application.close()
     waitForFixtureProcesses(runtime)
     fs.rmSync(scratch, { recursive: true, force: true })
+    fs.rmSync(control, { recursive: true, force: true })
   }
 }
 run().catch(error => { console.error(error); process.exitCode = 1 })
