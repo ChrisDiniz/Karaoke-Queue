@@ -131,3 +131,8 @@ Como ensaio orientativo no WSL2/Linux, depois de importar os 13.988 registros em
 ## Interface
 
 Player-only possui interface Doop implementada para importar/substituir o CSV e exibir metadados associados à música atual e aos itens da sequência local. Busca por artista/título/código no Controller, estados de disponibilidade na interface do catálogo e cartões de fila com metadados permanecem pendentes de desenho/integração próprios. Qualquer busca futura deve apresentar código/disponibilidade sem adicionar automaticamente à fila; a inserção continua sendo uma ação separada do Controller.
+
+
+## Welcome — 2026-11-09
+
+A configuração inicial reutiliza a importação parcial e o diálogo de problemas de Configurações. Player persiste relatório no banco próprio; no onboarding Combined, relatório é temporário e a confirmação protege a revisão do catálogo numa transação SQLite, sem nova migração. CSV estruturalmente inválido continua recusado. [Contrato e validação](fase-e-ajustes-instalacao-onboarding.md).

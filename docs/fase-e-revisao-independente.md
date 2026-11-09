@@ -578,3 +578,8 @@ O readback hosted também confirmou owner **BA** na fixture sintética do arquiv
 Checklist do proprietário para o candidato: conferir checksum; usar Windows descartável apropriado ou ambiente de homologação com backups consistentes; validar UAC/Cancelamento, as duas funções e setup adiado/CSV opcional; confirmar atalhos/títulos/taskbar; testar manutenção/troca somente pelo instalador, exclusividade entre contas/sessões e preservação dos bancos; registrar separadamente cada cenário real executado. Não restaurar backup sobre dados posteriores sem autorização específica. Os frames Doop continuam intactos; divergência do rodapé de rKUlA0rV8m contra A7 ainda exige validação textual.
 
 Este registro documental descreve o **primeiro artifact verde identificado acima**. O push documental subsequente terá seu próprio CI e artifact, sem alterar o código de produto; o resultado desse novo HEAD deve ser confirmado separadamente no encerramento do acompanhamento.
+
+
+## 25. Ajustes de instalação/onboarding solicitados — 2026-11-09
+
+[Contrato, correções e evidências novas](fase-e-ajustes-instalacao-onboarding.md). Revisão própria das alterações: limites privilegiados do diretório customizado, manutenção em cache protegido, reset de função após uninstall/reinstall preservando generation/fences e bancos, importação parcial no Welcome e testes reais das duas funções. Não constitui nova revisão independente read-only. PASS prévios não certificam inputs novos. Build e runner local registrados; CI/GUI/artifact novos aguardam execução. E1–E5 sem homologação, S1 PARTIAL.

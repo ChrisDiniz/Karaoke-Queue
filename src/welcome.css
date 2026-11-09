@@ -147,3 +147,7 @@ button { font: inherit; }
   .select-button { width: 100%; }
   .setup-footer { align-items: flex-end; }
 }
+
+[hidden] { display: none !important; }
+.welcome-index-spinner { width: 14px; height: 14px; flex: 0 0 14px; border: 1.5px solid #3a3a48; border-top-color: #9293ff; border-radius: 50%; animation: welcome-spin .8s linear infinite; }
+@keyframes welcome-spin { to { transform: rotate(360deg); } }

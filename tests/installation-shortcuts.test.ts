@@ -41,7 +41,7 @@ function fixture(configureInitialRole = true) {
   const shell = new FakeShortcutShell()
   const native = {
     isProcessElevated: () => true,
-    isExecutableInProgramFiles: () => true,
+    isExecutableInTrustedLocation: () => true,
     verifyInstallationDirectory: () => ({ ok: true, code: 0 }),
     verifyInstallationManifest: () => ({ ok: true, code: 0 }),
     getCommonProgramsDirectory: () => commonPrograms,
@@ -160,7 +160,7 @@ test('normal user, development, wrong generation, and non-Windows callers cannot
     }), /SHORTCUT_CONTEXT_INVALID/)
     const nonElevated = {
       isProcessElevated: () => false,
-      isExecutableInProgramFiles: () => true,
+      isExecutableInTrustedLocation: () => true,
       verifyInstallationDirectory: () => ({ ok: true, code: 0 }),
       verifyInstallationManifest: () => ({ ok: true, code: 0 }),
       getCommonProgramsDirectory: () => f.commonPrograms,

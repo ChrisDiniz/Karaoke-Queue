@@ -774,7 +774,7 @@ function generatedBuildPaths(manifests) {
       if (file.path === 'src/player-playback.html' || file.path === 'src/player-playback.css') {
         expected.add('build/src/' + file.path.slice(4))
       }
-      if (file.path === 'src/welcome.html' || file.path === 'src/welcome.css') {
+      if (file.path === 'src/welcome.html' || file.path === 'src/welcome.css' || file.path === 'src/catalog-import-dialog.css') {
         expected.add('build/src/' + file.path.slice(4))
       }
       if (file.path === 'src/standalone-player.html' || file.path === 'src/standalone-player.css') {

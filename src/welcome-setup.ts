@@ -74,9 +74,9 @@ export function requiresInitialWelcomeSetup(userDataDirectory: string): boolean 
 }
 
 /** Persists a retryable setup intent after a role has been explicitly selected. */
-export function beginInitialWelcomeSetup(userDataDirectory: string): void {
+export function beginInitialWelcomeSetup(userDataDirectory: string, newExplicitChoice = false): void {
   const current = readWelcomeSetupState(userDataDirectory)
-  if (current?.status === 'complete' || current?.status === 'pending') return
+  if (!newExplicitChoice && (current?.status === 'complete' || current?.status === 'pending')) return
   writeState(userDataDirectory, { version: 1, status: 'pending' })
 }
 

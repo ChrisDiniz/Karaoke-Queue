@@ -81,7 +81,7 @@ if (adminRequested) {
     try {
       if (process.platform !== 'win32') throw new Error('PACKAGED_PLATFORM_UNSUPPORTED')
       const native = loadWindowsInstallationBinding(process.resourcesPath, process.platform)
-      if (!native.isExecutableInProgramFiles()) throw new Error('INSTALLATION_IMAGE_UNTRUSTED')
+      if (!native.isExecutableInTrustedLocation()) throw new Error('INSTALLATION_IMAGE_UNTRUSTED')
       const programData = native.getProgramDataDirectory()
       if (typeof programData !== 'string' || !path.isAbsolute(programData)) throw new Error('INSTALLATION_PROGRAM_DATA_UNAVAILABLE')
       const store = new InstallationControlStore(path.join(programData, 'KaraokeQueue'))

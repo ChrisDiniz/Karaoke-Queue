@@ -114,7 +114,7 @@ export interface MusicCatalogRepository {
     revision: string
     importedAt: string
     sourceName?: string | null
-  }): void
+  }, expectedRevision?: string | null): void
   searchMusicCatalog(query: MusicCatalogDatabaseQuery): MusicCatalogDatabasePage
   getMusicCatalogRecordByVideoCode(videoCode: string): {
     metadata: MusicCatalogMetadata

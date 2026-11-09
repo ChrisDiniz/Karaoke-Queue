@@ -17,8 +17,8 @@ function verifyWindowsBuild(root = path.resolve(__dirname, '..')) {
   if (pkg.build.productName !== 'Karaoke Queue') fail('productName is not Karaoke Queue')
   if (pkg.build.appId !== 'com.karaoke.queue') fail('appId changed unexpectedly')
   if (pkg.build.win?.forceCodeSigning !== false) fail('unsigned experimental builds must remain permitted')
-  if (pkg.build.nsis?.perMachine !== true || pkg.build.nsis?.allowToChangeInstallationDirectory !== false) {
-    fail('NSIS must require one fixed machine-wide Program Files installation')
+  if (pkg.build.nsis?.perMachine !== true || pkg.build.nsis?.allowToChangeInstallationDirectory !== true) {
+    fail('NSIS must require one machine-wide installation with protected directory selection')
   }
   if (pkg.build.nsis?.include !== 'installer.nsh' || !fs.existsSync(path.join(pkg.build.directories.buildResources, 'installer.nsh'))) {
     fail('The protected machine-wide bootstrap NSIS include is missing')
@@ -59,7 +59,7 @@ function verifyWindowsBuild(root = path.resolve(__dirname, '..')) {
     'build/src/windows-function-identity.js',
     'build/src/installation-shortcuts.js',
     'build/welcome-preload.js', 'build/src/welcome-renderer.bundle.js',
-    'build/src/welcome.html', 'build/src/welcome.css',
+    'build/src/welcome.html', 'build/src/welcome.css', 'build/src/catalog-import-dialog.css',
     'build/src/index.html', 'build/src/style.css', 'build/src/app.js',
     'build/src/license-service.js', 'build/src/licensing.js', 'build/src/assets/karaoke-logo.png'
   ]

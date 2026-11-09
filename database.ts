@@ -554,7 +554,8 @@ function createMusicCatalogRepository(database: DatabaseSync, options: { persist
     inputRecords: readonly MusicCatalogRecord[],
     metadata: { revision: string; importedAt: string; sourceName?: string | null },
     inputIssues: readonly MusicCatalogImportIssue[] = [],
-    expectedGeneration?: number
+    expectedGeneration?: number,
+    expectedRevision?: string | null
   ): void => {
     const records = validateMusicCatalogRecords(inputRecords)
     const issues = options.persistImportIssues ? validateImportIssues(inputIssues) : []
@@ -568,6 +569,9 @@ function createMusicCatalogRepository(database: DatabaseSync, options: { persist
     }
     if (database.isTransaction) throw new Error('SQLite transaction is unresolved; catalog replacement is blocked.')
     transaction(database, () => {
+      if (expectedRevision !== undefined && readMetadata().revision !== expectedRevision) {
+        throw new MusicCatalogError('CATALOG_CHANGED_DURING_CONFIRMATION', 'O catálogo mudou durante a confirmação.')
+      }
       let nextImportGeneration: number | undefined
       if (options.persistImportIssues) {
         const state = database.prepare('SELECT generation FROM music_catalog_import_state WHERE singleton = 1')
@@ -627,8 +631,8 @@ function createMusicCatalogRepository(database: DatabaseSync, options: { persist
     })
   }
 
-  const replaceMusicCatalog = (inputRecords: readonly MusicCatalogRecord[], metadata: { revision: string; importedAt: string; sourceName?: string | null }): void => {
-    replaceMusicCatalogCore(inputRecords, metadata)
+  const replaceMusicCatalog = (inputRecords: readonly MusicCatalogRecord[], metadata: { revision: string; importedAt: string; sourceName?: string | null }, expectedRevision?: string | null): void => {
+    replaceMusicCatalogCore(inputRecords, metadata, [], undefined, expectedRevision)
   }
 
   const replaceMusicCatalogWithImportIssues = options.persistImportIssues

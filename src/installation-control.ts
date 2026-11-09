@@ -348,8 +348,8 @@ export class InstallationControlStore {
     }
     if (current.generation >= Number.MAX_SAFE_INTEGER) throw new InstallationControlError('GENERATION_EXHAUSTED', 'A geração não pode avançar com segurança.')
     const generation = current.generation + 1
-    const next: InstallationManifest = { ...current, generation, status: current.role === null ? 'unconfigured' : 'ready',
-      pending: null, lastCompletedOperation: { operationId, kind: 'restore-installation', generation, role: current.role } }
+    const next: InstallationManifest = { ...current, generation, status: 'unconfigured', role: null,
+      pending: null, lastCompletedOperation: { operationId, kind: 'restore-installation', generation, role: null } }
     this.writeAtomic(next, true)
     return next
   }

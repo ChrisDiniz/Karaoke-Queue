@@ -143,7 +143,7 @@ SectionEnd
     FileWrite $9 \"gate-error=$R9,$0,$1,$2,$3,$7\"
     FileClose $9`))
   let functions = [...source.matchAll(/Function un\.KQ_\w+[\s\S]*?FunctionEnd/g)]
-    .filter(match => !/SkipInternal/.test(match[0])).map(match => match[0]).join('\n')
+    .filter(match => !/SkipInternal|ActionPage/.test(match[0])).map(match => match[0]).join('\n')
   // Same production mutex code; only fixture names/admin ACL and trace writes
   // differ. Product NSIS, Program Files, ProgramData and registry are untouched.
   functions = functions.replaceAll('Global\\com.karaoke.queue.runtime.v1', runtimeName)

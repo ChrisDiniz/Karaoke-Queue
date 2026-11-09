@@ -4,9 +4,39 @@
 !include WinMessages.nsh
 !include installation-operation.nsh
 !include installation-fence.nsh
+!include installation-path.nsh
 
 !macro customCheckAppRunning
   !ifndef BUILD_UNINSTALLER
+  ${If} $KQInstallerExistingMachineInstall == "1"
+  ${AndIf} $INSTDIR != $KQRegisteredInstallDirectory
+    SetErrorLevel 231
+    MessageBox MB_OK|MB_ICONSTOP "A manutenção usa o local da instalação atual. Para mudar o local, desinstale e instale novamente; seus dados serão preservados." /SD IDOK
+    Abort
+  ${EndIf}
+  ${If} $KQInstallerExistingMachineInstall != "1"
+    ClearErrors
+    FindFirst $R7 $R8 "$INSTDIR\*"
+    kq_empty_target_loop:
+      ${If} ${Errors}
+        Goto kq_empty_target_done
+      ${EndIf}
+      ${If} $R8 != "."
+      ${AndIf} $R8 != ".."
+      ${AndIf} $R8 != ""
+        FindClose $R7
+        SetErrorLevel 233
+        MessageBox MB_OK|MB_ICONSTOP "Escolha uma pasta vazia para o Karaoke Queue. A pasta selecionada já contém arquivos e foi preservada." /SD IDOK
+        Abort
+      ${EndIf}
+      FindNext $R7 $R8
+      Goto kq_empty_target_loop
+    kq_empty_target_done:
+      FindClose $R7
+      ClearErrors
+  ${EndIf}
+  StrCpy $KQPathCreate 1
+  Call KQ_CheckInstallPath
   ${If} $KQManifestReinstall == "1"
     Call KQ_LockInstallationRecovery
   ${ElseIf} $KQManifestPending == "1"
@@ -27,16 +57,26 @@
 !ifdef BUILD_UNINSTALLER
 !insertmacro KQ_OPERATION_TREE "un."
 !insertmacro KQ_OPERATION_FENCE "un."
+!insertmacro KQ_INSTALL_PATH "un."
 ; The generated components page is internal and always skipped: the final
 ; mandatory section exists only to release on the section worker thread.
 !define MUI_PAGE_CUSTOMFUNCTION_PRE un.KQ_SkipInternalComponents
 Function un.KQ_SkipInternalComponents
   Abort
 FunctionEnd
+Var KQUninstallIsUpdated
 !macro customUnInit
-  StrCmp $INSTDIR "$PROGRAMFILES64\Karaoke Queue" +3
-    SetErrorLevel 2
+  StrCpy $KQUninstallIsUpdated "0"
+  ${If} ${isUpdated}
+    StrCpy $KQUninstallIsUpdated "1"
+  ${EndIf}
+  ReadRegStr $0 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ${If} $0 != $INSTDIR
+    SetErrorLevel 231
     Quit
+  ${EndIf}
+  StrCpy $KQPathCreate 0
+  Call un.KQ_CheckInstallPath
   ${GetParameters} $R0
   ClearErrors
   ${GetOptions} $R0 "--delete-app-data" $R1
@@ -61,6 +101,54 @@ FunctionEnd
     SetErrorLevel 2
     Quit
   ${EndIf}
+!macroend
+Var KQUninstallRepairChoice
+Var KQUninstallRemoveChoice
+Var KQUninstallControlDirectory
+Function un.KQ_ActionPageCreate
+  ${If} $KQUninstallIsUpdated == "1"
+    Abort
+  ${EndIf}
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+  ${NSD_CreateLabel} 0 0 100% 66u "O que deseja fazer com o Karaoke Queue?$\r$\n$\r$\nReparar abre o instalador para reinstalar os arquivos ou trocar entre Reprodutor e Tudo em um. Desinstalar remove o aplicativo e seus atalhos.$\r$\n$\r$\nEm ambos os casos, bancos, histórico, licença e configurações de cada conta Windows serão preservados."
+  Pop $0
+  ${NSD_CreateRadioButton} 0 78u 100% 24u "Reparar / trocar o modo do aplicativo"
+  Pop $KQUninstallRepairChoice
+  ${NSD_CreateRadioButton} 0 113u 100% 24u "Desinstalar o Karaoke Queue"
+  Pop $KQUninstallRemoveChoice
+  ${NSD_Check} $KQUninstallRepairChoice
+  GetDlgItem $0 $HWNDPARENT 1
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:Continuar"
+  nsDialogs::Show
+FunctionEnd
+Function un.KQ_ActionPageLeave
+  ${NSD_GetState} $KQUninstallRepairChoice $0
+  ${If} $0 == ${BST_CHECKED}
+    ${GetParent} "$KQFenceManifest" $KQUninstallControlDirectory
+    IfFileExists "$KQUninstallControlDirectory\maintenance.exe" 0 kq_no_cached_maintenance
+    SetOutPath $TEMP
+    ClearErrors
+    ExecWait '$\"$KQUninstallControlDirectory\maintenance.exe$\"' $0
+    ${If} ${Errors}
+      Goto kq_no_cached_maintenance
+    ${EndIf}
+    SetErrorLevel $0
+    Quit
+    kq_no_cached_maintenance:
+      MessageBox MB_OK|MB_ICONEXCLAMATION "O instalador de manutenção não está disponível. Baixe e execute o instalador do Karaoke Queue para reparar ou trocar o modo. Nenhum arquivo ou dado foi removido."
+      Abort
+  ${EndIf}
+  ${NSD_GetState} $KQUninstallRemoveChoice $0
+  ${If} $0 != ${BST_CHECKED}
+    Abort
+  ${EndIf}
+FunctionEnd
+!macro customUnWelcomePage
+  UninstPage custom un.KQ_ActionPageCreate un.KQ_ActionPageLeave
 !macroend
 Var KQUninstallAdminMutexHandle
 Var KQUninstallRuntimeMutexHandle
@@ -201,6 +289,7 @@ FunctionEnd
 !ifndef BUILD_UNINSTALLER
 !insertmacro KQ_OPERATION_TREE ""
 !insertmacro KQ_OPERATION_FENCE ""
+!insertmacro KQ_INSTALL_PATH ""
 
 !define KQ_INSTALLATION_DIRECTORY_SDDL "O:BAD:P(A;OICI;0x001f01ff;;;SY)(A;OICI;0x001f01ff;;;BA)(A;OICI;0x001200a9;;;AU)"
 !define KQ_INSTALLATION_OWNER_SDDL "O:BA"
@@ -218,6 +307,7 @@ Var KQManifestRole
 Var KQBootstrapPending
 Var KQManifestRestored
 Var KQRegisteredInstallDirectory
+Var KQMaintenanceRepair
 Var KQMaintenancePlayer
 Var KQMaintenanceCombined
 Var KQMaintenanceTargetRole
@@ -233,9 +323,6 @@ Function KQ_MaintenancePageCreate
   ${If} $KQInstallerExistingMachineInstall != "1"
     Abort
   ${EndIf}
-  ${If} $KQManifestUnconfigured == "1"
-    Abort
-  ${EndIf}
   ${If} $KQManifestPending == "1"
     Abort
   ${EndIf}
@@ -244,13 +331,21 @@ Function KQ_MaintenancePageCreate
   ${If} $0 == error
     Abort
   ${EndIf}
-  ${NSD_CreateLabel} 0 0 100% 22u "Selecione a função que ficará ativa após a manutenção:"
+  ${NSD_CreateLabel} 0 0 100% 62u "O Karaoke Queue já está instalado neste computador.$\r$\n$\r$\nReparar reinstala os arquivos e mantém o modo atual. Você também pode trocar o modo de uso. Bancos, histórico, licença, acervo e configurações de cada conta serão preservados. Feche o aplicativo normalmente antes de continuar."
   Pop $1
-  ${NSD_CreateRadioButton} 0 30u 100% 20u "Reprodutor"
+  ${NSD_CreateRadioButton} 0 74u 100% 20u "Reparar / reinstalar mantendo o modo atual"
+  Pop $KQMaintenanceRepair
+  ${NSD_Check} $KQMaintenanceRepair
+  ${If} $KQManifestUnconfigured == "1"
+    ${NSD_CreateLabel} 0 105u 100% 35u "O modo ainda não foi escolhido. Depois da instalação, abra o aplicativo para selecionar Reprodutor ou Tudo em um."
+    Pop $0
+    nsDialogs::Show
+    Return
+  ${EndIf}
+  ${NSD_CreateRadioButton} 0 104u 100% 20u "Trocar para Reprodutor"
   Pop $KQMaintenancePlayer
-  ${NSD_CreateRadioButton} 0 56u 100% 20u "Tudo em um"
+  ${NSD_CreateRadioButton} 0 134u 100% 20u "Trocar para Tudo em um"
   Pop $KQMaintenanceCombined
-  ${NSD_Check} $KQMaintenancePlayer
   nsDialogs::Show
 FunctionEnd
 
@@ -314,6 +409,11 @@ FunctionEnd
 
 Function KQ_MaintenancePageLeave
   ${If} $KQManifestReinstall == "1"
+    Return
+  ${EndIf}
+  ${NSD_GetState} $KQMaintenanceRepair $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $KQMaintenanceTargetRole ""
     Return
   ${EndIf}
   ${NSD_GetState} $KQMaintenancePlayer $0
@@ -592,9 +692,6 @@ FunctionEnd
 
 !macro customInit
   StrCpy $KQInstallerFailureCode 2
-  StrCmp $INSTDIR "$PROGRAMFILES64\Karaoke Queue" +3
-    SetErrorLevel 201
-    Quit
   ${GetParameters} $R0
   ClearErrors
   ${GetOptions} $R0 "--delete-app-data" $R1
@@ -696,6 +793,16 @@ FunctionEnd
 !macroend
 
 !macro customInstall
+  ; Cache the same installer for the Control Panel repair entry. Never use a
+  ; per-user download path as a future elevated maintenance executable.
+  ${If} $EXEPATH != "$KQInstallationDirectory\maintenance.exe"
+    ClearErrors
+    CopyFiles /SILENT "$EXEPATH" "$KQInstallationDirectory\maintenance.exe"
+    ${If} ${Errors}
+      SetErrorLevel 232
+      Abort "Não foi possível preparar a manutenção. Execute o instalador novamente; seus dados foram preservados."
+    ${EndIf}
+  ${EndIf}
   ${If} $KQManifestReinstall == "1"
     Call KQ_ReleaseMaintenanceMutexOwnership
     ClearErrors
@@ -741,6 +848,8 @@ FunctionEnd
     ${EndIf}
 
   ${EndIf}
+  WriteRegDWORD HKLM "${UNINSTALL_REGISTRY_KEY}" NoModify 0
+  WriteRegStr HKLM "${UNINSTALL_REGISTRY_KEY}" ModifyPath '$\"$KQInstallationDirectory\maintenance.exe$\"'
   Call KQ_CloseMaintenanceMutexHandles
 !macroend
 

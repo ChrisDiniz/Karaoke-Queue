@@ -38,8 +38,8 @@ test('package metadata and Windows target describe the x64 NSIS product', () => 
   assert.equal(pkg.build.asar, true)
   assert.equal(pkg.build.beforePack, './scripts/build-windows-installation-binding.cjs')
   assert.equal(pkg.build.nsis.perMachine, true, 'production NSIS is fixed to an elevated machine-wide install')
-  assert.equal(pkg.build.nsis.allowToChangeInstallationDirectory, false,
-    'the native binding trusts only the protected Program Files installation')
+  assert.equal(pkg.build.nsis.allowToChangeInstallationDirectory, true,
+    'the owner authorizes a directory picker with protected local-path validation')
   assert.equal(pkg.build.nsis.include, 'installer.nsh')
   assert.equal(pkg.build.nsis.createDesktopShortcut, false,
     'electron-builder must not recreate generic desktop shortcuts on updates')
@@ -73,8 +73,8 @@ test('package metadata and Windows target describe the x64 NSIS product', () => 
     'NSIS persists the maintenance intent before holding both mutexes over file replacement')
   assert.match(installerInclude, /repair-pending/,
     'the newly installed executable reconciles the durable update intent after file replacement')
-  assert.match(installerInclude, /\$\{NSD_CreateRadioButton\} 0 30u/)
-  assert.match(installerInclude, /\$\{NSD_CreateRadioButton\} 0 56u/)
+  assert.match(installerInclude, /\$\{NSD_CreateRadioButton\} 0 104u/)
+  assert.match(installerInclude, /\$\{NSD_CreateRadioButton\} 0 134u/)
   assert.doesNotMatch(installerInclude, /NSD_Create(?:First|Additional)RadioButton/)
   assert.match(installerInclude, /Page custom KQ_MaintenancePageCreate KQ_MaintenancePageLeave/)
   assert.match(installerInclude, /KQInstallerExistingMachineInstall != "1"[\s\S]*?Abort/,

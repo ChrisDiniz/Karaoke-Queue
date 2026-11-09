@@ -73,7 +73,7 @@ function nativeFor(root: string, overrides: Partial<InstallationNativeBinding> =
   const native: InstallationNativeBinding = {
     enterInstallationOperation: () => ({ status: 'delegated', code: 0 }),
     isProcessElevated: () => true,
-    isExecutableInProgramFiles: () => true,
+    isExecutableInTrustedLocation: () => true,
     getProgramDataDirectory: () => root,
     getCommonProgramsDirectory: () => path.join(root, 'Common Programs'),
     getPublicDesktopDirectory: () => path.join(root, 'Public Desktop'),
@@ -547,5 +547,31 @@ test('lost confirmation and maintenance ACKs return the completed operation with
     assert.equal(changeInstalledRoleCore('player', env, native, f.store, noSideEffects, fence).generation, 2)
     assert.throws(() => changeInstalledRoleCore('combined', env, native, f.store, noSideEffects, fence), /REUSE_CONFLICT/)
     assert.equal(f.store.read()?.role, 'player')
+  } finally { f.cleanup() }
+})
+
+for (const role of ['player', 'combined'] as const) test(`reinstall resets ${role} only after bootstrap readback, with restart and fenced retry`, () => {
+  const f = fixture()
+  try {
+    f.store.beginInitialRole(operationId, 0, role); f.store.commitInitialRole(operationId)
+    const profile = path.join(f.root, 'user-profile.sqlite'); fs.writeFileSync(profile, 'preserved synthetic data')
+    const uninstallId = crypto.randomUUID()
+    f.store.beginInstallationUninstall(uninstallId, 1)
+    const fence = snapshotFence(f.store)
+    assert.throws(() => restoreInstallationAfterUninstall({platform:'win32',isPackaged:true}, nativeFor(f.root).native,
+      f.store, provisionShortcuts([], true), fence), /SHORTCUT_WRITE_FAILED/)
+    assert.equal(f.store.read()?.role, role)
+    assert.equal(f.store.read()?.pending?.operationId, uninstallId)
+    const restartedStore = new InstallationControlStore(path.join(f.root, 'KaraokeQueue'))
+    let bootstrap = 0
+    const shortcuts = { synchronize() { assert.fail('reinstall must not revive the prior role') },
+      synchronizeBootstrap(id: string) { assert.equal(id, uninstallId); bootstrap++ } }
+    const result = restoreInstallationAfterUninstall({platform:'win32',isPackaged:true}, nativeFor(f.root).native,
+      restartedStore, shortcuts, fence)
+    assert.equal(result.status, 'unconfigured'); assert.equal(result.role, null); assert.equal(result.generation, 2)
+    assert.equal(restoreInstallationAfterUninstall({platform:'win32',isPackaged:true}, nativeFor(f.root).native,
+      restartedStore, shortcuts, fence).generation, 2)
+    assert.equal(bootstrap, 1)
+    assert.equal(fs.readFileSync(profile,'utf8'), 'preserved synthetic data')
   } finally { f.cleanup() }
 })

@@ -22,7 +22,7 @@ export interface ShortcutShell {
 
 export interface ShortcutInstallationNative {
   isProcessElevated(): boolean
-  isExecutableInProgramFiles(): boolean
+  isExecutableInTrustedLocation(): boolean
   verifyInstallationDirectory(): { ok: boolean; code: number }
   verifyInstallationManifest(): { ok: boolean; code: number }
   getCommonProgramsDirectory(): string | { status: string; code: number }
@@ -143,7 +143,7 @@ function removeManagedShortcut(
 export function synchronizeInitialFunctionShortcuts(options: SynchronizeInstallationShortcutsOptions): void {
   if (options.platform !== 'win32' || !VALID_OPERATION_ID.test(options.operationId) ||
       !path.isAbsolute(options.executablePath) || !path.isAbsolute(options.resourcesDirectory)) fail('SHORTCUT_CONTEXT_INVALID')
-  if (!options.native.isProcessElevated() || !options.native.isExecutableInProgramFiles()) fail('SHORTCUT_CONTEXT_UNTRUSTED')
+  if (!options.native.isProcessElevated() || !options.native.isExecutableInTrustedLocation()) fail('SHORTCUT_CONTEXT_UNTRUSTED')
   const directoryCheck = options.native.verifyInstallationDirectory()
   if (!directoryCheck.ok) fail(`INSTALLATION_DIRECTORY_UNTRUSTED:${directoryCheck.code}`)
   const manifestCheck = options.native.verifyInstallationManifest()
@@ -242,14 +242,15 @@ export function synchronizeBootstrapShortcuts(options: SynchronizeBootstrapShort
   if (options.platform !== 'win32' || !VALID_OPERATION_ID.test(options.operationId) || !path.isAbsolute(options.executablePath)) {
     fail('SHORTCUT_CONTEXT_INVALID')
   }
-  if (!options.native.isProcessElevated() || !options.native.isExecutableInProgramFiles()) fail('SHORTCUT_CONTEXT_UNTRUSTED')
+  if (!options.native.isProcessElevated() || !options.native.isExecutableInTrustedLocation()) fail('SHORTCUT_CONTEXT_UNTRUSTED')
   const directoryCheck = options.native.verifyInstallationDirectory()
   if (!directoryCheck.ok) fail(`INSTALLATION_DIRECTORY_UNTRUSTED:${directoryCheck.code}`)
   const manifestCheck = options.native.verifyInstallationManifest()
   if (!manifestCheck.ok) fail(`INSTALLATION_MANIFEST_UNTRUSTED:${manifestCheck.code}`)
   const manifest = options.store.read()
   if (!manifest || !['pending', 'repairRequired'].includes(manifest.status) || !manifest.pending || !['uninstall', 'prepare-update'].includes(manifest.pending?.kind ?? '') ||
-      manifest.pending.operationId !== options.operationId || manifest.pending.role !== null) fail('SHORTCUT_INTENT_MISMATCH')
+      manifest.pending.operationId !== options.operationId ||
+      (manifest.pending.kind !== 'uninstall' && manifest.pending.role !== null)) fail('SHORTCUT_INTENT_MISMATCH')
 
   const programsRoot = options.native.getCommonProgramsDirectory()
   const desktopRoot = options.native.getPublicDesktopDirectory()
@@ -267,6 +268,15 @@ export function synchronizeBootstrapShortcuts(options: SynchronizeBootstrapShort
     icon: options.executablePath,
     iconIndex: 0,
     appUserModelId: ''
+  }
+  if (manifest.pending.kind === 'uninstall') {
+    for (const role of ['player', 'combined'] as const) {
+      const identity = getWindowsFunctionIdentity(role)
+      for (const root of [menuDirectory, desktopRoot]) {
+        removeManagedShortcut(path.join(root, identity.displayName + '.lnk'), options.executablePath, options.shell,
+          getWindowsFunctionIdentity('player').appUserModelId, getWindowsFunctionIdentity('combined').appUserModelId)
+      }
+    }
   }
   const destinations = [path.join(menuDirectory, GENERIC_SHORTCUT), path.join(desktopRoot, GENERIC_SHORTCUT)]
   const staging = destinations.map(filePath => path.join(path.dirname(filePath),
@@ -316,7 +326,7 @@ export function removeManagedInstallationShortcuts(options: RemoveInstallationSh
   if (options.platform !== 'win32' || !path.isAbsolute(options.executablePath) || !path.isAbsolute(options.resourcesDirectory)) {
     fail('SHORTCUT_CONTEXT_INVALID')
   }
-  if (!options.native.isProcessElevated() || !options.native.isExecutableInProgramFiles()) fail('SHORTCUT_CONTEXT_UNTRUSTED')
+  if (!options.native.isProcessElevated() || !options.native.isExecutableInTrustedLocation()) fail('SHORTCUT_CONTEXT_UNTRUSTED')
   const directoryCheck = options.native.verifyInstallationDirectory()
   if (!directoryCheck.ok) fail(`INSTALLATION_DIRECTORY_UNTRUSTED:${directoryCheck.code}`)
   const programsRoot = options.native.getCommonProgramsDirectory()

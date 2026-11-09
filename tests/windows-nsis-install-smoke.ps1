@@ -22,7 +22,9 @@ $expectedUserData = Join-Path $accountAppData $package.name
 $profileCleanupAllowed = $false
 $userDataDirectory = $null
 $sqlitePath = $null
-$installDirectory = Join-Path $programFiles 'Karaoke Queue'
+$fixtureParent = Join-Path ([IO.Path]::GetPathRoot($programFiles)) ("Karaoke Queue Custom CI-$PID")
+$installDirectory = Join-Path $fixtureParent 'Karaoke Queue'
+if (Test-Path -LiteralPath $fixtureParent) { throw 'Custom installation fixture already exists; preserved.' }
 $controlDirectory = Join-Path $programData 'KaraokeQueue'
 $controlManifest = Join-Path $controlDirectory 'installation.json'
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::CommonDesktopDirectory)) 'Karaoke Queue.lnk'
@@ -125,15 +127,16 @@ function Assert-ShortcutTarget([string]$LinkPath) {
 try {
   $installerHash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
   $installStarted = $true
-  $install = Invoke-FixtureProcess $installer @('/S')
+  $install = Invoke-FixtureProcess $installer @('/S', "/D=$installDirectory")
   if ($install.ExitCode -ne 0) { throw "NSIS instalação terminou com exit code $($install.ExitCode)." }
   if (-not (Test-Path -LiteralPath (Join-Path $installDirectory 'Karaoke Queue.exe') -PathType Leaf)) {
-    throw 'NSIS não instalou o executável no Program Files fixo.'
+    throw 'NSIS não instalou o executável no local personalizado escolhido.'
   }
 
   Assert-ProtectedManifestWithProductBinding
   Assert-ShortcutTarget $desktopShortcut
   Assert-ShortcutTarget $startMenuShortcut
+  & (Join-Path $PSScriptRoot 'windows-nsis-maintenance-ui.ps1') -InstallDirectory $installDirectory -ControlDirectory $controlDirectory
 
   $env:KQ_NSI_SMOKE_EXECUTABLE = Join-Path $installDirectory 'Karaoke Queue.exe'
   $probeOutput = @(& node.exe (Join-Path $PSScriptRoot 'windows-nsis-userdata-path.cjs') 2>&1)
@@ -217,7 +220,7 @@ fs.writeFileSync(path.join(process.env.KQ_NSI_SMOKE_USERDATA, 'operating-mode.js
   if (Test-Path -LiteralPath $desktopShortcut -PathType Leaf) { throw 'Uninstall deixou atalho gerenciado no Desktop público.' }
   if (Test-Path -LiteralPath $startMenuShortcut -PathType Leaf) { throw 'Uninstall deixou atalho gerenciado no Menu Iniciar.' }
 
-  $reinstall = Invoke-FixtureProcess $installer @('/S')
+  $reinstall = Invoke-FixtureProcess $installer @('/S', "/D=$installDirectory")
   if ($reinstall.ExitCode -ne 0) { throw "Reinstall após uninstall terminou com exit code $($reinstall.ExitCode)." }
   $reinstalledManifest = Get-Content -LiteralPath $controlManifest -Raw | ConvertFrom-Json
   if ($reinstalledManifest.installationId -ne $fixtureInstallationId -or $reinstalledManifest.status -ne 'unconfigured' -or
@@ -227,6 +230,9 @@ fs.writeFileSync(path.join(process.env.KQ_NSI_SMOKE_USERDATA, 'operating-mode.js
   }
   Assert-ShortcutTarget $desktopShortcut
   Assert-ShortcutTarget $startMenuShortcut
+  $env:KQ_NSI_FIXTURE_INSTALLATION_ID = $fixtureInstallationId
+  & node.exe (Join-Path $PSScriptRoot 'windows-nsis-active-app.cjs')
+  if ($LASTEXITCODE -ne 0) { throw 'Reinstall não abriu novamente a escolha de modo ou perdeu a exclusão.' }
   Invoke-FixtureUninstall $uninstaller
   if (Test-Path -LiteralPath $installDirectory) { throw 'Segundo uninstall deixou arquivos na instalação.' }
   if ((Test-Path -LiteralPath $desktopShortcut) -or (Test-Path -LiteralPath $startMenuShortcut)) {
@@ -291,6 +297,15 @@ finally {
         }
       }
     } catch { $cleanupErrors.Add("manifesto sintético próprio: $($_.Exception.Message)") }
+  }
+  if ($safeToCleanFixtures -and (Test-Path -LiteralPath $fixtureParent)) {
+    try {
+      $parent = Get-Item -LiteralPath $fixtureParent -Force
+      if (-not ($parent.Attributes -band [IO.FileAttributes]::ReparsePoint) -and
+          @(Get-ChildItem -LiteralPath $fixtureParent -Force).Count -eq 0) {
+        Remove-Item -LiteralPath $fixtureParent -ErrorAction Stop
+      }
+    } catch { $cleanupErrors.Add("custom parent fixture: $($_.Exception.Message)") }
   }
   foreach ($cleanupError in $cleanupErrors) { Write-Warning "Cleanup incompleto no runner descartável: $cleanupError" }
 }

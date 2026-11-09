@@ -89,6 +89,8 @@ export interface MusicCatalogConfirmedPartialImport {
 interface PreparedStandaloneCatalogImport {
   readonly token: string
   readonly expectedGeneration: number
+  readonly expectedRevision: string | null
+  readonly transientReport: boolean
   readonly filePath: string
   readonly parsed: ParsedMusicCatalogWithIssues
 }
@@ -233,6 +235,7 @@ export class MusicCatalogService {
   private pendingImports = 0
   private closing = false
   private closePromise: Promise<void> | undefined
+  private welcomeIssues: readonly MusicCatalogImportIssue[] = []
   private preparedStandaloneImport: PreparedStandaloneCatalogImport | undefined
   private readonly revisionListeners = new Set<(revision: string | null) => void>()
 
@@ -276,26 +279,28 @@ export class MusicCatalogService {
   }
 
   /** Prepares a Standalone replacement; only invalid music-number rows may be skipped. */
-  prepareStandaloneImport(filePath: unknown): Promise<MusicCatalogImportPreparation> {
+  prepareStandaloneImport(filePath: unknown, transientReport = false): Promise<MusicCatalogImportPreparation> {
     return this.enqueueImport(async () => {
       if (this.preparedStandaloneImport) {
         throw new MusicCatalogError('CATALOG_IMPORT_BUSY', 'Há uma confirmação de catálogo pendente.')
       }
-      if (!this.repository.replaceMusicCatalogWithImportIssues || !this.repository.getMusicCatalogImportIssuePage) {
+      if (!transientReport && (!this.repository.replaceMusicCatalogWithImportIssues || !this.repository.getMusicCatalogImportIssuePage)) {
         throw new MusicCatalogError('DATABASE_FAILURE', 'O relatório de importação parcial não está disponível neste armazenamento de catálogo.')
       }
       const bytes = await readSelectedCatalog(filePath)
       const parsed = parseMusicCatalogCsvWithRecoverableIssues(bytes)
       const current = this.repository.getMusicCatalogMetadata()
       if (parsed.issues.length === 0) {
+        this.welcomeIssues = []
         const result = this.commitCatalog(parsed, filePath)
         return { outcome: 'imported', result }
       }
-      const currentReport = this.repository.getMusicCatalogImportIssuePage(0, 1)
+      const currentReport = this.repository.getMusicCatalogImportIssuePage?.(0, 1)
       const token = randomUUID()
       this.preparedStandaloneImport = {
         token,
-        expectedGeneration: currentReport.generation,
+        expectedGeneration: currentReport?.generation ?? 0,
+        expectedRevision: current.revision, transientReport,
         filePath: filePath as string,
         parsed
       }
@@ -317,14 +322,17 @@ export class MusicCatalogService {
         throw new MusicCatalogError('CATALOG_REPORT_STALE', 'A confirmação de importação não está mais disponível.')
       }
       const replace = this.repository.replaceMusicCatalogWithImportIssues
-      if (!replace) throw new MusicCatalogError('DATABASE_FAILURE', 'O armazenamento não aceita relatórios de importação.')
+      if (!replace && !prepared.transientReport) throw new MusicCatalogError('DATABASE_FAILURE', 'O armazenamento não aceita relatórios de importação.')
       const importedAt = new Date().toISOString()
       try {
-        replace.call(this.repository, prepared.parsed.records, {
+        if (replace) replace.call(this.repository, prepared.parsed.records, {
           revision: prepared.parsed.revision,
           importedAt,
           sourceName: catalogSourceName(prepared.filePath)
           }, prepared.parsed.issues, prepared.expectedGeneration)
+        else this.repository.replaceMusicCatalog(prepared.parsed.records, {
+          revision: prepared.parsed.revision, importedAt, sourceName: catalogSourceName(prepared.filePath)
+        }, prepared.expectedRevision)
       } catch (error) {
         if (error instanceof MusicCatalogError && error.code === 'CATALOG_CHANGED_DURING_CONFIRMATION') {
           this.preparedStandaloneImport = undefined
@@ -335,6 +343,7 @@ export class MusicCatalogService {
       if (committed.revision !== prepared.parsed.revision || committed.recordCount !== prepared.parsed.recordCount) {
         throw new MusicCatalogError('DATABASE_FAILURE', 'A importação não confirmou a nova revisão do catálogo.')
       }
+      this.welcomeIssues = prepared.parsed.issues
       this.preparedStandaloneImport = undefined
       this.publishRevision(committed.revision)
       return {
@@ -352,6 +361,14 @@ export class MusicCatalogService {
     if (!prepared || typeof token !== 'string' || token !== prepared.token) return false
     this.preparedStandaloneImport = undefined
     return true
+  }
+
+  getWelcomeImportIssues(offset = 0, limit = 50): { total: number; offset: number; issues: MusicCatalogImportIssue[] } {
+    this.ensureOpen()
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000 ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('CATALOG_ISSUE_PAGE_INVALID')
+    const issues = this.preparedStandaloneImport?.parsed.issues ?? this.welcomeIssues
+    return { total: issues.length, offset, issues: issues.slice(offset, offset + limit).map(issue => ({ ...issue })) }
   }
 
   getStandaloneImportIssuePage(offset: number, limit: number): MusicCatalogImportIssuePage {

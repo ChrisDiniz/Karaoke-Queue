@@ -1,3 +1,4 @@
+import { WelcomeMediaSetup } from './src/welcome-media-setup'
 import { app, BrowserWindow, clipboard, crashReporter, dialog, ipcMain, protocol, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -121,6 +122,10 @@ function activateMainWindow(): void {
   win.focus()
 }
 
+let welcomeMediaSetup: WelcomeMediaSetup | undefined
+let welcomeMediaDrained = false
+let welcomeMediaDrain: Promise<void> | undefined
+
 function createWelcomeWindow(): BrowserWindow {
   const documentPath = path.join(__dirname, 'src', 'welcome.html')
   const win = createWelcomeWindowSurface({
@@ -139,6 +144,13 @@ function createWelcomeWindow(): BrowserWindow {
     forbiddenCode: 'WELCOME_IPC_FORBIDDEN'
   })
   let onboardingRole: OperatingMode | null = getPackagedInstalledRole() ?? null
+  let mediaSelectionBusy = false
+  const media = () => {
+    if (!onboardingRole) throw new Error('WELCOME_SETUP_UNAVAILABLE')
+    return welcomeMediaSetup ??= new WelcomeMediaSetup(userDataDirectory, onboardingRole, state => {
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send('welcome:media-changed', state)
+    })
+  }
   let setupInProgress = false
   let modeConfirmationInProgress = false
   ipcMain.handle('welcome:get-state', event => {
@@ -147,7 +159,8 @@ function createWelcomeWindow(): BrowserWindow {
     return {
       page: onboardingRole ? 'setup' : 'mode',
       role: onboardingRole,
-      libraryRoot: configuration.roots[0] ?? null
+      libraryRoot: configuration.roots[0] ?? null,
+      media: onboardingRole ? media().snapshot() : null
     }
   })
   ipcMain.handle('welcome:choose-mode', async (event, mode: unknown) => {
@@ -161,7 +174,7 @@ function createWelcomeWindow(): BrowserWindow {
       modeConfirmationInProgress = true
       try {
         await confirmInitialRoleThroughUac(mode, { native: context.native, store: context.store,
-          onConfirmed: () => beginInitialWelcomeSetup(userDataDirectory),
+          onConfirmed: () => beginInitialWelcomeSetup(userDataDirectory, true),
           releaseRuntimeGate: () => context.runtimeGate.release(),
           restoreRuntimeGate: () => {
             const restored = acquirePackagedInstallationState(context.native, context.store)
@@ -179,36 +192,52 @@ function createWelcomeWindow(): BrowserWindow {
       } finally { modeConfirmationInProgress = false }
     }
     writeOperatingModeConfiguration(userDataDirectory, mode)
-    beginInitialWelcomeSetup(userDataDirectory)
+    beginInitialWelcomeSetup(userDataDirectory, true)
     onboardingRole = mode
     return { page: 'setup', role: mode }
   })
   ipcMain.handle('welcome:choose-library', async event => {
     assertWelcomeIpcSender(event)
-    if (!onboardingRole || setupInProgress) throw new Error('WELCOME_SETUP_UNAVAILABLE')
-    const owner = BrowserWindow.fromWebContents(event.sender)
-    const options: Electron.OpenDialogOptions = { title: 'Selecionar pasta de vídeos', properties: ['openDirectory'] }
-    const selection = owner && !owner.isDestroyed()
-      ? await dialog.showOpenDialog(owner, options)
-      : await dialog.showOpenDialog(options)
-    if (selection.canceled || selection.filePaths.length !== 1) return { cancelled: true as const }
-    return { cancelled: false as const, path: selection.filePaths[0] }
+    if (!onboardingRole || setupInProgress || mediaSelectionBusy) throw new Error('WELCOME_SETUP_UNAVAILABLE')
+    mediaSelectionBusy = true
+    try {
+      const selection = await dialog.showOpenDialog(win, { title: 'Selecionar pasta de vídeos', properties: ['openDirectory'] })
+      if (selection.canceled || selection.filePaths.length !== 1) return { cancelled: true as const }
+      await media().applyLibrary(selection.filePaths[0])
+      return { cancelled: false as const, path: selection.filePaths[0], media: media().snapshot() }
+    } finally { mediaSelectionBusy = false }
   })
   ipcMain.handle('welcome:choose-catalog', async event => {
     assertWelcomeIpcSender(event)
-    if (!onboardingRole || setupInProgress) throw new Error('WELCOME_SETUP_UNAVAILABLE')
-    const owner = BrowserWindow.fromWebContents(event.sender)
-    const options: Electron.OpenDialogOptions = { title: 'Importar catálogo de músicas', properties: ['openFile'],
-      filters: [{ name: 'Catálogo CSV', extensions: ['csv'] }] }
-    const selection = owner && !owner.isDestroyed()
-      ? await dialog.showOpenDialog(owner, options)
-      : await dialog.showOpenDialog(options)
-    if (selection.canceled || selection.filePaths.length !== 1) return { cancelled: true as const }
-    return { cancelled: false as const, path: selection.filePaths[0] }
+    if (!onboardingRole || setupInProgress || mediaSelectionBusy) throw new Error('WELCOME_SETUP_UNAVAILABLE')
+    mediaSelectionBusy = true
+    try {
+      const selection = await dialog.showOpenDialog(win, { title: 'Importar catálogo de músicas', properties: ['openFile'],
+        filters: [{ name: 'Catálogo CSV', extensions: ['csv'] }] })
+      if (selection.canceled || selection.filePaths.length !== 1) return { cancelled: true as const }
+      const preparation = await media().prepareCatalog(selection.filePaths[0])
+      return { cancelled: false as const, path: selection.filePaths[0], preparation }
+    } finally { mediaSelectionBusy = false }
+  })
+  ipcMain.handle('welcome:confirm-catalog', async (event, token: unknown) => {
+    assertWelcomeIpcSender(event)
+    if (setupInProgress || mediaSelectionBusy) throw new Error('WELCOME_SETUP_UNAVAILABLE')
+    return media().confirmCatalog(token)
+  })
+  ipcMain.handle('welcome:cancel-catalog', (event, token: unknown) => {
+    assertWelcomeIpcSender(event)
+    if (setupInProgress || mediaSelectionBusy) throw new Error('WELCOME_SETUP_UNAVAILABLE')
+    media().cancelCatalog(token)
+  })
+  ipcMain.handle('welcome:catalog-issues', (event, offset: unknown) => {
+    assertWelcomeIpcSender(event)
+    if (setupInProgress || mediaSelectionBusy || typeof offset !== 'number') throw new Error('WELCOME_SETUP_UNAVAILABLE')
+    return media().issues(offset)
   })
   ipcMain.handle('welcome:complete-setup', async (event, rawSelection: unknown) => {
     assertWelcomeIpcSender(event)
-    if (!onboardingRole || setupInProgress) throw new Error('WELCOME_SETUP_UNAVAILABLE')
+    if (!onboardingRole || setupInProgress || mediaSelectionBusy) throw new Error('WELCOME_SETUP_UNAVAILABLE')
+    if (welcomeMediaSetup?.pendingCatalog) throw new Error('CATALOG_CONFIRMATION_REQUIRED')
     const selection = rawSelection as WelcomeSetupSelection
     setupInProgress = true
     try {
@@ -218,6 +247,8 @@ function createWelcomeWindow(): BrowserWindow {
         const persisted = resolveOperatingMode(readOperatingModeConfiguration(userDataDirectory).mode)
         if (persisted !== onboardingRole) throw new Error('WELCOME_ROLE_CHANGED')
       }
+      await welcomeMediaSetup?.close()
+      welcomeMediaSetup = undefined
       await completeInitialWelcomeSetup(userDataDirectory, onboardingRole, selection)
       app.relaunch()
       app.quit()
@@ -227,7 +258,7 @@ function createWelcomeWindow(): BrowserWindow {
   win.once('closed', () => {
     if (welcomeWindow === win) welcomeWindow = null
     for (const channel of ['welcome:get-state', 'welcome:choose-mode', 'welcome:choose-library',
-      'welcome:choose-catalog', 'welcome:complete-setup']) ipcMain.removeHandler(channel)
+      'welcome:choose-catalog', 'welcome:complete-setup', 'welcome:confirm-catalog', 'welcome:cancel-catalog', 'welcome:catalog-issues']) ipcMain.removeHandler(channel)
   })
   void win.loadFile(documentPath)
   return win
@@ -1050,6 +1081,20 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 })
 
 if (hasSingleInstanceLock) app.on('before-quit', (event) => {
+  if (welcomeMediaSetup && !welcomeMediaDrained) {
+    event.preventDefault()
+    if (!welcomeMediaDrain) {
+      welcomeMediaDrain = welcomeMediaSetup.close().then(() => {
+        welcomeMediaDrained = true
+        app.quit()
+      }).catch(error => {
+        logger.error('catalog', 'WELCOME_MEDIA_CLOSE_FAILED', 'O fechamento da configuração inicial falhou.', error)
+        dialog.showErrorBox('Não foi possível fechar a configuração', 'Os dados não foram descartados. Tente fechar o aplicativo novamente.')
+        welcomeMediaDrain = undefined
+      })
+    }
+    return
+  }
   if (modeCapabilities?.controller && managementInitializationTask) {
     event.preventDefault()
     if (!managementQuitDrainRunning) {

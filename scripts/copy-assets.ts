@@ -19,6 +19,7 @@ fs.copyFileSync(path.join(projectRoot, 'src', 'player-playback.html'), path.join
 fs.copyFileSync(path.join(projectRoot, 'src', 'player-playback.css'), path.join(rendererOutput, 'player-playback.css'))
 fs.copyFileSync(path.join(projectRoot, 'src', 'welcome.html'), path.join(rendererOutput, 'welcome.html'))
 fs.copyFileSync(path.join(projectRoot, 'src', 'welcome.css'), path.join(rendererOutput, 'welcome.css'))
+fs.copyFileSync(path.join(projectRoot, 'src', 'catalog-import-dialog.css'), path.join(rendererOutput, 'catalog-import-dialog.css'))
 fs.copyFileSync(path.join(projectRoot, 'src', 'standalone-player.html'), path.join(rendererOutput, 'standalone-player.html'))
 fs.copyFileSync(path.join(projectRoot, 'src', 'standalone-player.css'), path.join(rendererOutput, 'standalone-player.css'))
 fs.cpSync(path.join(projectRoot, 'src', 'assets'), path.join(rendererOutput, 'assets'), { recursive: true })

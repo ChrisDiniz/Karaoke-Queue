@@ -118,7 +118,7 @@ test('an update of an unconfigured installation preserves null role through pend
   } finally { f.cleanup() }
 })
 
-test('uninstall intent blocks the old role and a later reinstall restores only that recorded role', () => {
+test('uninstall intent blocks the old role and reinstall requires a new explicit choice', () => {
   const f = fixture()
   const uninstallId = '5bc1b410-4a8b-499a-b5e5-4cf2b2209098'
   try {
@@ -135,9 +135,9 @@ test('uninstall intent blocks the old role and a later reinstall restores only t
     const restored = f.store.restoreInstallationAfterUninstall(uninstallId)
     assert.deepEqual({ status: restored.status, role: restored.role, generation: restored.generation,
       identityRevision: restored.identityRevision },
-    { status: 'ready', role: 'combined', generation: 2, identityRevision: 1 })
+    { status: 'unconfigured', role: null, generation: 2, identityRevision: 1 })
     assert.deepEqual(restored.lastCompletedOperation,
-      { operationId: uninstallId, kind: 'restore-installation', generation: 2, role: 'combined' })
+      { operationId: uninstallId, kind: 'restore-installation', generation: 2, role: null })
     assert.equal(f.store.restoreInstallationAfterUninstall(uninstallId).generation, 2,
       'reinstall retry after lost acknowledgement is idempotent')
   } finally { f.cleanup() }

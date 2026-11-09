@@ -347,6 +347,52 @@ async function runWelcomeSelectsOnlyFinalModes() {
   }
 }
 
+async function runWelcomeSharedMediaSetup() {
+  for (const mode of ['player','combined']) {
+    const profile = makeProfile('welcome-shared-media-' + mode)
+    const root = path.join(profile.root,'videos'); fs.mkdirSync(root,{recursive:true})
+    fs.writeFileSync(path.join(root,'01001.mp4'),'inventory only')
+    const file = path.join(profile.root,'partial.csv')
+    fs.writeFileSync(file,'numero;artista;nome_musica\n1001;Artist;Title\n'+Array.from({length:61},(_,i)=>`bad${i};A;T`).join('\n'))
+    let app
+    try {
+      app = await launch(profile)
+      await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].setContentSize(1280,800))
+      const page = await app.firstWindow()
+      await page.locator(`.mode-card[data-mode="${mode}"]`).click()
+      await page.locator('#welcome-continue').click()
+      await page.locator('#welcome-setup-page').waitFor({state:'visible'})
+      await app.evaluate(({dialog},paths) => {
+        let next=0; dialog.showOpenDialog = async () => ({canceled:false,filePaths:[paths[next++]]})
+      },[root,file,file])
+      await page.evaluate(() => { window.welcomeScanStates=[]; window.karaokeWelcome.onMediaChanged(state => window.welcomeScanStates.push(state.library.scanStatus)) })
+      await page.locator('#welcome-library-choose').click()
+      await page.waitForFunction(() => document.querySelector('#welcome-library-status').textContent.includes('1 vídeos indexados'))
+      await page.waitForFunction(() => window.welcomeScanStates.includes('ready'))
+      assert.deepEqual(await page.evaluate(() => window.welcomeScanStates),['scanning','ready'])
+      await page.locator('#welcome-catalog-choose').click()
+      await page.locator('#welcome-catalog-dialog').waitFor({state:'visible'})
+      await page.waitForFunction(() => document.querySelectorAll('#welcome-catalog-issues-list li').length===50)
+      assert.equal(await page.locator('#welcome-catalog-dialog-cancel').evaluate(node=>node===document.activeElement),true)
+      await page.locator('#welcome-catalog-dialog-cancel').click()
+      await page.locator('#welcome-catalog-dialog').waitFor({state:'hidden'})
+      await page.locator('#welcome-catalog-choose').click()
+      await page.locator('#welcome-catalog-dialog').waitFor({state:'visible'})
+      await page.waitForFunction(() => document.querySelectorAll('#welcome-catalog-issues-list li').length===50)
+      await page.locator('#welcome-catalog-issues-next').click()
+      await page.waitForFunction(() => document.querySelectorAll('#welcome-catalog-issues-list li').length===11)
+      await page.locator('#welcome-catalog-dialog-confirm').click()
+      await page.waitForFunction(() => document.querySelector('#welcome-catalog-status').textContent.includes('61 registros ignorados'))
+      await page.locator('#welcome-catalog-dialog-cancel').click()
+      const dbFile = path.join(profile.userData, mode==='player'?'player-music-catalog.sqlite':'karaoke.sqlite')
+      const db = new DatabaseSync(dbFile,{readOnly:true})
+      try { assert.equal(db.prepare('SELECT count(*) AS n FROM music_catalog').get().n,1) } finally { db.close() }
+      const screenshots = process.env.KARAOKE_UI_SCREENSHOT_DIR
+      if(screenshots) { fs.mkdirSync(screenshots,{recursive:true}); await page.screenshot({path:path.join(screenshots,'welcome-media-'+mode+'.png'),scale:'css'}) }
+    } finally { await forceClose(app) }
+  }
+}
+
 async function runConfigureLaterAfterInvalidCatalog() {
   const profile = makeProfile('configure-later-after-invalid-catalog')
   const libraryRoot = path.join(profile.root, 'media')
@@ -367,9 +413,8 @@ async function runConfigureLaterAfterInvalidCatalog() {
     }, [libraryRoot, invalidCatalog])
     await page.locator('#welcome-library-choose').click()
     await page.locator('#welcome-catalog-choose').click()
-    await page.locator('#welcome-setup-continue').click()
     await page.locator('#welcome-setup-error').waitFor({ state: 'visible' })
-    assert.match(await page.locator('#welcome-setup-error').textContent(), /não foi possível salvar/i)
+    assert.match(await page.locator('#welcome-setup-error').textContent(), /não foi possível selecionar o catálogo/i)
     await page.locator('#welcome-configure-later').click()
     const process = app.process()
     await new Promise((resolve, reject) => {
@@ -565,6 +610,8 @@ async function run() {
     process.stdout.write('OPERATING_MODE PASS missing legacy mode configuration resolves to Combined without writing\n')
     await runWelcomeSelectsOnlyFinalModes()
     process.stdout.write('OPERATING_MODE PASS Welcome presents and persists only Player and Combined\n')
+    await runWelcomeSharedMediaSetup()
+    process.stdout.write('OPERATING_MODE PASS Welcome indexing and shared partial CSV report for both roles\n')
     await runConfigureLaterAfterInvalidCatalog()
     process.stdout.write('OPERATING_MODE PASS Configure later skips invalid CSV and preserves confirmed library data\n')
     await runPlayerWithoutControllerState()

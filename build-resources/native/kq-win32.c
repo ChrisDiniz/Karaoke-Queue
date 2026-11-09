@@ -261,10 +261,67 @@ static int current_executable_is_in_program_files(void) {
   return matches;
 }
 
+
+/* Registered custom paths require the same protected-code boundary as Program
+ * Files. No unprivileged owner or ACE may replace an ancestor or mutate code. */
+static int privileged_install_sid(PSID sid) {
+  PSID trusted = NULL;
+  int result = IsWellKnownSid(sid, WinLocalSystemSid) || IsWellKnownSid(sid, WinBuiltinAdministratorsSid);
+  if (!result && ConvertStringSidToSidW(L"S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464", &trusted)) {
+    result = EqualSid(sid, trusted); LocalFree(trusted);
+  }
+  return result;
+}
+static int safe_install_acl(const WCHAR *path, DWORD forbidden) {
+  PSECURITY_DESCRIPTOR sd = NULL; PSID owner = NULL; PACL acl = NULL;
+  DWORD error = GetNamedSecurityInfoW((LPWSTR)path, SE_FILE_OBJECT,
+    OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, NULL, &acl, NULL, &sd);
+  int safe = error == ERROR_SUCCESS && owner && privileged_install_sid(owner) && acl && IsValidAcl(acl);
+  if (safe) for (DWORD i = 0; i < acl->AceCount; ++i) {
+    void *entry = NULL;
+    if (!GetAce(acl, i, &entry)) { safe = 0; break; }
+    ACE_HEADER *header = (ACE_HEADER *)entry;
+    if (header->AceFlags & INHERIT_ONLY_ACE) continue;
+    if (header->AceType == ACCESS_DENIED_ACE_TYPE) continue;
+    if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) { safe = 0; break; }
+    ACCESS_ALLOWED_ACE *ace = (ACCESS_ALLOWED_ACE *)entry;
+    if ((ace->Mask & forbidden) && !privileged_install_sid(&ace->SidStart)) { safe = 0; break; }
+  }
+  if (sd) LocalFree(sd);
+  return safe;
+}
+static int current_executable_in_trusted_location(void) {
+  if (current_executable_is_in_program_files()) return 1; /* existing protected Windows layout */
+  WCHAR installed[4096], image[4096], full[4096]; DWORD bytes = sizeof(installed);
+  if (RegGetValueW(HKEY_LOCAL_MACHINE, L"Software\\7792ee38-9a49-5e2e-a032-ba1be2d8f3a5", L"InstallLocation",
+      RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY, NULL, installed, &bytes) != ERROR_SUCCESS) return 0;
+  DWORD length = GetModuleFileNameW(NULL, image, 4096);
+  DWORD normalized = GetFullPathNameW(installed, 4096, full, NULL);
+  if (!length || length >= 4096 || !normalized || normalized >= 4096) return 0;
+  size_t n = wcslen(full); while (n > 3 && full[n-1] == L'\\') full[--n] = 0;
+  if (length <= n || CompareStringOrdinal(image, (int)n, full, (int)n, TRUE) != CSTR_EQUAL || image[n] != L'\\' ||
+      _wcsicmp(image+n+1, L"Karaoke Queue.exe") != 0 || n < 3 || full[1] != L':') return 0;
+  const DWORD replace_rights = GENERIC_ALL | GENERIC_WRITE | DELETE | WRITE_DAC | WRITE_OWNER | FILE_DELETE_CHILD;
+  const DWORD write_rights = replace_rights | FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES;
+  DWORD image_attributes = GetFileAttributesW(image);
+  if (image_attributes == INVALID_FILE_ATTRIBUTES || (image_attributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)) ||
+      !safe_install_acl(image, write_rights)) return 0;
+  /* Check every ancestor, including the selected root. No reparse traversal. */
+  WCHAR walk[4096]; wcscpy_s(walk,4096,full);
+  for (;;) {
+    DWORD attrs = GetFileAttributesW(walk);
+    if (attrs == INVALID_FILE_ATTRIBUTES || !(attrs & FILE_ATTRIBUTE_DIRECTORY) || (attrs & FILE_ATTRIBUTE_REPARSE_POINT) ||
+        !safe_install_acl(walk, _wcsicmp(walk,full)==0 ? write_rights : replace_rights)) return 0;
+    size_t size=wcslen(walk); if (size<=3) break;
+    WCHAR *separator=wcsrchr(walk,L'\\'); if (!separator) return 0;
+    if (separator==walk+2) separator[1]=0; else *separator=0;
+  }
+  return 1;
+}
 static napi_value executable_is_in_program_files(napi_env env, napi_callback_info info) {
   napi_value value;
   (void)info;
-  int matches = current_executable_is_in_program_files();
+  int matches = current_executable_in_trusted_location();
   napi_get_boolean(env, matches, &value);
   return value;
 }
@@ -307,7 +364,7 @@ static napi_value launch_initial_role_confirmation(napi_env env, napi_callback_i
   if (initial_role_process) return make_result(env, "busy", ERROR_BUSY);
   elevated = current_process_is_elevated();
   if (elevated != 0) return make_result(env, "caller_not_standard", elevated < 0 ? ERROR_ACCESS_DENIED : ERROR_ELEVATION_REQUIRED);
-  if (!current_executable_is_in_program_files()) return make_result(env, "image_untrusted", ERROR_ACCESS_DENIED);
+  if (!current_executable_in_trusted_location()) return make_result(env, "image_untrusted", ERROR_ACCESS_DENIED);
   image_length = GetModuleFileNameW(NULL, image, (DWORD)(sizeof(image) / sizeof(image[0])));
   if (!image_length || image_length >= (DWORD)(sizeof(image) / sizeof(image[0]))) {
     return make_result(env, "image_path_error", image_length ? ERROR_INSUFFICIENT_BUFFER : GetLastError());
@@ -732,7 +789,7 @@ static napi_value initialize(napi_env env, napi_value exports) {
     {"installationOperationState", NULL, operation_tree_state, NULL, NULL, NULL, napi_default, NULL},
     {"enterInstallationOperation", NULL, enter_operation_tree, NULL, NULL, NULL, napi_default, NULL},
     {"isProcessElevated", NULL, is_elevated, NULL, NULL, NULL, napi_default, NULL},
-    {"isExecutableInProgramFiles", NULL, executable_is_in_program_files, NULL, NULL, NULL, napi_default, NULL},
+    {"isExecutableInTrustedLocation", NULL, executable_is_in_program_files, NULL, NULL, NULL, napi_default, NULL},
     {"getProgramDataDirectory", NULL, program_data_directory, NULL, NULL, NULL, napi_default, NULL},
     {"getCommonProgramsDirectory", NULL, common_programs_directory, NULL, NULL, NULL, napi_default, NULL},
     {"getPublicDesktopDirectory", NULL, public_desktop_directory, NULL, NULL, NULL, napi_default, NULL},

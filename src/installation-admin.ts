@@ -7,7 +7,7 @@ import { removeManagedInstallationShortcuts, type ShortcutShell } from './instal
 export interface InstallationNativeBinding {
   enterInstallationOperation(): { status: string; code: number }
   isProcessElevated(): boolean
-  isExecutableInProgramFiles(): boolean
+  isExecutableInTrustedLocation(): boolean
   getProgramDataDirectory(): string | { status: string; code: number }
   getCommonProgramsDirectory(): string | { status: string; code: number }
   getPublicDesktopDirectory(): string | { status: string; code: number }
@@ -51,7 +51,7 @@ export function confirmInitialInstallationRole(
   if (command.operation !== 'confirm-initial') throw new Error('INSTALLATION_ADMIN_OPERATION_INVALID')
   if (environment.platform !== 'win32' || !environment.isPackaged) throw new Error('INSTALLATION_ADMIN_CONTEXT_INVALID')
   if (!native.isProcessElevated()) throw new Error('INSTALLATION_ADMIN_NOT_ELEVATED')
-  if (!native.isExecutableInProgramFiles()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
+  if (!native.isExecutableInTrustedLocation()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
   const operationTree = native.enterInstallationOperation()
   if (operationTree.status !== 'joined' && operationTree.status !== 'delegated') {
     throw new Error(`INSTALLATION_OPERATION_${operationTree.status.toUpperCase()}:${operationTree.code}`)
@@ -130,7 +130,7 @@ export function changeInstalledRole(
   if (role !== 'player' && role !== 'combined') throw new Error('INSTALLATION_ROLE_INVALID')
   if (environment.platform !== 'win32' || !environment.isPackaged) throw new Error('INSTALLATION_ADMIN_CONTEXT_INVALID')
   if (!native.isProcessElevated()) throw new Error('INSTALLATION_ADMIN_NOT_ELEVATED')
-  if (!native.isExecutableInProgramFiles()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
+  if (!native.isExecutableInTrustedLocation()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
   const operationTree = native.enterInstallationOperation()
   if (operationTree.status !== 'joined' && operationTree.status !== 'delegated') {
     throw new Error(`INSTALLATION_OPERATION_${operationTree.status.toUpperCase()}:${operationTree.code}`)
@@ -217,7 +217,7 @@ export function repairPendingInstallation(
 ): InstallationManifest {
   if (environment.platform !== 'win32' || !environment.isPackaged) throw new Error('INSTALLATION_ADMIN_CONTEXT_INVALID')
   if (!native.isProcessElevated()) throw new Error('INSTALLATION_ADMIN_NOT_ELEVATED')
-  if (!native.isExecutableInProgramFiles()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
+  if (!native.isExecutableInTrustedLocation()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
   const operationTree = native.enterInstallationOperation()
   if (operationTree.status !== 'joined' && operationTree.status !== 'delegated') {
     throw new Error(`INSTALLATION_OPERATION_${operationTree.status.toUpperCase()}:${operationTree.code}`)
@@ -309,7 +309,7 @@ export function prepareInstallationUpdate(
 ): InstallationManifest {
   if (environment.platform !== 'win32' || !environment.isPackaged) throw new Error('INSTALLATION_ADMIN_CONTEXT_INVALID')
   if (!native.isProcessElevated()) throw new Error('INSTALLATION_ADMIN_NOT_ELEVATED')
-  if (!native.isExecutableInProgramFiles()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
+  if (!native.isExecutableInTrustedLocation()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
   const operationTree = native.enterInstallationOperation()
   if (operationTree.status !== 'joined' && operationTree.status !== 'delegated') {
     throw new Error(`INSTALLATION_OPERATION_${operationTree.status.toUpperCase()}:${operationTree.code}`)
@@ -387,7 +387,7 @@ export function cleanupInstallationShortcutsForUninstall(
 ): number {
   if (environment.platform !== 'win32' || !environment.isPackaged) throw new Error('INSTALLATION_ADMIN_CONTEXT_INVALID')
   if (!native.isProcessElevated()) throw new Error('INSTALLATION_ADMIN_NOT_ELEVATED')
-  if (!native.isExecutableInProgramFiles()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
+  if (!native.isExecutableInTrustedLocation()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
   const operationTree = native.enterInstallationOperation()
   if (operationTree.status !== 'joined' && operationTree.status !== 'delegated') {
     throw new Error(`INSTALLATION_OPERATION_${operationTree.status.toUpperCase()}:${operationTree.code}`)
@@ -470,7 +470,7 @@ export function restoreInstallationAfterUninstall(
 ): InstallationManifest {
   if (environment.platform !== 'win32' || !environment.isPackaged) throw new Error('INSTALLATION_ADMIN_CONTEXT_INVALID')
   if (!native.isProcessElevated()) throw new Error('INSTALLATION_ADMIN_NOT_ELEVATED')
-  if (!native.isExecutableInProgramFiles()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
+  if (!native.isExecutableInTrustedLocation()) throw new Error('INSTALLATION_ADMIN_IMAGE_UNTRUSTED')
   const operationTree = native.enterInstallationOperation()
   if (operationTree.status !== 'joined' && operationTree.status !== 'delegated') {
     throw new Error(`INSTALLATION_OPERATION_${operationTree.status.toUpperCase()}:${operationTree.code}`)
@@ -510,22 +510,17 @@ export function restoreInstallationAfterUninstall(
     if (!pending || pending.kind !== 'uninstall' || !['pending', 'repairRequired'].includes(current.status)) {
       throw new Error('INSTALLATION_REINSTALL_RECOVERY_REQUIRED')
     }
-    if (pending.role === null) {
-      if (typeof shortcuts.synchronizeBootstrap !== 'function') throw new Error('INSTALLATION_BOOTSTRAP_SHORTCUT_SYNC_UNAVAILABLE')
-      shortcuts.synchronizeBootstrap(pending.operationId)
-    } else {
-      if (!shortcuts || typeof shortcuts.synchronize !== 'function') throw new Error('INSTALLATION_SHORTCUT_SYNC_UNAVAILABLE')
-      shortcuts.synchronize(pending.role, pending.operationId)
-    }
+    if (typeof shortcuts.synchronizeBootstrap !== 'function') throw new Error('INSTALLATION_BOOTSTRAP_SHORTCUT_SYNC_UNAVAILABLE')
+    shortcuts.synchronizeBootstrap(pending.operationId)
     const synchronizedCheck = native.verifyInstallationManifest()
     if (!synchronizedCheck.ok) throw new Error(`INSTALLATION_MANIFEST_UNTRUSTED:${synchronizedCheck.code}`)
     const committed = store.restoreInstallationAfterUninstall(pending.operationId)
     const committedCheck = native.verifyInstallationManifest()
     if (!committedCheck.ok) throw new Error(`INSTALLATION_MANIFEST_UNTRUSTED:${committedCheck.code}`)
     const verified = store.read()
-    const expectedStatus = pending.role === null ? 'unconfigured' : 'ready'
+    const expectedStatus = 'unconfigured'
     if (!verified || verified.status !== expectedStatus || verified.generation !== committed.generation ||
-        verified.role !== pending.role || verified.lastCompletedOperation?.kind !== 'restore-installation' ||
+        verified.role !== null || verified.lastCompletedOperation?.kind !== 'restore-installation' ||
         verified.lastCompletedOperation.operationId !== pending.operationId) {
       throw new Error('INSTALLATION_REINSTALL_READBACK_FAILED')
     }
@@ -548,7 +543,7 @@ export function loadWindowsInstallationBinding(resourcesPath: string, platform: 
   const addonPath = path.join(resourcesPath, 'native', 'win32-x64', 'kq_win32.node')
   const binding = require(addonPath) as Partial<InstallationNativeBinding>
   const required: (keyof InstallationNativeBinding)[] = [
-    'isProcessElevated', 'isExecutableInProgramFiles', 'getProgramDataDirectory',
+    'isProcessElevated', 'isExecutableInTrustedLocation', 'getProgramDataDirectory',
     'getCommonProgramsDirectory', 'getPublicDesktopDirectory',
     'verifyInstallationDirectory', 'verifyInstallationManifest', 'acquireAdministrative', 'releaseOwned',
     'acquireRuntime', 'releaseRuntime',

@@ -586,3 +586,8 @@ Unitários, workflow/proveniência, runner Windows oficial com Electron/SQLite, 
 Smoke corrigido usa cópia temp hash-verificada do uninstaller e userData padrão previamente inexistente da conta hosted (APPDATA sobrescrito não muda o known folder Electron). Verifica término/registro/pasta/links/perfil e prepara recusa de uninstall com Main vivo; execução instalada **NOT RUN**. CI inclui os novos probes sem instalar produto no host operacional; execução GitHub e artifact hosted **NOT RUN**.
 
 **GO técnico condicionado somente para revisão final/PR de validação**; nenhuma autorização de commit/push nesta tarefa. Homologação continua bloqueada por NSIS instalado/upgrade/concorrência/crash/reboot, UAC, ACL/contas/integridades/sessões e checklist visual/humano. S1 PARTIAL, nenhuma E1–E5 aprovada, F não iniciada. O registro histórico de release GUI/abandono normal é substituído por este protocolo; abandono é falha/recuperação, não sucesso normal.
+
+
+## Complemento autorizado: local, manutenção e onboarding — 2026-11-09
+
+[Contrato dos ajustes e evidências](fase-e-ajustes-instalacao-onboarding.md). A autorização posterior permite escolher um local local protegido e redefine uninstall/reinstall para nova escolha de função. Substitui as premissas históricas de alvo fixo Program Files e retomada automática da função após reinstalação, preservando A1–A7, fences/locks, dados por conta e gates de homologação. Updates/reparos continuam preservando a função. Não equivale à homologação E1–E5.

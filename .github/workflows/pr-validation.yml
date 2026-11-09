@@ -72,6 +72,9 @@ jobs:
       - name: Verify native operation tree and NSIS section ownership with isolated fixtures
         run: node scripts/windows-runtime-mutex-electron.cjs
 
+      - name: Verify role onboarding and media setup with real Electron and SQLite
+        run: node build/tests/operating-modes-electron.js
+
       - name: Read package version
         id: product
         shell: pwsh
