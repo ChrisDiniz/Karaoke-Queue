@@ -5,7 +5,7 @@
 - Ticket: 0005/0005
 - Ticket pai: 0005 — Fase E: Consolidação de funções, instalador e gerenciamento
 - Etapa canônica: E5
-- Status: Em revisão — protocolo, runner Windows e novo candidato NSIS PASS; matriz instalada/recovery/homologação pendentes
+- Status: Em revisão — CI/NSIS silencioso install-uninstall-reinstall e preservação integral PASS; matriz restante/recovery/homologação pendentes
 - Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
 
 ## Objetivo
@@ -199,3 +199,8 @@ CI 42617458239 localizou o aborto da primeira instalação em FileOpen (215), ap
 Run 42619186632: instalação NSIS e ACL de produção passaram; uninstall com Main ativo foi recusado com exit32/estado intacto. Uninstall normal detectou alteração de ShaderCache/index no userData. Reproduzido com Main real/rejeição administrativa em perfil sintético após drenagem: aguardar ready inicializava cache Chromium. Dispatcher passou a executar síncrono antes de ready, com os mesmos controles e sem runtime/Renderer/SQLite. Nenhum arquivo foi excluído da comparação.
 
 Compile, 47 unitários de instalação+5 de binding e 20 de workflow/proveniência **PASS**. Runner Windows real **PASS**, fingerprint `9eedc1950675625bad917dfa4bd7550a64282198a67228750e42e4bdc70e98ae`: perfil aquecido byte a byte igual, perfil novo sem conteúdo, shell .lnk pré-ready validado. Electron cria contêiner vazio antes do JS; controle mínimo comprova esse baseline, sem contar diretório vazio como perfil operacional inicializado. Probes NSIS drenam descendentes antes dos hashes/cleanup. [Seção 23](../../fase-e-revisao-independente.md#23-helper-administrativo-sem-inicialização-do-perfil-chromium--2026-11-09). Smoke NSIS completo e artifact do novo SHA continuam a validar no CI; E1–E5 sem homologação.
+
+
+### Primeiro CI integral e artifact — 2026-11-09
+
+Run [42622477298](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42622477298), HEAD b92e950: ambos os jobs PASS; build/verify/N-API, provas nativas, smoke empacotado e NSIS silencioso install/uninstall/reinstall passaram, incluindo atalhos, recusa com Main ativo, tombstone e preservação de todos os arquivos do userData. Artifact baixado e SHA-256 verificado. [Snapshot, hash e limites](../../fase-e-revisao-independente.md#24-primeiro-ci-integral-pass-e-artifact--2026-11-09). Isso certifica somente os cenários executados; UAC interativo, contas/sessões, legado/N-1, manutenção interativa e aceite humano permanecem pendentes. Etapa sem homologação/aprovação; S1 PARTIAL.

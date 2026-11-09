@@ -5,7 +5,7 @@
 - Ticket: 0005/0002
 - Ticket pai: 0005 — Fase E: Consolidação de funções, instalador e gerenciamento
 - Etapa canônica: E2
-- Status: Em revisão — links bootstrap pertencem ao helper; shell Windows PASS; validação visual/instalada pendente
+- Status: Em revisão — links bootstrap pertencem ao helper; shell e atalhos NSIS silencioso PASS; validação visual/identidade por função pendente
 - Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
 
 ## Objetivo
@@ -115,3 +115,8 @@ Links bootstrap têm um único writer no helper; retry após commit não repete 
 - [Ticket E1 — Instalador e estratégia](0001-e1-instalador-unico-selecao-funcao.md)
 - [Ticket E1 — Instalador e estratégia](0001-e1-instalador-unico-selecao-funcao.md)
 - [Windows release process](../../windows-release-process.md)
+
+
+### Primeiro CI integral e artifact — 2026-11-09
+
+Run [42622477298](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42622477298), HEAD b92e950: ambos os jobs PASS; build/verify/N-API, provas nativas, smoke empacotado e NSIS silencioso install/uninstall/reinstall passaram, incluindo atalhos, recusa com Main ativo, tombstone e preservação de todos os arquivos do userData. Artifact baixado e SHA-256 verificado. [Snapshot, hash e limites](../../fase-e-revisao-independente.md#24-primeiro-ci-integral-pass-e-artifact--2026-11-09). Isso certifica somente os cenários executados; UAC interativo, contas/sessões, legado/N-1, manutenção interativa e aceite humano permanecem pendentes. Etapa sem homologação/aprovação; S1 PARTIAL.

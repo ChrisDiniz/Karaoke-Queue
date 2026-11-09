@@ -1,6 +1,8 @@
 # Fase E — Parecer da revisão independente
 
-**Atualização vigente após correções F1–F3 — 2026-11-09: GO técnico condicionado para revisão final e PR exclusivamente de validação automatizada.** A seção 10 registra a implementação, revisão própria adicional e evidências do novo candidato; substitui o NO-GO da seção 9, preservada como histórico. Não constitui uma nova revisão independente read-only nem homologação E1–E5. Nesta execução não houve staging, commit, push, PR ou dispatch; a instrução vigente proíbe essas ações.
+**Estado atual de CI — 2026-11-09:** primeiro pipeline integral PASS e artifact verificado, conforme seção 24. E1–E5 sem homologação; S1 PARTIAL. Os registros seguintes preservam o histórico de correções e falhas.
+
+**Registro após correções F1–F3 — 2026-11-09: GO técnico condicionado para revisão final e PR exclusivamente de validação automatizada.** A seção 10 registra a implementação, revisão própria adicional e evidências do novo candidato; substitui o NO-GO da seção 9, preservada como histórico. Não constitui uma nova revisão independente read-only nem homologação E1–E5. Naquela execução não houve staging, commit, push, PR ou dispatch; a autorização posterior de acompanhamento CI está registrada nas seções seguintes.
 
 Data: 2026-11-08. **Recomendação histórica daquele snapshot: NO-GO para o PR de validação.** Houve falhas reproduzidas no Windows e defeitos de coordenação/recovery. A seção de atualização abaixo registra a correção e substitui a recomendação; ela não aprova E1–E5. E0 continua concluída/aprovada; S1 permanece PARTIAL; F não foi iniciada.
 
@@ -549,3 +551,30 @@ A regressão usa o Main real em rejeição administrativa, compara **todos** os 
 - Runner oficial `--installation-coordination` **PASS**, `/tmp/kq-admin-preready-verified-windows.log`, fingerprint `9eedc1950675625bad917dfa4bd7550a64282198a67228750e42e4bdc70e98ae`, HEAD-base d2cf6fc; depois somente documentação. Main administrativo rejeitado sem mutação de nenhum arquivo, shell pré-ready em perfil aquecido/novo, contêiner novo vazio; addon real, mutex/ACL/fencing, initializer e cleanup passaram.
 - Probes NSIS de userData e Main ativo agora drenam processos da instalação após saída normal e antes da captura de hashes/cleanup, reutilizando waitForFixtureProcesses; sem kill/sleeps e sem excluir caches, licença, SQLite, configurações ou logs dos critérios de preservação.
 - Nova instalação/uninstall/reinstall no CI do próximo commit ainda exigida. UAC interativo, contas/sessões distintas, per-user→machine e homologação permanecem pendentes; S1 PARTIAL e E1–E5 não aprovadas. Nenhuma instalação/elevacão no host operacional; sem merge/Release.
+
+
+## 24. Primeiro CI integral PASS e artifact — 2026-11-09
+
+Execução [42622477298](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42622477298), PR #4: **SUCCESS**, ambos os jobs concluídos. Branch `feature/remote-player-lan-integration`, HEAD `b92e9506a3ec83e4b6822ed7fdccac10461f9bc5`; checkout de merge de validação `8296f4c454116111e1136c4e876a37ad66042570`. Não houve merge na branch-base. Fingerprint dos inputs selados e verificados: `660e59fc37c4360bd811b9e2328eff5e0a03df8618259c8a4b38938289881e56`. Logs consultados pelo CLI autenticado, preservados localmente em `/tmp/kq-b92e95-success.log`; status em `/tmp/kq-final-ci-verified.json`.
+
+| Validação do snapshot | Resultado |
+|---|---|
+| Linux compile, unitários e Electron E2E | PASS — job completo, 3m41s |
+| Windows N-API x64, build NSIS, selo/proveniência e pacote | PASS |
+| Mutex, ownership/abandono, árvore administrativa, fencing, initializer e ACL positiva/negativa | PASS |
+| Main administrativo sem mutações no perfil; shell pré-ready e cleanup | PASS |
+| Smoke empacotado: IPC, SQLite, licença, fechamento e restart | PASS |
+| NSIS real silencioso: instalação, owner/ACL pelo binding, atalhos, recusa com Main ativo | PASS |
+| Uninstall: arquivos/registro/atalhos removidos, todos os arquivos do userData preservados | PASS |
+| Reinstall após tombstone e segundo uninstall | PASS |
+| Manifesto/checksums e upload do artifact | PASS |
+
+Artifact [Karaoke-Queue-PR-4-Windows-x64](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42622477298/artifacts/13677775782), ID `13677775782`, validade informada até 2026-12-09. Contém somente instalador, `SHA256SUMS.txt` e `artifact-manifest.json`. Instalador `Karaoke-Queue-Setup-0.5.0-x64.exe`, SHA-256 **`d13e101101312fa1c370f517825cfc0e8745239e3f5e4ca45d2a87aa123dddce`**. Baixado pelo CLI em diretório temporário Windows, sem executar; hash calculado independentemente e comparado ao checksum e ao manifesto: **PASS**. Manifesto confirma merge SHA acima, runId e todos os smokes PASS, `releasePublished:false`. O digest do ZIP do artifact é diferente do hash do instalador e não foi confundido com ele.
+
+O readback hosted também confirmou owner **BA** na fixture sintética do arquivo, validando a diferença de contexto investigada na seção 18. O crash isolado Node 0xc0000409 da primeira tentativa da run 42614670826 continua registrado com causa não determinada; o supervisor recusou sua saída e os builds seguintes passaram. Não se adicionaram retries de teste, exceções de cache aos hashes ou bypass de ACL/IPC/mutex/sandbox.
+
+**GO para disponibilizar esse artifact exclusivamente para validação do proprietário; não é homologação ou autorização de distribuição.** S1 PARTIAL e E1–E5 não aprovadas. Permanecem NOT RUN/pendentes: UAC interativo aceito/cancelado/outra credencial, ACL e exclusividade entre contas/sessões reais, upgrade N-1 e adoção legada, downgrade/recovery da matriz completa, manutenção/troca de função interativas e aceite humano de identidade/taskbar/textos/Doop. Nenhuma VM local exigida, instalação operacional realizada, Release/tag publicada ou Fase F iniciada.
+
+Checklist do proprietário para o candidato: conferir checksum; usar Windows descartável apropriado ou ambiente de homologação com backups consistentes; validar UAC/Cancelamento, as duas funções e setup adiado/CSV opcional; confirmar atalhos/títulos/taskbar; testar manutenção/troca somente pelo instalador, exclusividade entre contas/sessões e preservação dos bancos; registrar separadamente cada cenário real executado. Não restaurar backup sobre dados posteriores sem autorização específica. Os frames Doop continuam intactos; divergência do rodapé de rKUlA0rV8m contra A7 ainda exige validação textual.
+
+Este registro documental descreve o **primeiro artifact verde identificado acima**. O push documental subsequente terá seu próprio CI e artifact, sem alterar o código de produto; o resultado desse novo HEAD deve ser confirmado separadamente no encerramento do acompanhamento.

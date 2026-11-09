@@ -5,7 +5,7 @@
 - Ticket: 0005/0001
 - Ticket pai: 0005 — Fase E: Consolidação de funções, instalador e gerenciamento
 - Etapa canônica: E1
-- Status: Em revisão — coordenação estrutural, runner Windows e NSIS x64 build/verify PASS; instalação/UAC/homologação pendentes
+- Status: Em revisão — CI integral e NSIS silencioso PASS com artifact; UAC/contas/matriz restante e homologação pendentes
 - Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
 
 ## Objetivo
@@ -213,3 +213,8 @@ Bootstrap inicial usa pending/prepare-update generation0 e confirma unconfigured
 ### Correção do bootstrap administrativo durante CI — 2026-11-09
 
 Aguardar ready no helper modificava ShaderCache/index do perfil operacional, reproduzido no Main real em comando administrativo recusado. Dispatcher agora síncrono antes de ready; sem nova autoridade/executável, preservando fences, token, ACL e mutexes. Shell .lnk pré-ready e preservação de todos os arquivos (perfil aquecido/novo) passaram em Windows real, fingerprint `9eedc1950675625bad917dfa4bd7550a64282198a67228750e42e4bdc70e98ae`. Contêiner vazio criado nativamente antes do JS é baseline explicitamente testado, sem dados operacionais. [Parecer, seção 23](../../fase-e-revisao-independente.md#23-helper-administrativo-sem-inicialização-do-perfil-chromium--2026-11-09). Nova homologação CI NSIS pendente; não aprova E1.
+
+
+### Primeiro CI integral e artifact — 2026-11-09
+
+Run [42622477298](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42622477298), HEAD b92e950: ambos os jobs PASS; build/verify/N-API, provas nativas, smoke empacotado e NSIS silencioso install/uninstall/reinstall passaram, incluindo atalhos, recusa com Main ativo, tombstone e preservação de todos os arquivos do userData. Artifact baixado e SHA-256 verificado. [Snapshot, hash e limites](../../fase-e-revisao-independente.md#24-primeiro-ci-integral-pass-e-artifact--2026-11-09). Isso certifica somente os cenários executados; UAC interativo, contas/sessões, legado/N-1, manutenção interativa e aceite humano permanecem pendentes. Etapa sem homologação/aprovação; S1 PARTIAL.
