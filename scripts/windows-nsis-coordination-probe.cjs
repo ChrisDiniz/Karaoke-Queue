@@ -18,6 +18,13 @@ function instrumentUninstallRelease(functions, trace) {
 `)
 }
 
+function instrumentInitializerErrorFlag(source) {
+  const normalized = source.replace(/\r?\n/g, '\n')
+  const opening = /^  ClearErrors\n  FileOpen \$6/gm
+  assert.equal([...normalized.matchAll(opening)].length, 1, 'exactly one manifest FileOpen must receive the fault')
+  return normalized.replace(opening, '  SetErrors\n  ClearErrors\n  FileOpen $6')
+}
+
 async function prove(addonPath, scratchRoot) {
   assert.equal(process.platform, 'win32')
   const native = require(addonPath)
@@ -32,7 +39,7 @@ async function prove(addonPath, scratchRoot) {
   assert.match(sid, /^S-1-5-[0-9-]+$/)
   // Fresh installation follows missing ReadRegStr lookups, which leave the
   // NSIS error flag set. Exercise the actual initializer under that condition.
-  const initialize = source.match(/Function KQ_InitializeInstallationControl[\s\S]*?FunctionEnd/)[0]
+  const initialize = instrumentInitializerErrorFlag(source.match(/Function KQ_InitializeInstallationControl[\s\S]*?FunctionEnd/)[0])
   for (const mode of ['prior-error', 'write-failure']) {
     const control = path.join(require('node:os').tmpdir(), 'kq-protected-fixture-' + require('node:crypto').randomUUID())
     try {
@@ -266,5 +273,5 @@ SectionEnd
     console.log('WINDOWS NSIS PRODUCTION MUTEX SECTIONS PASS GUI/silent owner-thread / crash-abandonment / failure-recovery')
   } finally { assert.equal(native.closeTestRuntimeReference().status, 'closed') }
 }
-module.exports = { instrumentUninstallRelease }
+module.exports = { instrumentUninstallRelease, instrumentInitializerErrorFlag }
 if (require.main === module) prove(process.argv[2], process.argv[3]).catch(error => { console.error(error); process.exitCode = 1 })

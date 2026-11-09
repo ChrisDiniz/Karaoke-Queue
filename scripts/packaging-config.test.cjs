@@ -271,3 +271,15 @@ test('only PR validation builds artifacts; the manual release is the sole publis
   assert.match(release, /permissions:\n      contents: write/)
   assert.doesNotMatch(release.slice(0, release.indexOf('jobs:')), /contents: write/)
 })
+
+
+test('initializer fault injection reaches exactly one FileOpen in LF and CRLF snapshots', () => {
+  const { instrumentInitializerErrorFlag } = require('./windows-nsis-coordination-probe.cjs')
+  for (const eol of ['\n', '\r\n']) {
+    const source = ['Function initialize', '  ClearErrors', '  FileOpen $6 "manifest" w', 'FunctionEnd'].join(eol)
+    const injected = instrumentInitializerErrorFlag(source)
+    assert.match(injected, /  SetErrors\n  ClearErrors\n  FileOpen \$6/)
+    assert.throws(() => instrumentInitializerErrorFlag(source+eol+source), /exactly one/)
+  }
+  assert.throws(() => instrumentInitializerErrorFlag('FileOpen $6'), /exactly one/)
+})

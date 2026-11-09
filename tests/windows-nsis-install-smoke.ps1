@@ -50,12 +50,16 @@ function Invoke-FixtureProcess([string]$Image, [string[]]$Arguments) {
   $fixtureProcesses.Add($process)
   $process.WaitForExit()
   if (-not $process.HasExited -or $process.ExitCode -ne 0) {
-    Write-Output "NSIS_FAILURE image=$Image exit=$($process.ExitCode)"
+    Write-Host "NSIS_FAILURE image=$Image exit=$($process.ExitCode)"
     foreach ($fixturePath in @($installDirectory, $controlDirectory, $controlManifest)) {
       if (Test-Path -LiteralPath $fixturePath) {
         $item = Get-Item -LiteralPath $fixturePath -Force
-        Write-Output "NSIS_FIXTURE path=$fixturePath attributes=$($item.Attributes)"
-      } else { Write-Output "NSIS_FIXTURE absent=$fixturePath" }
+        Write-Host "NSIS_FIXTURE path=$fixturePath attributes=$($item.Attributes)"
+      } else { Write-Host "NSIS_FIXTURE absent=$fixturePath" }
+    }
+    if (Test-Path -LiteralPath $controlDirectory -PathType Container) {
+      $aclReadback = @(& "$env:SystemRoot\System32\icacls.exe" $controlDirectory 2>&1)
+      Write-Host ("NSIS_FIXTURE_ACL " + ($aclReadback -join " | "))
     }
     throw "Operação NSIS falhou: image=$Image exit=$($process.ExitCode)"
   }

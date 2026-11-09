@@ -548,8 +548,9 @@ Function KQ_InitializeInstallationControl
   ${EndIf}
   StrCpy $KQFenceOperationId $7 36 1
   StrCpy $KQInstallerFailureCode 215
+  ClearErrors
   FileOpen $6 "$KQInstallationManifest" w
-  IfErrors kq_init_manifest_failed
+  IfErrors kq_init_open_failed
   FileWrite $6 "{$\r$\n"
   FileWrite $6 "  $\"formatVersion$\": 1,$\r$\n"
   FileWrite $6 "  $\"installationId$\": $\"$5$\",$\r$\n"
@@ -579,6 +580,10 @@ Function KQ_InitializeInstallationControl
   ${EndIf}
   Return
 
+  kq_init_open_failed:
+    System::Call 'kernel32::GetLastError() i.r0'
+    IntOp $KQInstallerFailureCode 215000 + $0
+    Goto kq_init_manifest_failed
   kq_init_directory_failed:
   kq_init_acl_failed:
   kq_init_manifest_failed:
