@@ -64,11 +64,23 @@ async function run() {
     await page.screenshot({ path: path.join(screenshots, 'menu-opens-down.png') })
     await closeByOutside()
 
-    await first.locator('.queue-action-menu-toggle').focus()
+    // Reproduce the full smoke's 4K -> default-size boundary. Resize closes
+    // open menus by design, so await the final Renderer geometry before input.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(3840, 2160))
+    await page.waitForFunction(() => Math.abs(innerWidth - 3200) <= 2 && Math.abs(innerHeight - 1800) <= 2)
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 800))
+    await page.waitForFunction(() => innerWidth === 1280 && innerHeight === 800)
+    const keyboardToggle = first.locator('.queue-action-menu-toggle')
+    await keyboardToggle.scrollIntoViewIfNeeded()
+    await keyboardToggle.focus()
+    assert.equal(await keyboardToggle.evaluate(button => document.activeElement === button), true)
     await page.keyboard.press('ArrowDown')
     assert.equal(await popover().count(), 1, 'ArrowDown opens the menu and focuses its first action')
+    assert.equal(await popover().getByRole('menuitem').first().evaluate(item => document.activeElement === item), true,
+      'keyboard activation focuses the first menu action after resizing')
     await page.keyboard.press('Escape')
     assert.equal(await popover().count(), 0, 'Escape closes and restores focus')
+    assert.equal(await keyboardToggle.evaluate(button => document.activeElement === button), true)
 
     const second = cards.nth(1)
     await first.locator('.queue-action-menu-toggle').click()

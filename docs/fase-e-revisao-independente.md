@@ -452,3 +452,18 @@ Foram avaliados cache/downloads: a versão travada já valida checksums, mantém
 - `git diff --check`: **PASS**; staging/check cached antes do commit. Reexecução hosted, startup protegido com a fixture corrigida na seção 14 e smoke NSIS instalado: **NOT RUN nesta rodada**. Na execução citada, esses steps foram SKIPPED; não são FAIL nem PASS dos seus cenários.
 
 Correção documentada para commit/push autorizados no acompanhamento. Sem dispatch manual, instalação operacional, PR novo ou publicação. S1 PARTIAL e E1–E5 permanecem sem homologação.
+
+## 16. Menu por teclado após retorno de 4K — 2026-11-09
+
+O proprietário apresentou falha Linux em `electron-smoke`: ArrowDown não deixou o menu de fila aberto após retorno de 4K/zoom automático para 1280x800. A primeira execução local do código original passou (`/tmp/kq-linux-menu-repro.log`); portanto o FAIL hosted não foi reproduzido deterministicamente nem se atribui a ele uma causa única comprovada. A inspeção confirmou uma lacuna na pré-condição: o teste usava 100ms após setContentSize, sem comprovar resize/zoom no Renderer. Produção fecha menus em resize por contrato (`queue-interactions.ts` e regressão existente). Um prazo fixo não garante que esse evento já terminou; foco programático também não aguarda previamente o botão entrar no scrollport.
+
+Correção somente de E2E: aguardar viewport Renderer 1280x800 e confirmar zoom Main=1; posicionar o toggle com scrollIntoViewIfNeeded, focá-lo e confirmar activeElement antes de ArrowDown. A assertion original de menu visível permanece, sem retry de tecla/menu ou timeout maior. Se falhar, o erro inclui viewport, foco, aria-expanded, conexão e bounds; traces existentes continuam disponíveis. A suíte específica recebeu o percurso 4K→1280 e assertions adicionais de foco na primeira ação e retorno ao toggle após Escape. Nenhuma regra da fila, renderização, handler de teclado ou visual foi alterado; configuração de segurança existente dos testes não foi modificada.
+
+- Compile TypeScript: **PASS** no snapshot final. Callback de diagnóstico recebeu tipo HTMLButtonElement após TS7006 na primeira compilação.
+- `queue-menu-electron` isolado com Electron real/Xvfb: **PASS**, `/tmp/kq-menu-focused.log`; screenshots `/tmp/karaoke-queue-menu-e2e-n3Z24X/screenshots`.
+- `npm run test:e2e:linux`: **PASS**, exit0, **13 suítes** com perfis/SQLite isolados; `/tmp/kq-linux-menu-final.log`. Smoke completo passou na assertion relatada; importação legada, drag, RR, cadência, persistência/rollback/IPC, sessões, licenciamento, menu, autocomplete, preferências e diagnósticos também passaram. Evidência smoke `/tmp/karaoke-smoke-evidence-I57bZa`, menu completo `/tmp/karaoke-queue-menu-e2e-UHlVYW/screenshots`.
+- HEAD-base `7079a179b54dc40a4bbedb05408d125e86d9d40a`. SHA-256 de `tests/electron-smoke.ts`: `c77a4154b3093ec08a81f986f787e98e17a1d8402d0278b7e1f3e476bf20fa9c`; de `tests/queue-menu-electron.ts`: `545dd62bc5a814365790b54ee0701fcf803f6f2f1b1fc5fad556893eb60d9132`. Depois da campanha somente relatório/ticket atualizados.
+- `git diff --check`: **PASS**; staging/check cached antes de commit/push do acompanhamento autorizado.
+- Reexecução hosted e Windows/NSIS desta rodada: **NOT RUN**. Mudança restrita aos testes Linux, sem repetir campanhas Windows sem dependência; o próximo CI deve gerar novo pacote/selo porque testes fazem parte dos inputs. O candidato anterior é histórico. Não se declara estabilidade hosted comprovada por um PASS local.
+
+Sem novas funcionalidades, dispatch manual, PR novo, instalação operacional ou Release. S1 PARTIAL, E1–E5 sem homologação; autorização de commit/push do acompanhamento preservada.
