@@ -405,3 +405,18 @@ Correção: fechamento via Playwright/app.quit, sem app.exit forçado, exigindo 
 - Smoke completo em Program Files/ProgramData e novo NSIS do produto: **NOT RUN localmente**, permanecem no GitHub-hosted descartável. As provas temp validam o lifecycle/cleanup, não substituem Main de produção instalado ou ACL de produção. Não houve instalação/alteração global no host. A confirmação de que o EPERM do CI desapareceu depende da próxima execução hosted; se houver falha funcional anterior, agora ela será preservada e visível.
 
 Proprietário autorizou commit e push desta correção. Nenhuma mudança de produto, política de segurança ou assertion de trial/IPC/SQLite/persistência. S1 PARTIAL e E1–E5 sem homologação. O pacote anterior é histórico; o CI deve reconstruir e verificar o candidato do novo commit.
+
+## 13. Detecção de processos por caminhos Windows equivalentes — 2026-11-09
+
+O CI posterior a `f1b3a89` passou o mutex, mas o teste negativo de cleanup não encontrou o processo vivo. A primeira correção normalizava somente o diretório com realpath, comparando-o ao texto bruto de `Win32_Process.ExecutablePath`; valores CIM ausentes eram descartados. Não havia teste cruzando as duas representações do mesmo processo. O log hosted contém caminhos `runneradmin`/`RUNNER~1`; ele não inclui o valor bruto do CIM daquele processo, portanto não se afirma ter identificado remotamente qual dessas lacunas ocorreu.
+
+A comparação agora consulta objetos Get-Process para os nomes de executável presentes na fixture, expande **ambos** os caminhos com GetLongPathNameW, normaliza prefixos estendidos e só então compara o diretório completo. Candidato vivo sem caminho consultável falha fechado, em vez de ser tratado como ausente. Os próprios objetos Process/handles são usados na espera, sem intervalo CIM→nova consulta por PID. Não há kill/retry/sleep ou relaxamento da exclusão. [Contrato oficial GetLongPathNameW](https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getlongpathnamew).
+
+O teste negativo exige agora a mensagem específica `Fixture process still alive`, impedindo que um erro incidental de consulta satisfaça a assertion. A matriz real usa long→long, long→prefixo estendido, short→long e long→short. As duas últimas só são executáveis quando a API retorna um alias 8.3 distinto; caso contrário ficam NOT RUN explicitamente. Nesta execução **as quatro foram executadas e PASS**, incluindo alias `KQ-PAC~2`, com processo Electron real e arquivos preservados. Fechamento normal, drain e remoção readonly também PASS.
+
+- `npm run test:release-workflow`: **PASS**, `/tmp/kq-cleanup-path-unit.log`.
+- Runner oficial Windows `--installation-coordination`: **PASS**, log `/tmp/kq-cleanup-path-windows.log`, fingerprint `87c82e883d4cdd910bfeccb28d4531272d8c761c1d5332b639742a8dcd0d0e17`, HEAD-base `f1b3a89e2923470065e562b25d32df8cd2a15f50`, 310 arquivos. Compile, addon real, controle/admin/bootstrap, lifecycle e quatro representações, mutex/árvore e probes NSIS PASS; cleanup sem resíduos. Somente documentação alterada depois.
+- Sintaxe e `git diff --check`: **PASS**. Diff staged deve passar check antes do commit/push autorizados no acompanhamento desta correção.
+- Reexecução hosted completa e smoke em Program Files: **NOT RUN localmente**, devem ser confirmados pelo CI após push. Nenhuma instalação/ACL/registro/conta do host foi alterada; as provas usaram somente cópias temp. O candidato anterior continua histórico, sem reutilizar selo como evidência atual.
+
+Esta atualização corrige a lacuna de cobertura da seção 12; os PASS anteriores não comprovavam a matriz cruzada. S1 PARTIAL e E1–E5 sem homologação. Commit/push de correção autorizados; sem dispatch manual, PR novo ou Release.
