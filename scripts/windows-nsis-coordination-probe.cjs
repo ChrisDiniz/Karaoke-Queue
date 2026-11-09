@@ -60,8 +60,10 @@ SectionEnd
     const compile = spawnSync(compiler.path, ['/V2', nsi], { encoding: 'utf8', env: { ...process.env, ...(compiler.env || {}) } })
     assert.equal(compile.status, 0, compile.stdout + compile.stderr)
     const readback = spawnSync('powershell.exe', ['-NoProfile', '-Command',
-      '& { param($p) Get-Acl -LiteralPath $p | Select-Object Owner,Sddl | ConvertTo-Json -Compress }', manifest], { encoding: 'utf8' })
+      'Get-Acl -LiteralPath $env:KQ_ACL_READBACK_FILE | Select-Object Owner,Sddl | ConvertTo-Json -Compress'],
+      { encoding: 'utf8', env: { ...process.env, KQ_ACL_READBACK_FILE: manifest } })
     assert.equal(readback.status, 0, readback.stderr)
+    assert.ok(JSON.parse(readback.stdout).Sddl, 'readback must contain the actual descriptor')
     console.log('NSIS FILE ACL FIXTURE READBACK '+readback.stdout.trim())
     const status = spawnSync(image, ['/S'], { timeout: 30000 }).status
     assert.equal(status, 0, 'NSIS accepts actual inherited file DACL without AI bookkeeping')

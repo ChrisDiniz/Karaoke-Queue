@@ -174,3 +174,10 @@ Workflow/proveniência **PASS 19 testes**; runner oficial focado **PASS**, finge
 
 
 Acompanhamento do CI 42590711227: Linux/build/verify passaram, mas fixture NSIS substituía o owner BA permitido pelo SID sintético. Corrigida a fixture para preservar BA/SY e admitir SID atual somente no include temporário. Produção inalterada. Runner oficial focado **PASS**, fingerprint `4fc9a38b32d28b880089883b9711aad4bb93e975204225b64e8f986ded0d8224`; readback Owner/Sddl agora nos logs. [Seção 18 do parecer](../../fase-e-revisao-independente.md#18-proprietário-da-fixture-no-runner-elevado--2026-11-09). Smokes protegidos/artifact ainda pendentes do novo CI.
+
+
+## Fechamento da sessão no smoke empacotado — 2026-11-09
+
+Run 42611452057 passou Linux/build/proveniência/provas nativas e preflight de produção, mas aguardou no smoke empacotado e foi cancelada. O harness não respondia ao diálogo de saída da sessão que ele mesmo criara. Port explícito agora exige pergunta/opções corretas, escolhe sair sem encerrar sessão e registra marcador; término zero, drenagem e persistência após restart continuam obrigatórios. Não é teste visual do diálogo nativo nem bypass do coordenador/flush.
+
+Compile e 5 testes de fechamento **PASS**; 19 de workflow/proveniência **PASS**; função close exata em Electron real/Main dev/SQLite isolado, sandbox Chromium habilitado **PASS**. Runner Windows focado **PASS**, fingerprint `3a49c35d1aba596063fbb7a2869ba3d88e171e6752006b1aeaba7b67a61de8c3`. [Seção 19 do parecer](../../fase-e-revisao-independente.md#19-saída-normal-com-sessão-ativa-no-smoke-empacotado--2026-11-09). Novo pacote/smokes/artifact pendentes do CI do próximo commit. S1 PARTIAL, E1–E5 sem homologação.

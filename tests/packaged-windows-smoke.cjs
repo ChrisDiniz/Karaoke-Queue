@@ -25,6 +25,8 @@ let createdInstallationFixture = false
 let createdControlFixture = false
 let executable = sourceExecutable
 let application
+let sessionCreated = false
+let closeAttempt = 0
 
 function runIcacls(target, args) {
   const systemRoot = process.env.SystemRoot
@@ -74,6 +76,7 @@ function stageUnderProgramFiles() {
 }
 
 async function launch() {
+  console.log('PACKAGED SMOKE launch')
   application = await electron.launch({
     executablePath: executable,
     args: [`--user-data-dir=${userDataDirectory}`],
@@ -91,10 +94,31 @@ async function launch() {
 async function close() {
   if (!application) return
   const child = application.process()
+  const marker = path.join(tempRoot, `close-prompt-${++closeAttempt}.json`)
+  // Explicit native-dialog test port, not a native Windows UI interaction.
+  // The production close coordinator still prepares, flushes and closes normally.
+  await application.evaluate(({ dialog }, markerPath) => {
+    dialog.showMessageBox = async (_window, options) => {
+      process.getBuiltinModule('node:fs').writeFileSync(markerPath, JSON.stringify(options))
+      if (options.message !== 'Como deseja fechar o aplicativo?' ||
+          JSON.stringify(options.buttons) !== JSON.stringify(['Encerrar sessão e sair', 'Sair sem encerrar sessão', 'Cancelar'])) {
+        throw new Error('Unexpected native dialog during packaged smoke shutdown')
+      }
+      return { response: 1, checkboxChecked: false }
+    }
+  }, marker)
+  console.log('PACKAGED SMOKE graceful close; native session prompt uses explicit test port')
   await application.close() // Playwright requests app.quit and waits for Main.
   assert.notEqual(child.exitCode, null, 'Main must actually exit before fixture cleanup')
   assert.equal(child.exitCode, 0, 'Main shutdown must succeed')
   application = undefined
+  if (sessionCreated) {
+    assert.ok(fs.existsSync(marker), 'normal shutdown must ask how to close the active session')
+    const prompt = JSON.parse(fs.readFileSync(marker, 'utf8'))
+    assert.equal(prompt.message, 'Como deseja fechar o aplicativo?')
+    assert.deepEqual(prompt.buttons, ['Encerrar sessão e sair', 'Sair sem encerrar sessão', 'Cancelar'])
+  }
+  console.log('PACKAGED SMOKE graceful close confirmed')
   waitForFixtureProcesses(fixtureInstallationDirectory) // also before restart
 }
 
@@ -159,6 +183,7 @@ async function run() {
     assert.ok(beforeRestart.state.current_session_id)
     assert.equal(beforeRestart.state.queue_order_policy_version, 2)
 
+    sessionCreated = true
     await close()
     page = await launch()
     const restored = await page.evaluate(() => window.karaokeManagement.getSnapshot())
@@ -170,6 +195,7 @@ async function run() {
     assert.equal(secondTrialRecord.trialStartedAt, firstTrialRecord.trialStartedAt)
     assert.equal(secondTrialRecord.policyVersion, 1)
 
+    console.log('PACKAGED SMOKE restart/SQLite/trial assertions passed')
     result = {
       result: 'PASS', appInfo, firstRunTrial: firstTrial, trialTimestampPersisted: true,
       sqliteIpcWriteRead: true, restartPersistence: true, profilePreserved: true,
