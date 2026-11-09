@@ -184,3 +184,8 @@ Compile e 5 testes de fechamento **PASS**; 19 de workflow/proveniência **PASS**
 
 
 CI 42613588237: Linux e build/verificador **PASS**; diagnóstico Get-Acl **FAIL** por autoload de Microsoft.PowerShell.Security no Windows PowerShell hosted; etapas subsequentes **NOT RUN**. Substituída somente a leitura diagnóstica por IO.File.GetAccessControl (owner SID/SDDL, sem modificar ACL nem depender do cmdlet), mantendo status/JSON e testes NSIS positivos/negativos. Leitura real em arquivo temporário Windows **PASS**. [Seção 20](../../fase-e-revisao-independente.md#20-readback-sem-dependência-do-módulo-get-acl--2026-11-09). Nova execução CI exigida.
+
+
+## Investigação da instalação silenciosa — 2026-11-09
+
+Run 42614670826: primeira tentativa build sofreu crash Node 0xc0000409 e foi recusada; rerun somente do job falho/same SHA gerou build/verify/provas e **smoke empacotado PASS** (IPC, SQLite, licença, fechamento e restart). Instalação NSIS real retornou exit2 antes do artifact; causa ainda não localizada. Hipótese de flag NSIS herdada descartada por teste da função real; mantida nova cobertura de initializer positivo/negativo. Acrescentados códigos por etapa, sem relaxar guardas, e diagnóstico read-only das fixtures. Runner focado **PASS**, fingerprint `c447c7bbd2f25fce5b110c01a7a25b4dfeee76c384e6830a99aff715d156c302`; ajustes diagnósticos posteriores serão validados no CI. [Seção 21](../../fase-e-revisao-independente.md#21-diagnóstico-da-primeira-instalação-nsis-no-hosted--2026-11-09). Artifact/instalação ainda pendentes, E1–E5 sem homologação.

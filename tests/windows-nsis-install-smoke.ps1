@@ -49,7 +49,16 @@ function Invoke-FixtureProcess([string]$Image, [string[]]$Arguments) {
   $process = Start-Process -FilePath $Image -ArgumentList $Arguments -PassThru
   $fixtureProcesses.Add($process)
   $process.WaitForExit()
-  if (-not $process.HasExited -or $process.ExitCode -ne 0) { throw "Operação NSIS falhou: exit=$($process.ExitCode)" }
+  if (-not $process.HasExited -or $process.ExitCode -ne 0) {
+    Write-Output "NSIS_FAILURE image=$Image exit=$($process.ExitCode)"
+    foreach ($fixturePath in @($installDirectory, $controlDirectory, $controlManifest)) {
+      if (Test-Path -LiteralPath $fixturePath) {
+        $item = Get-Item -LiteralPath $fixturePath -Force
+        Write-Output "NSIS_FIXTURE path=$fixturePath attributes=$($item.Attributes)"
+      } else { Write-Output "NSIS_FIXTURE absent=$fixturePath" }
+    }
+    throw "Operação NSIS falhou: image=$Image exit=$($process.ExitCode)"
+  }
   return $process
 }
 

@@ -30,6 +30,51 @@ async function prove(addonPath, scratchRoot) {
   assert.equal(sidResult.status, 0)
   const sid = sidResult.stdout.trim()
   assert.match(sid, /^S-1-5-[0-9-]+$/)
+  // Fresh installation follows missing ReadRegStr lookups, which leave the
+  // NSIS error flag set. Exercise the actual initializer under that condition.
+  const initialize = source.match(/Function KQ_InitializeInstallationControl[\s\S]*?FunctionEnd/)[0]
+  for (const mode of ['prior-error', 'write-failure']) {
+    const control = path.join(require('node:os').tmpdir(), 'kq-protected-fixture-' + require('node:crypto').randomUUID())
+    try {
+      const nsi = path.join(scratchRoot, `initialize-${mode}.nsi`), image = path.join(scratchRoot, `initialize-${mode}.exe`)
+      fs.writeFileSync(nsi, `Unicode true
+RequestExecutionLevel user
+OutFile "${image}"
+!include LogicLib.nsh
+!define KQ_INSTALLATION_DIRECTORY_SDDL "O:${sid}D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;AU)(A;OICI;FA;;;${sid})"
+!define KQ_INSTALLATION_OWNER_SDDL "O:${sid}"
+Var KQInstallerFailureCode
+Var KQProgramDataDirectory
+Var KQInstallationDirectory
+Var KQInstallationManifest
+Var KQFenceOperationId
+Function KQ_AbortUnsafeInstallationState
+ SetErrorLevel 2
+ Quit
+FunctionEnd
+${initialize}
+Section
+ StrCpy $KQProgramDataDirectory "${require('node:os').tmpdir()}"
+ StrCpy $KQInstallationDirectory "${control}"
+ StrCpy $KQInstallationManifest "${mode === 'write-failure' ? control : path.join(control, 'installation.json')}"
+ SetErrors
+ Call KQ_InitializeInstallationControl
+SectionEnd
+`)
+      const compiled = spawnSync(compiler.path, ['/V2', nsi], { encoding: 'utf8', env: { ...process.env, ...(compiler.env || {}) } })
+      assert.equal(compiled.status, 0, compiled.stdout+compiled.stderr)
+      const result = spawnSync(image, ['/S'], { timeout: 30000 })
+      assert.equal(result.status, mode === 'write-failure' ? 2 : 0, `actual NSIS initializer: ${mode}`)
+      if (mode === 'prior-error') {
+        const state = JSON.parse(fs.readFileSync(path.join(control, 'installation.json'), 'utf8'))
+        assert.equal(state.generation, 0)
+        assert.equal(state.role, null)
+        assert.equal(state.pending.kind, 'prepare-update')
+        assert.match(state.pending.operationId, /^[0-9a-f-]{36}$/i)
+      }
+    } finally { fs.rmSync(control, { recursive: true, force: true }) }
+  }
+  console.log('WINDOWS NSIS INITIALIZER PASS stale error cleared / actual write failure refused')
   // Exercise the actual NSIS file-ACL reader against a real inherited file.
   // Only fixture ownership and its extra current-user ACE differ from product.
   const control = path.join(require('node:os').tmpdir(), 'kq-protected-fixture-' + require('node:crypto').randomUUID())

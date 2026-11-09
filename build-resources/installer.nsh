@@ -205,6 +205,7 @@ FunctionEnd
 !define KQ_INSTALLATION_DIRECTORY_SDDL "O:BAD:P(A;OICI;0x001f01ff;;;SY)(A;OICI;0x001f01ff;;;BA)(A;OICI;0x001200a9;;;AU)"
 !define KQ_INSTALLATION_OWNER_SDDL "O:BA"
 
+Var KQInstallerFailureCode
 Var KQInstallationDirectory
 Var KQInstallationManifest
 Var KQInstallerExistingMachineInstall
@@ -336,8 +337,11 @@ FunctionEnd
 !macroend
 
 Function KQ_AbortUnsafeInstallationState
-  SetErrorLevel 2
-  MessageBox MB_OK|MB_ICONSTOP "Não é possível continuar com segurança. Há uma instalação legada ou um estado global de instalação incompleto. Nenhum perfil ou banco foi movido ou excluído. Resolva o conflito antes de instalar." /SD IDOK
+  ${If} $KQInstallerFailureCode == ""
+    StrCpy $KQInstallerFailureCode 2
+  ${EndIf}
+  SetErrorLevel $KQInstallerFailureCode
+  MessageBox MB_OK|MB_ICONSTOP "Não é possível continuar com segurança. Há uma instalação legada ou um estado global de instalação incompleto. Nenhum perfil ou banco foi movido ou excluído. Resolva o conflito antes de instalar (código $KQInstallerFailureCode)." /SD IDOK
   Abort
 FunctionEnd
 
@@ -388,6 +392,7 @@ FunctionEnd
 
 
 Function KQ_CreateMaintenanceMutexHandles
+  StrCpy $KQInstallerFailureCode 219
   StrCpy $KQAdminMutexHandle 0
   StrCpy $KQRuntimeMutexHandle 0
   StrCpy $KQAdminMutexOwned "0"
@@ -421,6 +426,7 @@ Function KQ_CreateMaintenanceMutexHandles
 FunctionEnd
 
 Function KQ_TakeMaintenanceMutexes
+  StrCpy $KQInstallerFailureCode 220
   System::Call 'kernel32::WaitForSingleObject(p $KQAdminMutexHandle, i 0) i.r0'
   ${If} $0 != 0
     ${If} $0 == 128
@@ -500,6 +506,7 @@ Function KQ_ResolveInstallationControlPaths
 FunctionEnd
 
 Function KQ_InitializeInstallationControl
+  StrCpy $KQInstallerFailureCode 210
   System::Call 'kernel32::GetFileAttributesW(w "$KQProgramDataDirectory") i.r0'
   ${If} $0 == -1
     Call KQ_AbortUnsafeInstallationState
@@ -513,11 +520,13 @@ Function KQ_InitializeInstallationControl
     Call KQ_AbortUnsafeInstallationState
   ${EndIf}
 
+  StrCpy $KQInstallerFailureCode 211
   System::Call 'advapi32::ConvertStringSecurityDescriptorToSecurityDescriptorW(w "${KQ_INSTALLATION_DIRECTORY_SDDL}", i 1, *p .r0, p 0) i.r1'
   ${If} $1 == 0
     Goto kq_init_acl_failed
   ${EndIf}
   System::Call '*(i 12, p r0, i 0) p.r2'
+  StrCpy $KQInstallerFailureCode 212
   System::Call 'kernel32::CreateDirectoryW(w "$KQInstallationDirectory", p r2) i.r3'
   System::Free $2
   System::Call 'kernel32::LocalFree(p r0) p.r4'
@@ -525,6 +534,7 @@ Function KQ_InitializeInstallationControl
     Goto kq_init_directory_failed
   ${EndIf}
 
+  StrCpy $KQInstallerFailureCode 213
   System::Call 'ole32::CoCreateGuid(g .s) i.r0'
   Pop $4
   ${If} $0 != 0
@@ -537,6 +547,7 @@ Function KQ_InitializeInstallationControl
     Goto kq_init_manifest_failed
   ${EndIf}
   StrCpy $KQFenceOperationId $7 36 1
+  StrCpy $KQInstallerFailureCode 215
   FileOpen $6 "$KQInstallationManifest" w
   IfErrors kq_init_manifest_failed
   FileWrite $6 "{$\r$\n"
@@ -555,10 +566,12 @@ Function KQ_InitializeInstallationControl
   FileWrite $6 "  $\"lastCompletedOperation$\": null$\r$\n"
   FileWrite $6 "}$\r$\n"
   FileClose $6
+  StrCpy $KQInstallerFailureCode 216
   System::Call 'advapi32::ConvertStringSecurityDescriptorToSecurityDescriptorW(w "${KQ_INSTALLATION_OWNER_SDDL}", i 1, *p .r0, p 0) i.r1'
   ${If} $1 == 0
     Goto kq_init_manifest_failed
   ${EndIf}
+  StrCpy $KQInstallerFailureCode 217
   System::Call 'advapi32::SetFileSecurityW(w "$KQInstallationManifest", i 0x1, p r0) i.r2'
   System::Call 'kernel32::LocalFree(p r0) p.r3'
   ${If} $2 == 0
@@ -573,28 +586,32 @@ Function KQ_InitializeInstallationControl
 FunctionEnd
 
 !macro customInit
+  StrCpy $KQInstallerFailureCode 2
   StrCmp $INSTDIR "$PROGRAMFILES64\Karaoke Queue" +3
-    SetErrorLevel 2
+    SetErrorLevel 201
     Quit
   ${GetParameters} $R0
   ClearErrors
   ${GetOptions} $R0 "--delete-app-data" $R1
   ${IfNot} ${Errors}
-    SetErrorLevel 2
+    SetErrorLevel 202
     Quit
   ${EndIf}
   ClearErrors
   Call KQ_EnterOperationTree
+  StrCpy $KQInstallerFailureCode 203
   Call KQ_ResolveInstallationControlPaths
   StrCpy $KQBootstrapPending "0"
   StrCpy $KQInstallerExistingMachineInstall "0"
   StrCpy $KQManifestReinstall "0"
   StrCpy $KQRegisteredInstallDirectory ""
 
+  StrCpy $KQInstallerFailureCode 204
   ReadRegStr $0 HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
   ${If} $0 != ""
     Call KQ_AbortUnsafeInstallationState
   ${EndIf}
+  StrCpy $KQInstallerFailureCode 205
   ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
   ${If} $0 != ""
     Call KQ_AbortUnsafeInstallationState
@@ -605,6 +622,7 @@ FunctionEnd
     StrCpy $KQRegisteredInstallDirectory $0
   ${EndIf}
 
+  StrCpy $KQInstallerFailureCode 206
   IfFileExists "$KQInstallationManifest" kq_custom_init_manifest_exists kq_custom_init_manifest_missing
   kq_custom_init_manifest_exists:
     StrCpy $KQFenceManifest "$KQInstallationManifest"
