@@ -1,6 +1,6 @@
 # Fase E — Parecer da revisão independente
 
-**Estado atual de CI — 2026-11-09:** primeiro pipeline integral PASS e artifact verificado, conforme seção 24. E1–E5 sem homologação; S1 PARTIAL. Os registros seguintes preservam o histórico de correções e falhas.
+**CI do código — 2026-11-09:** ajustes de instalação/onboarding integralmente PASS na run 42733046324 (HEAD 896df22), artifact baixado e checksum verificado. [Resultados, limites e checklist](fase-e-ajustes-instalacao-onboarding.md#resultado-consolidado--ci-integral-pass). E1–E5 sem homologação; S1 PARTIAL. A atualização posterior é documental e preserva o histórico de correções/falhas.
 
 **Registro após correções F1–F3 — 2026-11-09: GO técnico condicionado para revisão final e PR exclusivamente de validação automatizada.** A seção 10 registra a implementação, revisão própria adicional e evidências do novo candidato; substitui o NO-GO da seção 9, preservada como histórico. Não constitui uma nova revisão independente read-only nem homologação E1–E5. Naquela execução não houve staging, commit, push, PR ou dispatch; a autorização posterior de acompanhamento CI está registrada nas seções seguintes.
 
@@ -583,3 +583,8 @@ Este registro documental descreve o **primeiro artifact verde identificado acima
 ## 25. Ajustes de instalação/onboarding solicitados — 2026-11-09
 
 [Contrato, correções e evidências novas](fase-e-ajustes-instalacao-onboarding.md). Revisão própria das alterações: limites privilegiados do diretório customizado, manutenção em cache protegido, reset de função após uninstall/reinstall preservando generation/fences e bancos, importação parcial no Welcome e testes reais das duas funções. Não constitui nova revisão independente read-only. PASS prévios não certificam inputs novos. Build e runner local registrados; CI/GUI/artifact novos aguardam execução. E1–E5 sem homologação, S1 PARTIAL.
+
+
+## 26. Instalação, manutenção e onboarding — CI integral
+
+[Relatório consolidado dos ajustes autorizados](fase-e-ajustes-instalacao-onboarding.md#resultado-consolidado--ci-integral-pass): run 42733046324, HEAD 896df22, Linux/Windows PASS, artifact 13724859407 baixado/verificado. Testou seletor gráfico real, confiança N-API do caminho, manutenção/cancelamento, repair e uninstall/reinstall de Combined confirmado com hashes de userData preservados e nova escolha no Welcome. Este registro de execução/revisão própria não é nova revisão independente read-only nem homologação. UAC/contas/sessões/legado, interrupções instaladas e aceite humano permanecem conforme lista NOT RUN. Nenhum merge ou Release.

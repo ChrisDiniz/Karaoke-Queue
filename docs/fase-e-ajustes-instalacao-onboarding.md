@@ -74,3 +74,25 @@ A automação entre processos usa WM_SETTEXT/WM_GETTEXT com SendMessageTimeout e
 
 
 Antes de executar o cache na manutenção, NSIS verifica que é arquivo comum sem reparse e reutiliza o leitor de owner/DACL para recusar owner não privilegiado ou escrita por contas comuns. O smoke verifica também a segurança do arquivo em si, além do diretório/manifesto protegido. Não relaxa ACL para obter execução; qualquer cache não confiável bloqueia o ramo de reparo com a orientação de executar o instalador original.
+
+
+## Resultado consolidado — CI integral PASS
+
+Execução [42733046324](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42733046324), HEAD `896df226ccce5ed421b86ec464fb33bbe896cee0`; merge testado `b70ff716b2397b3f495d4a30f4182b6d0a050bb6`. Jobs **Linux compile, unit and Electron E2E: PASS** e **Windows x64 package and smoke test: PASS**. Nenhuma asserção removida, nenhum merge, tag, Release ou instalação no Windows operacional.
+
+| Solicitação / contrato | Evidência executada | Resultado |
+|---|---|---|
+| Selecionar local | Wizard MUI real, campo de diretório com readback, instalação concluída em caminho customizado fora de Program Files | PASS |
+| Welcome: acervo/CSV como Configurações | Electron/IPC/SQLite reais nas duas funções; scanning→ready, CSV parcial, cancelamento/confirmar, 61 problemas paginados 50+11, adiamento, restart; escala de Configurações preservada | PASS |
+| Painel de Controle informativo | Página nativa com reparar/trocar e desinstalar; reparar padrão; cache protegido lançado; cancelar sem mudar manifesto/arquivos | PASS |
+| Reexecutar instalador | Página informa instalação existente, reparar e as duas funções; teste em unconfigured e Combined; repair/update efetivo mantém função/identidade e avança geração | PASS |
+| Uninstall/reinstall pede função novamente | Helper real confirma Combined em runner já administrativo; uninstall guarda tombstone; reinstall publica unconfigured/null; Main real volta ao Welcome apesar de SQLite/modo legado existentes | PASS |
+| Preservação e isolamento | Todos os hashes de arquivos do userData antes/depois de confirmação, cancelamento, repair, uninstall/reinstall; atalhos próprios e Registro conferidos | PASS |
+| Confiança do caminho/cache | N-API empacotado aceita caminho protegido e recusa raiz gravável AU/HKLM divergente; restaura a fixture; owner/DACL do cache verificados antes de execução | PASS |
+| Coordenação/empacotamento | Mutex/thread-owner/contenção/abandono/ACL, Job Object/fences NSIS, cleanup com Main real e outro perfil vivo; build NSIS x64, verify e smoke empacotado | PASS |
+
+Artifact [Karaoke-Queue-PR-4-Windows-x64](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42733046324/artifacts/13724859407), ID `13724859407`, 124.947.787 bytes. Instalador `Karaoke-Queue-Setup-0.5.0-x64.exe`; SHA-256 **`9f7bf54581c3f9e4be66da08632ef2b4fb5284ce2f6c28054b2cb9055cbfa62e`**. Manifesto e SHA256SUMS conferidos depois do download para `%TEMP%\kq-ci-42733046324-artifact`; checksum do arquivo baixado coincide com ambos. Digest do ZIP do Actions: `sha256:9a3f7c0fbde0daff7d4eea042d8be5b2c3e976ff2b8c4a5e5975ebbcd9d1bb21` (distinto do SHA do exe).
+
+Fingerprint de inputs selado/verificado: `4a248b6a547f1a7cac90f767955d9bd380196f63d97c4487ef370c2a27159e64`. Logs locais `/tmp/kq-ci-windows-success5.log`, `/tmp/kq-ci-onboarding-watch5.log`; logs persistentes vinculados na run. Os commits seguintes exclusivamente documentais não mudam esses inputs; novo artifact deve sempre identificar seu próprio sourceSha/hash.
+
+**NOT RUN / homologação restante:** UAC interativo com conta padrão, cancelamento e credenciais; ACL/mutex entre contas e sessões; legado/N-1 e interrupção/reboot reais; troca efetiva de função por clique até o fim do wizard; seleção física do diálogo de mídia (E2E fornece caminhos ao diálogo Main); julgamento visual/áudio e validação do proprietário. Os probes/crash de fixtures não substituem esses cenários. S1 PARTIAL, E1–E5 não homologadas/aprovadas. **GO para artifact de validação e checklist manual; sem autorização automática de distribuição/merge.**

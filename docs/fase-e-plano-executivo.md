@@ -591,3 +591,8 @@ Smoke corrigido usa cópia temp hash-verificada do uninstaller e userData padrã
 ## Complemento autorizado: local, manutenção e onboarding — 2026-11-09
 
 [Contrato dos ajustes e evidências](fase-e-ajustes-instalacao-onboarding.md). A autorização posterior permite escolher um local local protegido e redefine uninstall/reinstall para nova escolha de função. Substitui as premissas históricas de alvo fixo Program Files e retomada automática da função após reinstalação, preservando A1–A7, fences/locks, dados por conta e gates de homologação. Updates/reparos continuam preservando a função. Não equivale à homologação E1–E5.
+
+
+### Evidência integral dos ajustes de instalação/onboarding
+
+Run 42733046324, HEAD 896df22: Linux/Windows, NSIS gráfico/repair/uninstall/reinstall e artifact PASS; checksum baixado/verificado. [Matriz executada, fingerprint, artifact e NOT RUN](fase-e-ajustes-instalacao-onboarding.md#resultado-consolidado--ci-integral-pass). Os ajustes autorizados estão implementados e preparados para validação manual; não homologam E1–E5 nem iniciam F.

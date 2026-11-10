@@ -139,3 +139,8 @@ Run [42622477298](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42622
 ### Ajustes solicitados pelo proprietário — 2026-11-09
 
 Implementação de seletor de local protegido, manutenção informativa, nova escolha de função após uninstall/reinstall e Welcome com indexação/importação e relatório compartilhado. [Contrato, testes e resultados](../../fase-e-ajustes-instalacao-onboarding.md). Preserva bancos/perfis e protocolo de exclusão/fences; CI anterior não certifica esta alteração. Homologação da etapa permanece pendente.
+
+
+### CI integral dos ajustes solicitados — 2026-11-09
+
+Run 42733046324, HEAD 896df22: jobs Linux e Windows PASS; wizard com diretório escolhido, onboarding/CSV real, manutenção/cancelamento, repair e uninstall/reinstall com nova função ainda não selecionada e todos os hashes de userData preservados. Artifact baixado/SHA-256 verificado. [Resultados individuais e limites](../../fase-e-ajustes-instalacao-onboarding.md#resultado-consolidado--ci-integral-pass). Implementação pronta para checklist manual; etapa sem homologação/aprovação. S1 PARTIAL, sem merge/Release.
