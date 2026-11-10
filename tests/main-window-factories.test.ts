@@ -56,7 +56,7 @@ test('Standalone factory preserves the one-screen Player dimensions and sandboxe
   createStandaloneWindow({ ...capture, preloadPath: '/build/standalone-player-preload.bundle.js',
     identity: getWindowsFunctionIdentity('player'), iconPath: '/resources/player.png' })
   assert.deepEqual(capture.options, [{
-    width: 1280, height: 800, minWidth: 800, minHeight: 600, show: true,
+    width: 1280, height: 800, minWidth: 800, minHeight: 600, show: true, fullscreen: true,
     title: 'Karaoke Queue · Reprodutor', icon: '/resources/player.png', autoHideMenuBar: true,
     webPreferences: {
       preload: '/build/standalone-player-preload.bundle.js', nodeIntegration: false,

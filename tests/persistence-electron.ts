@@ -228,17 +228,34 @@ async function run() {
   await page.screenshot({ path: path.join(root, 'recuperacao-confirmada.png') })
   console.log('CHECK fechamento normal')
   await add('20'); await settled()
-  await app.evaluate(({ dialog }) => {
-    globalThis.closePromptCount = 0
-    dialog.showMessageBox = async () => { globalThis.closePromptCount++; return { response: 1 } }
+  // Main may quit before the inspector acknowledges close(). Observe its durable
+  // test-only receipt outside Electron instead of evaluating in a dying process.
+  const closeReceipt = path.join(root, 'normal-close-prompts.json')
+  await app.evaluate(({ dialog }, receipt) => {
+    let prompts = 0
+    dialog.showMessageBox = async () => {
+      process.getBuiltinModule('node:fs').writeFileSync(receipt, JSON.stringify(++prompts))
+      return { response: 1 }
+    }
+  }, closeReceipt)
+  const child = app.process()
+  const processExited = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })))
+  const windowClosed = page.waitForEvent('close')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close()).catch(error => {
+    if (!String(error.message).includes('Target page, context or browser has been closed')) throw error
   })
-  const exited = page.waitForEvent('close')
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close())
-  await exited
-  assert.equal(await app.evaluate(() => globalThis.closePromptCount), 1)
-  await app.close(); app = null
-  assert.equal(read().entries.filter(entry => entry.table_number === '20').length, 1)
-  assert.equal(read().sessions.find(session => session.id === read().state.current_session_id).ended_at, null)
+  await windowClosed
+  // Disconnect the test inspector so Node can finish its normal shutdown.
+  await app.close()
+  assert.deepEqual(await processExited, { code: 0, signal: null }, 'normal close must exit cleanly')
+  app = null
+  assert.equal(JSON.parse(fs.readFileSync(closeReceipt, 'utf8')), 1, 'exactly one close confirmation')
+  const normallyClosed = read()
+  assert.equal(normallyClosed.entries.filter(entry => entry.table_number === '20').length, 1)
+  assert.equal(normallyClosed.sessions.find(session => session.id === normallyClosed.state.current_session_id).ended_at, null)
+  await launch()
+  assert.deepEqual(read(), normallyClosed, 'normal close/restart preserves the complete confirmed SQLite state')
+  assert.equal(await page.evaluate(() => window.__kqueue.queueLength()), normallyClosed.entries.filter(entry => entry.status === 'pending').length)
   console.log(`PASS real Electron / SQLite: rollback, inputs, completion, cancel, freeze, close failure, IPC uncertainty, recovery and restart. Evidence: ${root}`)
  } finally { await closeForced() }
 }

@@ -1,5 +1,7 @@
 # Roadmap de migração — Standalone e Combined
 
+**Adição autorizada em 2026-11-09:** ativação no topo ocioso do Reprodutor, licença persistida comum às duas funções e startup Player em fullscreen. [Implementação, regressões e limites](fase-e-player-licenca-fullscreen.md). Testes locais e runner Windows PASS nos snapshots indicados; o novo commit exige CI/artifact próprios. Não muda S1 PARTIAL nem a homologação pendente E1–E5.
+
 ## Objetivo
 
 Registrar a migração do Player Only legado para o **Reprodutor (Standalone)** de tela única e a consolidação das funções operacionais atuais no **Tudo em um (Combined)**. Este roadmap é subordinado à especificação funcional V1 em [`standalone-one-screen-player.md`](standalone-one-screen-player.md); não a substitui nem autoriza funcionalidades adicionais.

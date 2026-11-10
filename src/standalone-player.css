@@ -1101,3 +1101,16 @@ body[data-transition-phase="celebration"][data-celebration-paused="true"] .celeb
   .catalog-issues-pagination .stop-confirmation-button { min-width: calc(90px * var(--standalone-display-scale)); height: calc(34px * var(--standalone-display-scale)); font-size: calc(11px * var(--standalone-display-scale)); }
   .catalog-dialog-actions { margin-top: calc(20px * var(--standalone-display-scale)); }
 }
+
+/* Owner-authorized idle-only license control; reuse the existing modal/button palette. */
+.standalone-license-controls { position: absolute; z-index: 3; top: 18px; right: 24px; display: flex; align-items: center; gap: 12px; padding: 8px 12px; border: 1px solid #43434e; border-radius: 9px; background: rgba(16,16,19,.88); color: #c5c5ce; font-size: 13px; }
+.standalone-license-controls[hidden] { display: none; }
+.standalone-license-controls button { border: 1px solid #6366f1; border-radius: 6px; background: #3730a3; color: #fff; padding: 8px 12px; font: inherit; cursor: pointer; }
+.standalone-license-controls button:focus-visible, .standalone-license-dialog input:focus-visible { outline: 2px solid #a5a6ff; outline-offset: 3px; }
+.standalone-license-dialog h1 { margin: 0 0 14px; font-size: 24px; }
+.standalone-license-dialog p { color: #b4b4be; line-height: 1.5; }
+.standalone-license-dialog label { display: block; margin-top: 20px; margin-bottom: 8px; font-size: 14px; }
+.standalone-license-dialog input { width: 100%; padding: 12px; border: 1px solid #43434e; border-radius: 6px; background: #18181b; color: #f3f3f6; font: inherit; }
+#standalone-license-error { min-height: 24px; color: #fca5a5; margin-top: 10px; }
+.standalone-license-dialog .stop-confirmation-button.cancel { border-color: #43434e; background: #24242b; color: #e4e4eb; }
+.standalone-license-dialog .stop-confirmation-button.confirm { border-color: #818cf8; background: #6366f1; color: #fff; }

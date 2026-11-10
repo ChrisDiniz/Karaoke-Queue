@@ -63,6 +63,7 @@ export function createStandaloneWindow(
     minWidth: 800,
     minHeight: 600,
     show: true,
+    fullscreen: true,
     title: deps.identity.windowTitle,
     icon: deps.iconPath,
     autoHideMenuBar: true,

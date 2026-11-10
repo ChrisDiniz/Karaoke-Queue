@@ -475,6 +475,9 @@ async function runPlayerWithoutControllerState() {
     assert.equal(playerWindows.length, 1, 'A clean Player-only launch must show one composed Standalone window.')
     const playerPage = await app.firstWindow()
     await playerPage.waitForFunction(() => !!window.standalonePlayer?.getSnapshot)
+    assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen()), true,
+      'Player must start in native fullscreen before the test resizes its window')
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setFullScreen(false))
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1920,1080))
     await playerPage.waitForFunction(() => window.innerWidth === 1920)
     const catalogScale = await playerPage.evaluate(() => ({
@@ -625,6 +628,120 @@ async function runInvalidConfigurationPreservesDatabase() {
   }
 }
 
+async function runLicenseSharedAcrossRoles() {
+  activeScenario = 'runLicenseSharedAcrossRoles'
+  // Existing fixture token, never logged; only temporary per-account profiles.
+  const token = 'YU3ZYVR88H4DRH2KLW43'
+  for (const initialRole of ['player', 'combined']) {
+    const profile = makeProfile(`license-${initialRole}`)
+    let app
+    try {
+      writeMode(profile, initialRole)
+      if (initialRole === 'player') fs.writeFileSync(path.join(profile.userData, 'license-state.json'), JSON.stringify({
+        policyVersion: 1, trialStartedAt: Date.now() - 16 * 24 * 60 * 60 * 1000, activated: false
+      }))
+      app = await launch(profile)
+      let page = await app.firstWindow()
+      await page.waitForFunction(() => !!window.karaokeLicense)
+      const before = await page.evaluate(() => window.karaokeLicense.getStatus())
+      assert.equal(before.activated, false)
+      if (initialRole === 'player') {
+        await page.locator('#standalone-license-controls').waitFor({ state: 'visible' })
+        assert.equal(before.expired, true)
+        assert.equal(await page.locator('#standalone-license-label').innerText(), 'Teste expirado')
+        assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen()), true)
+        for (const item of ['menu-item-commands', 'menu-item-options']) {
+          await page.keyboard.press('Escape')
+          await page.locator('#standalone-main-menu').waitFor({ state: 'visible' })
+          assert.equal(await page.locator('#standalone-license-controls').isVisible(), false, 'no license control in menu')
+          await page.locator(`#${item}`).click()
+          assert.equal(await page.locator('#standalone-license-controls').isVisible(), false, 'no license control in another screen')
+          await page.keyboard.press('Escape') // returns to main menu
+          await page.keyboard.press('Escape') // returns to idle
+          await page.locator('#standalone-license-controls').waitFor({ state: 'visible' })
+        }
+        await page.locator('#standalone-license-open').focus()
+        await page.keyboard.press('Enter')
+        await page.locator('#standalone-license-modal').waitFor({ state: 'visible' })
+        await page.keyboard.press('Escape')
+        await page.keyboard.press('Space')
+        await page.locator('#standalone-license-modal').waitFor({ state: 'visible' })
+        await page.locator('#standalone-license-code').fill('12345')
+        await page.locator('#standalone-license-submit').click()
+        await page.getByText('Token de ativação inválido.', { exact: true }).waitFor()
+        assert.equal(await page.locator('#standalone-license-modal').isVisible(), true)
+        assert.equal((await page.evaluate(() => window.karaokeLicense.getStatus())).activated, false)
+        assert.equal((await page.evaluate(() => window.standalonePlayer.getSnapshot())).snapshot.state.current, null,
+          'typing a license must never submit a music code')
+        await page.keyboard.press('Tab')
+        assert.equal(await page.locator('#standalone-license-cancel').evaluate(element => element === document.activeElement), true)
+        await page.keyboard.press('Escape')
+        assert.equal(await page.locator('#standalone-license-modal').isVisible(), false)
+        assert.equal(await page.locator('#standalone-license-code').inputValue(), '')
+        if (process.env.KQ_PLAYER_SCREENSHOT_DIR) {
+          fs.mkdirSync(process.env.KQ_PLAYER_SCREENSHOT_DIR, { recursive: true })
+          await app.evaluate(({ BrowserWindow }) => {
+            const win = BrowserWindow.getAllWindows()[0]
+            win.setFullScreen(false)
+            win.setContentSize(1280,800)
+          })
+          await page.waitForFunction(() => window.innerWidth === 1280 && window.innerHeight === 800)
+          await page.screenshot({ path: path.join(process.env.KQ_PLAYER_SCREENSHOT_DIR, 'player-idle-license.png') })
+        }
+        await page.locator('#standalone-license-open').click()
+        if (process.env.KQ_PLAYER_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.KQ_PLAYER_SCREENSHOT_DIR, 'player-license-dialog.png') })
+        await page.locator('#standalone-license-code').fill(`  ${token.toLowerCase()}  `)
+        // Real filesystem failure, not a fake successful activation response.
+        const temporaryLicensePath = path.join(profile.userData, `license-state.json.${await app.evaluate(() => process.pid)}.tmp`)
+        fs.mkdirSync(temporaryLicensePath)
+        try {
+          await page.locator('#standalone-license-submit').click()
+          await page.getByText('Não foi possível confirmar a ativação. Tente novamente.', { exact: true }).waitFor()
+          assert.equal((await page.evaluate(() => window.karaokeLicense.getStatus())).activated, false)
+          assert.equal(JSON.parse(fs.readFileSync(path.join(profile.userData, 'license-state.json'))).activated, false)
+          assert.equal(await page.locator('#standalone-license-modal').isVisible(), true)
+        } finally { fs.rmdirSync(temporaryLicensePath) }
+        await page.locator('#standalone-license-submit').click()
+        await page.locator('#standalone-license-controls').waitFor({ state: 'hidden' })
+        assert.equal(await page.locator('#standalone-license-modal').isVisible(), false)
+        assert.equal(await page.locator('#standalone-license-code').inputValue(), '')
+      } else {
+        await page.waitForFunction(() => !!window.__kqueue)
+        await startSession(page)
+        await page.locator('#btn-license-open').click()
+        await page.locator('#license-code').fill(token)
+        await page.locator('#license-form button[type="submit"]').click()
+        await page.locator('#license-trial-controls').waitFor({ state: 'hidden' })
+        assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen()), false,
+          'Management startup remains windowed')
+      }
+      const licensePath = path.join(profile.userData, 'license-state.json')
+      const activatedBytes = fs.readFileSync(licensePath)
+      assert.equal(JSON.parse(activatedBytes).activated, true)
+      // Restart and switch the synthetic role fixture, not an installed-machine bypass.
+      for (const role of [initialRole, initialRole === 'player' ? 'combined' : 'player']) {
+        await forceClose(app); app = undefined
+        writeMode(profile, role)
+        app = await launch(profile)
+        page = await app.firstWindow()
+        await page.waitForFunction(async () => (await window.karaokeLicense?.getStatus())?.activated === true)
+        if (role === 'player') {
+          await page.waitForFunction(() => !!window.standalonePlayer)
+          assert.equal(await page.locator('#standalone-license-controls').isVisible(), false)
+          assert.equal(await page.locator('#standalone-license-modal').isVisible(), false)
+          assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFullScreen()), true,
+            'every Player restart starts fullscreen')
+        } else {
+          await page.waitForFunction(() => !!window.__kqueue)
+          assert.equal(await page.locator('#license-trial-controls').isVisible(), false)
+          assert.equal(await page.locator('#license-modal').isVisible(), false)
+        }
+        assert.deepEqual(fs.readFileSync(licensePath), activatedBytes, 'role changes preserve the same confirmed activation')
+      }
+    } finally { await forceClose(app) }
+  }
+}
+
 async function run() {
   let testError
   try {
@@ -642,6 +759,8 @@ async function run() {
     process.stdout.write('OPERATING_MODE PASS Player-only embedded startup without Controller persistence\n')
     await runCombinedOneControllerDatabaseAndRestart()
     process.stdout.write('OPERATING_MODE PASS Combined lifecycle, single Controller database and restart persistence\n')
+    await runLicenseSharedAcrossRoles()
+    process.stdout.write('OPERATING_MODE PASS shared activation across both roles and fullscreen on every Player start\n')
     await runInvalidConfigurationPreservesDatabase()
     process.stdout.write('OPERATING_MODE PASS invalid configuration preserves existing SQLite data\n')
   } catch (error) {

@@ -112,6 +112,11 @@ async function waitForSnapshot(page, predicate, message, timeoutMs = 20000) {
   while (Date.now() < deadline) {
     latest = await page.evaluate(() => window.standalonePlayer?.getSnapshot?.()).catch(() => undefined)
     if (latest && predicate(latest.snapshot)) {
+      if (latest.snapshot.playbackCondition !== 'ready' || latest.snapshot.state.operationalState !== 'idle') {
+        await page.locator('#standalone-license-controls').waitFor({ state: 'hidden' })
+        assert.equal(await page.locator('#standalone-license-modal').isVisible(), false,
+          'activation dialog must not overlay playback, pause, countdown, loading or celebration')
+      }
       writeProgress(`snapshot PASS ${message}`)
       return latest.snapshot
     }
@@ -1191,6 +1196,11 @@ async function run() {
         throw error
       })
     }
+    await waitForStandaloneWindow(launched)
+    await waitForFullScreen(launched, true)
+    // Startup is proved above; visual/F11 scenarios deliberately begin windowed.
+    await launched.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setFullScreen(false))
+    await waitForFullScreen(launched, false)
     return launched
   }
 

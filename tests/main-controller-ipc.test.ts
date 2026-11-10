@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { IpcMain, IpcMainEvent, IpcMainInvokeEvent } from 'electron'
 import {
   registerMainControllerIpcHandlers,
+  registerMainLicenseIpcHandlers,
   registerMainControllerWindowIpcHandlers,
   type MainControllerIpcDependencies
 } from '../src/main-controller-ipc'
@@ -109,4 +110,26 @@ test('Management window preference IPC requires its owner before invoking prefer
   dispose()
   assert.equal(ipcMain.handlers.size, 0)
   assert.equal(ipcMain.removedHandlers.length, 4)
+})
+
+test('standalone license IPC exposes only license channels and authorizes before touching the service', () => {
+  const ipcMain = new FakeIpcMain()
+  const sender = {} as IpcMainInvokeEvent
+  let allowed = true
+  let calls = 0
+  const dispose = registerMainLicenseIpcHandlers({
+    ipcMain: ipcMain as unknown as IpcMain,
+    getLicenseService: () => { calls++; return undefined },
+    logger: { error: () => {} },
+    assertLicenseIpcSender: event => { assert.equal(event, sender); if (!allowed) throw Error('LICENSE_IPC_FORBIDDEN') }
+  })
+  assert.deepEqual([...ipcMain.handlers.keys()], ['license:get-status', 'license:activate'])
+  allowed = false
+  for (const handler of ipcMain.handlers.values()) assert.throws(() => handler(sender, 'invalid'), /LICENSE_IPC_FORBIDDEN/)
+  assert.equal(calls, 0)
+  allowed = true
+  assert.throws(() => ipcMain.handlers.get('license:get-status')!(sender), /LICENSE_SERVICE_UNAVAILABLE/)
+  assert.equal(calls, 1)
+  dispose(); dispose()
+  assert.equal(ipcMain.handlers.size, 0)
 })

@@ -120,3 +120,8 @@ Links bootstrap têm um único writer no helper; retry após commit não repete 
 ### Primeiro CI integral e artifact — 2026-11-09
 
 Run [42622477298](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42622477298), HEAD b92e950: ambos os jobs PASS; build/verify/N-API, provas nativas, smoke empacotado e NSIS silencioso install/uninstall/reinstall passaram, incluindo atalhos, recusa com Main ativo, tombstone e preservação de todos os arquivos do userData. Artifact baixado e SHA-256 verificado. [Snapshot, hash e limites](../../fase-e-revisao-independente.md#24-primeiro-ci-integral-pass-e-artifact--2026-11-09). Isso certifica somente os cenários executados; UAC interativo, contas/sessões, legado/N-1, manutenção interativa e aceite humano permanecem pendentes. Etapa sem homologação/aprovação; S1 PARTIAL.
+
+
+### Adição autorizada — ativação Player e fullscreen (2026-11-09)
+
+Proprietário autorizou ativação no topo ocioso do Player e fullscreen a cada início, preservando Tudo em um. Implementação usa o serviço/arquivo de licença existente e sender policy restrita, sem alterar decisões A1–A7. [Contratos, testes e limites](../../fase-e-player-licenca-fullscreen.md). Evidências incrementais locais são discriminadas por snapshot; CI e artifact do novo commit continuam obrigatórios. Sem homologação E2 ou aceite visual presumido.

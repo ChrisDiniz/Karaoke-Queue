@@ -11,6 +11,26 @@
 </head>
 <body tabindex="-1" data-fullscreen-exit-shortcut="f11">
   <main id="playback-stage" aria-label="Player Only Standalone">
+    <div id="standalone-license-controls" class="standalone-license-controls" hidden>
+      <span id="standalone-license-label"></span>
+      <button id="standalone-license-open" type="button">Ativar Karaoke Queue</button>
+    </div>
+    <section id="standalone-license-modal" class="stop-confirmation-overlay" role="dialog" aria-modal="true"
+      aria-labelledby="standalone-license-title" aria-describedby="standalone-license-description" hidden>
+      <div class="stop-confirmation-dialog standalone-license-dialog">
+        <h1 id="standalone-license-title">Ativar Karaoke Queue</h1>
+        <p id="standalone-license-description">Insira seu token de ativação para liberar o Karaoke Queue permanentemente nesta instalação, em qualquer função.</p>
+        <form id="standalone-license-form" autocomplete="off">
+          <label for="standalone-license-code">Token de ativação</label>
+          <input id="standalone-license-code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="64" required>
+          <p id="standalone-license-error" role="alert"></p>
+          <div class="stop-confirmation-actions">
+            <button id="standalone-license-cancel" class="stop-confirmation-button cancel" type="button">Cancelar</button>
+            <button id="standalone-license-submit" class="stop-confirmation-button confirm" type="submit">Ativar</button>
+          </div>
+        </form>
+      </div>
+    </section>
     <div id="playback-media-layer" aria-hidden="true"></div>
     <div id="standalone-paused-indicator" class="paused-status" aria-label="Reprodução pausada" hidden>
       <span class="pause-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"></path></svg></span>

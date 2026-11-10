@@ -35,6 +35,8 @@ fs.writeFileSync(path.join(rendererOutput, 'welcome-renderer.bundle.js'),
 
 fs.writeFileSync(path.join(rendererOutput, 'standalone-player-renderer.bundle.js'),
   bundleCommonJsModules([
+    'licensing',
+    'standalone-license-view',
     'standalone-player-ipc-contracts',
     'standalone-player-keyboard',
     'standalone-player-interaction',

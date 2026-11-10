@@ -72,18 +72,23 @@ function listenForAuthorizedController(
   }
 }
 
-export function registerMainControllerIpcHandlers(deps: MainControllerIpcDependencies): () => void {
-  const registration = createRegistration(deps.ipcMain)
-  const handle = registration.handle.bind(registration)
+export interface MainLicenseIpcDependencies {
+  ipcMain: IpcMain
+  getLicenseService(): LocalLicenseService | undefined
+  logger: Pick<FileLogger, 'error'>
+  assertLicenseIpcSender(event: IpcMainInvokeEvent): void
+}
 
+function registerLicenseHandlers(registration: MainIpcRegistration, deps: MainLicenseIpcDependencies): void {
+  const handle = registration.handle.bind(registration)
   handle('license:get-status', event => {
-    deps.assertControllerIpcSender(event)
+    deps.assertLicenseIpcSender(event)
     const service = deps.getLicenseService()
     if (!service) throw new Error('LICENSE_SERVICE_UNAVAILABLE')
     return service.getStatus()
   })
   handle('license:activate', (event, token: unknown) => {
-    deps.assertControllerIpcSender(event)
+    deps.assertLicenseIpcSender(event)
     const service = deps.getLicenseService()
     if (!service) throw new Error('LICENSE_SERVICE_UNAVAILABLE')
     try { return service.activate(token) } catch (error) {
@@ -92,6 +97,20 @@ export function registerMainControllerIpcHandlers(deps: MainControllerIpcDepende
       throw error
     }
   })
+}
+
+/** Two restricted channels, with a role-specific document/sender policy. */
+export function registerMainLicenseIpcHandlers(deps: MainLicenseIpcDependencies): () => void {
+  const registration = createRegistration(deps.ipcMain)
+  registerLicenseHandlers(registration, deps)
+  return () => registration.dispose()
+}
+
+export function registerMainControllerIpcHandlers(deps: MainControllerIpcDependencies): () => void {
+  const registration = createRegistration(deps.ipcMain)
+  const handle = registration.handle.bind(registration)
+
+  registerLicenseHandlers(registration, { ...deps, assertLicenseIpcSender: deps.assertControllerIpcSender })
   registration.on('diagnostics:renderer-log', listenForAuthorizedController(deps, 'diagnostics:renderer-log', (_event, payload) => {
     if (!payload || typeof payload !== 'object') return
     const value = payload as { event?: unknown; message?: unknown; stack?: unknown }

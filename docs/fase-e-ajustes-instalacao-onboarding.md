@@ -96,3 +96,8 @@ Artifact [Karaoke-Queue-PR-4-Windows-x64](https://github.com/ChrisDiniz/Karaoke-
 Fingerprint de inputs selado/verificado: `4a248b6a547f1a7cac90f767955d9bd380196f63d97c4487ef370c2a27159e64`. Logs locais `/tmp/kq-ci-windows-success5.log`, `/tmp/kq-ci-onboarding-watch5.log`; logs persistentes vinculados na run. Os commits seguintes exclusivamente documentais não mudam esses inputs; novo artifact deve sempre identificar seu próprio sourceSha/hash.
 
 **NOT RUN / homologação restante:** UAC interativo com conta padrão, cancelamento e credenciais; ACL/mutex entre contas e sessões; legado/N-1 e interrupção/reboot reais; troca efetiva de função por clique até o fim do wizard; seleção física do diálogo de mídia (E2E fornece caminhos ao diálogo Main); julgamento visual/áudio e validação do proprietário. Os probes/crash de fixtures não substituem esses cenários. S1 PARTIAL, E1–E5 não homologadas/aprovadas. **GO para artifact de validação e checklist manual; sem autorização automática de distribuição/merge.**
+
+
+## Continuidade — licença Player e fullscreen
+
+O proprietário acrescentou ativação no topo ocioso do Reprodutor, compartilhada com Tudo em um, e abertura Player sempre em fullscreen. [Contratos e evidências desta adição](fase-e-player-licenca-fullscreen.md). A run documental 42734516214 revelou uma corrida no harness de fechamento Linux; corrigida com observação externa, exit normal obrigatório e verificação integral do SQLite após restart, preservando a evidência anterior como histórica. O novo candidato exige seu próprio CI/artifact.

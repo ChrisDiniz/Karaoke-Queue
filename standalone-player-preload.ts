@@ -590,3 +590,9 @@ function cloneOptionsActionReply(reply: StandalonePlayerOptionsActionReply): Sta
 }
 
 contextBridge.exposeInMainWorld('standalonePlayer', api)
+
+// Licensing shares Main's persisted service with Management; no storage/key is exposed.
+contextBridge.exposeInMainWorld('karaokeLicense', Object.freeze({
+  getStatus: () => ipcRenderer.invoke('license:get-status'),
+  activate: (token: string) => ipcRenderer.invoke('license:activate', token)
+}))

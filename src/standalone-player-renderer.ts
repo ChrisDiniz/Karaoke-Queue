@@ -1,3 +1,4 @@
+import { StandaloneLicenseView } from './standalone-license-view'
 import type {
   StandaloneCatalogImportIssuesPage,
   StandalonePlayerOptionsActionReply,
@@ -42,6 +43,7 @@ const CATALOG_ISSUES_PAGE_SIZE = 50
 type CatalogDialogMode = 'closed' | 'confirmation' | 'issues'
 
 class StandalonePlayerRenderer {
+  private readonly license = new StandaloneLicenseView()
   private readonly api = window.standalonePlayer
   private readonly interaction: StandalonePlayerInteractionController
   private readonly transport: StandalonePlayerInteractionTransport
@@ -213,6 +215,13 @@ class StandalonePlayerRenderer {
     }).catch(() => undefined)
   }
 
+  private syncLicenseVisibility(): void {
+    const snapshot = this.latestSnapshot?.snapshot
+    this.license.setAvailable(Boolean(snapshot?.playbackCondition === 'ready' &&
+      snapshot.state.operationalState === 'idle' && this.interaction.getSnapshot().menuScreen === 'closed' &&
+      !this.stopConfirmationOpen && this.catalogDialogMode === 'closed'))
+  }
+
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (this.disposed || event.isComposing) return
     // Ctrl/Command+R is not a Standalone command; suppress Chromium's reload shortcut even when an input owns focus.
@@ -221,6 +230,7 @@ class StandalonePlayerRenderer {
       event.stopImmediatePropagation()
       return
     }
+    if (this.license.handleKeyDown(event)) return
     if (this.catalogDialogMode !== 'closed') {
       this.handleCatalogDialogKeyDown(event)
       return
@@ -324,6 +334,7 @@ class StandalonePlayerRenderer {
   }
 
   private renderStopConfirmation(): void {
+    this.syncLicenseVisibility()
     const modal = document.getElementById('standalone-stop-confirmation')
     if (modal) modal.hidden = !this.stopConfirmationOpen
     const pending = this.interaction.getStopAllPending()
@@ -359,6 +370,7 @@ class StandalonePlayerRenderer {
       if (button) button.disabled = this.exitResolutionPending
     }
     document.body.dataset.menuScreen = menuScreen
+    this.syncLicenseVisibility()
     this.syncPlaybackSurface()
     if (menuScreen === this.lastMenuScreen) return
 
@@ -383,7 +395,11 @@ class StandalonePlayerRenderer {
         if (button && !button.disabled) button.focus()
       } else if (menuScreen === 'closed' && previous !== 'closed') {
         this.exitConfirmationReturnFocus = undefined
-        document.body.focus()
+        // A later user action can focus the idle activation control before this
+        // animation frame. Do not steal that focus while returning from a menu.
+        if (!document.activeElement?.closest('#standalone-license-controls, #standalone-license-modal')) {
+          document.body.focus()
+        }
       }
     })
   }
@@ -905,6 +921,7 @@ class StandalonePlayerRenderer {
   private readonly dispose = (): void => {
     if (this.disposed) return
     this.disposed = true
+    this.license.dispose()
     window.removeEventListener('keydown', this.onKeyDown, true)
     window.removeEventListener('resize', this.onResize)
     window.removeEventListener('pagehide', this.dispose)
@@ -1017,6 +1034,7 @@ class StandalonePlayerRenderer {
     if (idlePanel) idlePanel.hidden = isPlaying || isInitialTransition
     if (playingPanel) playingPanel.hidden = !isPlaying || !this.interaction.getSnapshot().numericPanelOpen
     if (idleArt) idleArt.hidden = isPlaying || isInitialTransition
+    this.syncLicenseVisibility()
     if (countdownPanel) countdownPanel.hidden = !countdown
     if (loadingPanel) loadingPanel.hidden = !loading
     if (celebrationPanel) celebrationPanel.hidden = !celebration

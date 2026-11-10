@@ -25,7 +25,7 @@ import { installStandalonePlayerMainIpcBridge, type StandalonePlayerMainIpcBridg
 import { StandalonePlayerOptionsService } from './src/standalone-player-options'
 import { registerMainPlayerIpcHandlers, registerMainStandaloneFullscreenHandler } from './src/main-player-ipc'
 import { createMainIpcPolicy } from './src/main-ipc-policy'
-import { registerMainControllerIpcHandlers, registerMainControllerWindowIpcHandlers } from './src/main-controller-ipc'
+import { registerMainControllerIpcHandlers, registerMainLicenseIpcHandlers, registerMainControllerWindowIpcHandlers } from './src/main-controller-ipc'
 import {
   createManagementWindow as createManagementWindowSurface,
   createStandaloneWindow as createStandaloneWindowSurface,
@@ -865,6 +865,18 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   let databaseInitializationFailed = false
   try {
     licenseService = new LocalLicenseService(path.join(userDataDirectory, 'license-state.json'))
+    if (operatingMode === 'player') {
+      const disposeLicense = registerMainLicenseIpcHandlers({
+        ipcMain, getLicenseService: () => licenseService, logger,
+        assertLicenseIpcSender: createMainIpcPolicy({
+          getExpectedWebContents: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : undefined,
+          getExpectedDocumentUrl: () => pathToFileURL(path.join(__dirname, 'src', 'standalone-player.html')).href,
+          isEnabled: () => operatingMode === 'player' && !shutdownStarted,
+          forbiddenCode: 'LICENSE_IPC_FORBIDDEN'
+        })
+      })
+      app.once('will-quit', disposeLicense)
+    }
 
     mainMediaRuntime = new MainMediaRuntime({
       operatingMode: operatingMode!, userDataDirectory, protocol, logger,

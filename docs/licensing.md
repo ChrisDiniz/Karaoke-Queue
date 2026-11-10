@@ -28,3 +28,7 @@ Após a expiração, leituras continuam disponíveis. O Main rejeita gravações
 ## Limitações de segurança
 
 Este mecanismo é uma trava local leve, sem servidor, conta, pagamento, rede, vínculo de hardware ou proteção contra alguém que edite o arquivo local, inspecione o código ou modifique o binário. O token está documentado no repositório e não deve ser tratado como segredo fortemente protegido. O arquivo `docs/licensing.md` fica fora de `build/**/*` e não é incluído na distribuição Electron atual.
+
+## Reprodutor e mudança de função — 2026-11-09
+
+O Reprodutor oferece ativação somente no topo da tela ociosa, com diálogo de chave acessível por teclado. Usa o mesmo serviço Main e `userData/license-state.json` do Tudo em um. Ativar em qualquer função permanece válido após reiniciar e mudar de função na mesma conta/perfil Windows; não é criada uma licença por função nem um compartilhamento entre contas. Depois de ativado, o controle e o diálogo ficam ocultos nas duas funções. As regras de avaliação e validação acima permanecem vigentes. Ver [implementação, testes e limites](fase-e-player-licenca-fullscreen.md).
