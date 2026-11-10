@@ -53,6 +53,13 @@ function Close-NSIS($Process) {
   [void][KqNsisUI]::PostMessage($Process.MainWindowHandle,0x10,[IntPtr]::Zero,[IntPtr]::Zero)
   if(-not $Process.WaitForExit(20000)){throw 'NSIS did not exit after normal GUI cancellation; fixture preserved.'}
 }
+function Read-SharedManifest([string]$Path) {
+  # Match a normal Windows reader: observing completion must not prevent the
+  # production helper's atomic replace by denying FILE_SHARE_DELETE.
+  $stream=[IO.File]::Open($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+  $reader=[IO.StreamReader]::new($stream)
+  try { return ($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
+}
 if ($FreshInstall) {
   if (-not $InstallerPath -or (Test-Path -LiteralPath $InstallDirectory)) { throw 'Fresh GUI install requires a missing isolated target.' }
   $process=$null
@@ -71,7 +78,7 @@ if ($FreshInstall) {
       if($process.HasExited){throw "Installer exited before its completion page: $($process.ExitCode)"}
       $manifestPath=Join-Path $ControlDirectory 'installation.json'
       if (Test-Path -LiteralPath $manifestPath) {
-        try { $state=Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } catch { $state=$null }
+        try { $state=Read-SharedManifest $manifestPath } catch { $state=$null }
         $next=[KqNsisUI]::GetDlgItem($process.MainWindowHandle,1)
         if ($state -and $state.status -eq 'unconfigured' -and -not $state.pending -and
             (Test-Path -LiteralPath (Join-Path $InstallDirectory 'Karaoke Queue.exe')) -and
@@ -79,7 +86,12 @@ if ($FreshInstall) {
       }
       Start-Sleep -Milliseconds 50
     } while ([DateTime]::UtcNow -lt $deadline)
-    if(-not $finished){throw 'The selected-path GUI install did not reach confirmed completion.'}
+    if(-not $finished){
+      foreach($path in @($InstallDirectory,(Split-Path -Parent $InstallDirectory),$ControlDirectory)) {
+        if(Test-Path -LiteralPath $path){Write-Host ("NSIS_GUI_PATH_SECURITY $path "+(Get-Acl -LiteralPath $path).Sddl)}
+      }
+      throw 'The selected-path GUI install did not reach confirmed completion.'
+    }
     [void][KqNsisUI]::PostMessage($next,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
     if(-not $process.WaitForExit(20000) -or $process.ExitCode -ne 0){throw 'The installer did not exit successfully after Finish.'}
     Write-Output 'NSIS DIRECTORY GUI PASS actual MUI picker / custom path / completed installation'

@@ -22,6 +22,14 @@ if (configuredTempRoot) {
   fs.mkdirSync(tempRoot, { recursive: false })
 }
 process.stdout.write('TEST_PROFILE_RUN ' + path.basename(tempRoot) + '\n')
+let activeScenario = 'initialization'
+let campaignCompleted = false
+process.on('exit', code => {
+  if (!campaignCompleted) {
+    fs.writeSync(2, `OPERATING_MODE INCOMPLETE scenario=${activeScenario} exit=${code} resources=${JSON.stringify(process.getActiveResourcesInfo())}\n`)
+    process.exitCode = 1
+  }
+})
 
 function makeProfile(name) {
   const root = path.join(tempRoot, name)
@@ -43,8 +51,9 @@ function writeMode(profile, mode) {
   fs.writeFileSync(path.join(profile.userData, 'operating-mode.json'), JSON.stringify({ version: 1, mode }))
 }
 
-function launch(profile) {
-  return electron.launch({
+const launchedFixtures = new WeakMap()
+async function launch(profile) {
+  const application = await electron.launch({
     executablePath: electronPath,
     args: [
       ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
@@ -54,6 +63,8 @@ function launch(profile) {
     env: profile.env,
     timeout: 30000
   })
+  launchedFixtures.set(application,{profile:profile.userData,pid:await application.evaluate(() => process.pid)})
+  return application
 }
 
 function readLogRecords(profile) {
@@ -131,23 +142,16 @@ async function forceClose(app) {
   let child
   try { child = app.process() } catch { return }
   if (!child) return
-  if (child.exitCode === null && child.signalCode === null) {
-    const exited = new Promise(resolve => child.once('exit', resolve))
-    if (process.platform === 'win32') {
-      const terminated = spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
-        encoding: 'utf8',
-        shell: false
-      })
-      if (terminated.status !== 0 && child.exitCode === null && child.signalCode === null) {
-        await new Promise(resolve => setImmediate(resolve))
-        if (child.exitCode === null && child.signalCode === null) {
-          throw new Error(`Could not terminate isolated Electron process tree ${child.pid}: ${terminated.stderr || terminated.stdout || terminated.status}`)
-        }
-      }
-    } else {
-      try { child.kill('SIGKILL') } catch {}
-    }
-    await exited.catch(() => {})
+  if(process.platform === 'win32') {
+    const owned=launchedFixtures.get(app)
+    if(!owned) throw new Error('Cannot stop an Electron fixture without its verified Main/profile identity')
+    const exited=child.exitCode !== null || child.signalCode !== null ? Promise.resolve() : new Promise(resolve=>child.once('exit',resolve))
+    require(path.join(projectRoot,'scripts/windows-fixture-processes.cjs')).stopFixtureElectron(owned.profile,electronPath,owned.pid)
+    await exited
+  } else if(child.exitCode === null && child.signalCode === null) {
+    const exited=new Promise(resolve=>child.once('exit',resolve))
+    if(!child.kill('SIGKILL')) throw new Error('Could not terminate owned Electron fixture')
+    await exited
   }
 }
 
@@ -176,6 +180,7 @@ async function closeLeavingSessionOpen(app) {
 }
 
 async function runLegacyControllerAliasAndRecovery() {
+  activeScenario = 'runLegacyControllerAliasAndRecovery'
   const profile = makeProfile('legacy-controller-alias-recovery')
   fs.mkdirSync(profile.userData, { recursive: true })
   const modePath = path.join(profile.userData, 'operating-mode.json')
@@ -232,6 +237,7 @@ async function runLegacyControllerAliasAndRecovery() {
 }
 
 async function runMissingLegacyModeConfigurationResolvesCombined() {
+  activeScenario = 'runMissingLegacyModeConfigurationResolvesCombined'
   const profile = makeProfile('missing-legacy-mode-configuration')
   fs.mkdirSync(profile.userData, { recursive: true })
   const legacyDatabase = createKaraokeDatabase(profile.userData)
@@ -249,6 +255,7 @@ async function runMissingLegacyModeConfigurationResolvesCombined() {
 }
 
 async function runWelcomeSelectsOnlyFinalModes() {
+  activeScenario = 'runWelcomeSelectsOnlyFinalModes'
   const screenshotRoot = process.env.KQ_PLAYER_SCREENSHOT_DIR
     ? path.resolve(process.env.KQ_PLAYER_SCREENSHOT_DIR) : undefined
   for (const mode of ['player', 'combined']) {
@@ -348,6 +355,7 @@ async function runWelcomeSelectsOnlyFinalModes() {
 }
 
 async function runWelcomeSharedMediaSetup() {
+  activeScenario = 'runWelcomeSharedMediaSetup'
   for (const mode of ['player','combined']) {
     const profile = makeProfile('welcome-shared-media-' + mode)
     const root = path.join(profile.root,'videos'); fs.mkdirSync(root,{recursive:true})
@@ -373,6 +381,8 @@ async function runWelcomeSharedMediaSetup() {
       await page.locator('#welcome-catalog-choose').click()
       await page.locator('#welcome-catalog-dialog').waitFor({state:'visible'})
       await page.waitForFunction(() => document.querySelectorAll('#welcome-catalog-issues-list li').length===50)
+      assert.equal(await page.locator('#welcome-catalog-issues-next').evaluate(node=>getComputedStyle(node).minWidth),'90px',
+        'Welcome pagination must keep the existing Settings dialog sizing')
       assert.equal(await page.locator('#welcome-catalog-dialog-cancel').evaluate(node=>node===document.activeElement),true)
       await page.locator('#welcome-catalog-dialog-cancel').click()
       await page.locator('#welcome-catalog-dialog').waitFor({state:'hidden'})
@@ -394,6 +404,7 @@ async function runWelcomeSharedMediaSetup() {
 }
 
 async function runConfigureLaterAfterInvalidCatalog() {
+  activeScenario = 'runConfigureLaterAfterInvalidCatalog'
   const profile = makeProfile('configure-later-after-invalid-catalog')
   const libraryRoot = path.join(profile.root, 'media')
   const invalidCatalog = path.join(profile.root, 'invalid.csv')
@@ -437,6 +448,7 @@ async function runConfigureLaterAfterInvalidCatalog() {
 }
 
 async function runPlayerWithoutControllerState() {
+  activeScenario = 'runPlayerWithoutControllerState'
   const profile = makeProfile('player-only')
   writeMode(profile, 'player')
   let app
@@ -463,6 +475,16 @@ async function runPlayerWithoutControllerState() {
     assert.equal(playerWindows.length, 1, 'A clean Player-only launch must show one composed Standalone window.')
     const playerPage = await app.firstWindow()
     await playerPage.waitForFunction(() => !!window.standalonePlayer?.getSnapshot)
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1920,1080))
+    await playerPage.waitForFunction(() => window.innerWidth === 1920)
+    const catalogScale = await playerPage.evaluate(() => ({
+      title: getComputedStyle(document.querySelector('#options-catalog-dialog-title')).fontSize,
+      padding: getComputedStyle(document.querySelector('.catalog-dialog')).paddingTop,
+      button: getComputedStyle(document.querySelector('#options-catalog-issues-next')).height
+    }))
+    assert.deepEqual(catalogScale,{title:'30px',padding:'36px',button:'51px'},
+      'sharing the Welcome dialog must preserve Settings TV display scaling')
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280,800))
     const startupState = await playerPage.evaluate(async () => ({
       bridgeKeys: Object.keys(window.standalonePlayer ?? {}).sort(),
       snapshot: await window.standalonePlayer.getSnapshot(),
@@ -499,6 +521,7 @@ async function runPlayerWithoutControllerState() {
 }
 
 async function runCombinedOneControllerDatabaseAndRestart() {
+  activeScenario = 'runCombinedOneControllerDatabaseAndRestart'
   const profile = makeProfile('combined')
   const screenshotRoot = process.env.KQ_PLAYER_SCREENSHOT_DIR
     ? path.resolve(process.env.KQ_PLAYER_SCREENSHOT_DIR) : undefined
@@ -549,6 +572,7 @@ async function runCombinedOneControllerDatabaseAndRestart() {
 }
 
 async function runInvalidConfigurationPreservesDatabase() {
+  activeScenario = 'runInvalidConfigurationPreservesDatabase'
   const profile = makeProfile('invalid-configuration')
   fs.mkdirSync(profile.userData, { recursive: true })
   fs.writeFileSync(path.join(profile.userData, 'operating-mode.json'), '{"version":1,"mode":"unknown"}')
@@ -624,7 +648,9 @@ async function run() {
     testError = error
   } finally {
     try {
-      fs.rmSync(tempRoot, { recursive: true, force: true })
+      if (testError) {
+        fs.writeSync(2, `OPERATING_MODE FAILURE PROFILES PRESERVED ${tempRoot}\n`)
+      } else fs.rmSync(tempRoot, { recursive: true, force: true })
     } catch (cleanupError) {
       if (!testError) testError = cleanupError
       else testError.message += `; isolated test profile cleanup also failed: ${cleanupError.message}`
@@ -633,7 +659,7 @@ async function run() {
   if (testError) throw testError
 }
 
-run().catch(error => {
+run().then(() => { campaignCompleted = true }).catch(error => {
   console.error(error)
   process.exitCode = 1
 })

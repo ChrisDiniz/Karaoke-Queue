@@ -7,7 +7,7 @@ const { spawn, spawnSync } = require('node:child_process')
 const crypto = require('node:crypto')
 const { once } = require('node:events')
 const { _electron: electron } = require('playwright')
-const { waitForFixtureProcesses } = require('../scripts/windows-fixture-processes.cjs')
+const { waitForFixtureProcesses, stopFixtureElectron } = require('../scripts/windows-fixture-processes.cjs')
 
 async function run() {
   assert.equal(process.platform, 'win32')
@@ -88,6 +88,29 @@ $b.ToString()
       visit(path.join(scratch, 'profile'))
       return result
     }
+    const ownedEntry=path.join(scratch,'owned.cjs')
+    fs.writeFileSync(ownedEntry,"const {app,BrowserWindow}=require('electron');app.whenReady().then(()=>new BrowserWindow({show:false}).loadURL('about:blank'))")
+    const ownedProfile=path.join(scratch,'owned-profile')
+    const otherProfile=path.join(scratch,'owned-profile other')
+    let other
+    try {
+      application=await electron.launch({executablePath:executable,args:[ownedEntry,'--user-data-dir='+ownedProfile]})
+      await application.firstWindow()
+      const realPid=await application.evaluate(()=>process.pid)
+      const wrapper=application.process()
+      other=await electron.launch({executablePath:executable,args:[ownedEntry,'--user-data-dir='+otherProfile]})
+      await other.firstWindow()
+      assert.throws(()=>stopFixtureElectron(ownedProfile,process.execPath,realPid),/does not belong/,
+        'a mismatching executable must fail before any stop')
+      assert.equal(await application.evaluate(({app})=>app.isReady()),true)
+      console.log(stopFixtureElectron(ownedProfile,executable,realPid))
+      if(wrapper.exitCode===null && wrapper.signalCode===null) await once(wrapper,'exit')
+      application=undefined
+      assert.equal(await other.evaluate(({app})=>app.isReady()),true,'a profile with a shared prefix and spaces must remain alive')
+      await other.close(); other=undefined
+      waitForFixtureProcesses(runtime)
+      console.log('WINDOWS OWNED MAIN CLEANUP PASS actual Electron vs cmd wrapper / wrong-image refusal / exact profile scope / descendants exited')
+    } finally {if(other) await other.close()}
     const beforeAdmin = profileHashes()
     // Electron creates its user-data container before the first JS statement.
     // Prove that baseline explicitly; an empty directory is not a loaded profile.

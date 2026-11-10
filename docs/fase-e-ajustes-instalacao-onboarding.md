@@ -49,3 +49,19 @@ Run [42697261744](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42697
 - Painel de Controle: conferir as duas opções; cancelar sem efeitos, reparar e desinstalar explicitamente.
 - Após uninstall/reinstall, escolher novamente a função; confirmar dados anteriores preservados nas respectivas contas e ausência de fusão dos bancos.
 - Homologação entre contas/sessões, UAC real, legado/N-1, interrupções/reboot e julgamento visual/áudio continuam separados do CI. Não usar a aprovação automatizada como homologação E1–E5.
+
+
+Na revisão própria foi corrigida a precedência do CSS compartilhado: a folha comum é carregada antes dos ajustes responsivos/TV do Standalone, e a cópia dos estilos-base dos botões ficou somente no Welcome. O E2E real passa a exigir fonte/padding/altura originais do diálogo em 1920px (escala 1,5), evitando regressão da tela de Configurações ao reutilizar o diálogo. Nenhuma decisão visual nova.
+
+
+Regressão de escala revalidada no runner oficial: PASS, snapshot `0c988a30e2a301a9f061a9bd9b6e1262118e29647cf89f558a429fa7d698e19b`, HEAD base `a6f4a2c7e82c1876dfc040d013d15bca549db5ab`; inclui fonte 30px, padding 36px e paginação 51px em viewport 1920. Log `/tmp/kq-css-windows-scale.log`. Botões-base do Welcome têm a mesma especificidade de Configurações, para a paginação manter largura mínima 90px e não herdar a largura dos botões de confirmação; asserção correspondente no E2E.
+
+
+Run [42698984814](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42698984814): Linux, build/verificador e provas nativas PASS; controller do E2E encerrou com código 1 após o primeiro cenário, sem stack. Causa exata não comprovada por aquele log. Teardown usa agora o handle ChildProcess criado pelo teste, sem reconstrução `taskkill /T` por PIDs; aguarda os processos do runtime de teste antes de limpar perfis. Acrescentado diagnóstico síncrono de cenário/recursos e FAIL explícito se a campanha encerrar incompleta. Não remove asserções nem transforma a falha em PASS; nova execução necessária. O observador do manifesto no smoke GUI também usa FILE_SHARE_DELETE, evitando que o próprio teste bloqueie o replace atômico.
+
+
+O ensaio local identificou que Playwright Windows lança via `shell:true`: o ChildProcess retornado é cmd.exe, não o Main Electron. A primeira tentativa por handle do wrapper foi **CANCELLED**, não PASS; o procedimento oficial confirmou PID/runId, encerrou somente a árvore/perfil da fixture e recuperou build/lock. O helper de testes agora captura o PID real no Main, compara argv Windows exato (`CommandLineToArgvW`), caminho canônico e creation time, retém handles antes do primeiro stop e confirma ausência de descendentes daquele perfil. Não usa árvore reconstruída por PID nem confunde perfis com prefixos semelhantes/espaços. Prova de regressão mantém outro Electron vivo, recusa executável divergente e confirma término do Main/filhos reais. Falhas preservam perfis; nenhuma autoridade de produto foi adicionada.
+
+### Resultado do cleanup e layout corrigidos
+
+Runner oficial completo **PASS**, snapshot `ac304997ce2985aad11635f6d371f9ebc3bfe6ba0cb9df72bbc83c04eadbc7df`, HEAD base `a6f4a2c7e82c1876dfc040d013d15bca549db5ab`. Log `/tmp/kq-owned-main-windows.log`: prova do Main real versus cmd, recusa de imagem divergente, isolamento de perfil com prefixo/espaços, outro Electron mantido vivo, N-API/NSIS, modos, CSV, biblioteca, SQLite, escala/paginação e cleanup/processos residuais PASS. A hipótese genérica anterior sobre taskkill não é confirmação da causa exata da run sem stack; a identidade incorreta do wrapper foi comprovada e corrigida no harness. Instalação/GUI/artifact do novo snapshot seguem dependentes do próximo CI.

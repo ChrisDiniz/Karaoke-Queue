@@ -1,29 +1,4 @@
-/* Shared, unchanged Settings catalog dialog presentation. */
-.catalog-dialog .stop-confirmation-actions { margin-top: 24px; display: flex; justify-content: center; gap: 10px; }
-.catalog-dialog .stop-confirmation-button {
-  min-width: 156px;
-  height: 43px;
-  padding: 0 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  color: #fff;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: filter .14s ease, opacity .14s ease;
-}
-.catalog-dialog .stop-confirmation-button.cancel { min-width: 160px; border-color: rgba(165, 166, 255, .78); background: #6366ed; box-shadow: 0 0 0 3px rgba(99, 102, 241, .18); }
-.catalog-dialog .stop-confirmation-button.confirm { color: #e1a0a4; border-color: rgba(205, 103, 111, .36); background: rgba(104, 40, 48, .12); }
-.catalog-dialog .stop-confirmation-button:hover:not(:disabled) { filter: brightness(1.12); }
-.catalog-dialog .stop-confirmation-button:focus-visible { outline: none; }
-.catalog-dialog .stop-confirmation-button:disabled { opacity: .6; cursor: wait; }
-.catalog-dialog .stop-confirmation-button kbd { min-width: 24px; height: 18px; padding: 0 4px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(255, 255, 255, .25); border-bottom-width: 2px; border-radius: 4px; background: rgba(20, 20, 26, .38); color: inherit; font-family: inherit; font-size: 9px; font-weight: 650; line-height: 1; }
-
+/* Shared Settings catalog dialog; base buttons belong to each host stylesheet. */
 .catalog-dialog-overlay {
   position: absolute;
   z-index: 5;
