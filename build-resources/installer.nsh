@@ -130,6 +130,19 @@ Function un.KQ_ActionPageLeave
   ${If} $0 == ${BST_CHECKED}
     ${GetParent} "$KQFenceManifest" $KQUninstallControlDirectory
     IfFileExists "$KQUninstallControlDirectory\maintenance.exe" 0 kq_no_cached_maintenance
+    ; The elevated maintenance image must itself be immutable to ordinary
+    ; accounts, in addition to the protected control directory/manifest.
+    StrCpy $KQPathWalk "$KQUninstallControlDirectory\maintenance.exe"
+    System::Call 'kernel32::GetFileAttributesW(w "$KQPathWalk") i.r0'
+    IntOp $0 $0 & 0x410
+    ${If} $0 != 0
+      Goto kq_no_cached_maintenance
+    ${EndIf}
+    StrCpy $KQPathMask 0x500D0156
+    Call un.KQ_VerifyPathACL
+    ${If} $KQPathSafe != 1
+      Goto kq_no_cached_maintenance
+    ${EndIf}
     SetOutPath $TEMP
     ClearErrors
     ExecWait '$\"$KQUninstallControlDirectory\maintenance.exe$\"' $0

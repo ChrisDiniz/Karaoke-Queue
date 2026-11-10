@@ -8,13 +8,26 @@ Add-Type @'
 using System;
 using System.Text;
 using System.Runtime.InteropServices;
+using System.ComponentModel;
 public static class KqNsisUI {
  [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr hwnd);
  [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hwnd);
- [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern bool SetWindowText(IntPtr hwnd,string text);
+ [DllImport("user32.dll",EntryPoint="SendMessageTimeoutW",CharSet=CharSet.Unicode,SetLastError=true)]
+ static extern IntPtr SendText(IntPtr hwnd,uint message,UIntPtr wparam,string text,uint flags,uint timeout,out UIntPtr result);
+ [DllImport("user32.dll",EntryPoint="SendMessageTimeoutW",CharSet=CharSet.Unicode,SetLastError=true)]
+ static extern IntPtr ReadText(IntPtr hwnd,uint message,UIntPtr wparam,StringBuilder text,uint flags,uint timeout,out UIntPtr result);
+ public static string Text(IntPtr hwnd) {
+   var text=new StringBuilder(2048); UIntPtr result;
+   if(ReadText(hwnd,0xD,(UIntPtr)2048,text,0x22,1000,out result)==IntPtr.Zero) return "";
+   return text.ToString();
+ }
+ public static void SetText(IntPtr hwnd,string text) {
+   UIntPtr result;
+   if(SendText(hwnd,0xC,UIntPtr.Zero,text,0x22,1000,out result)==IntPtr.Zero || result==UIntPtr.Zero)
+     throw new Win32Exception(Marshal.GetLastWin32Error(),"WM_SETTEXT failed");
+ }
  public delegate bool EnumProc(IntPtr hwnd, IntPtr parameter);
  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc callback, IntPtr parameter);
- [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hwnd,StringBuilder text,int count);
  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd,int message,IntPtr wparam,IntPtr lparam);
  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd,int message,IntPtr wparam,IntPtr lparam);
  [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr hwnd,int id);
@@ -27,9 +40,8 @@ function Find-Control($Process,[string]$Text,[int]$Id=0) {
   $script:matchText=$Text
   $script:matchId=$Id
   $callback=[KqNsisUI+EnumProc]{param($handle,$unused)
-    $value=[Text.StringBuilder]::new(2048)
-    [void][KqNsisUI]::GetWindowText($handle,$value,2048)
-    if (($script:matchId -gt 0 -and [KqNsisUI]::GetDlgCtrlID($handle) -eq $script:matchId) -or ($script:matchId -eq 0 -and $value.ToString() -ceq $script:matchText)) { $script:matchHandle=$handle; return $false }
+    $value=[KqNsisUI]::Text($handle)
+    if (($script:matchId -gt 0 -and [KqNsisUI]::GetDlgCtrlID($handle) -eq $script:matchId) -or ($script:matchId -eq 0 -and $value -ceq $script:matchText)) { $script:matchHandle=$handle; return $false }
     return $true
   }
   [void][KqNsisUI]::EnumChildWindows($Process.MainWindowHandle,$callback,[IntPtr]::Zero)
@@ -43,7 +55,24 @@ function Wait-Control($Process,[string]$Text,[int]$Id=0) {
     if ($Process.HasExited) { throw "NSIS exited before control '$Text': $($Process.ExitCode)" }
     Start-Sleep -Milliseconds 50 # observation of GUI readiness, never lock synchronization
   } while([DateTime]::UtcNow -lt $deadline)
-  throw "NSIS GUI control was not rendered: $Text"
+  $Process.Refresh()
+  Write-Host "NSIS_GUI_WAIT process=$($Process.Id) window=$($Process.MainWindowHandle) title=$($Process.MainWindowTitle) expectedId=$Id expectedText=$Text"
+  $diagnostics=[KqNsisUI+EnumProc]{param($handle,$unused)
+    Write-Host ("NSIS_GUI_CONTROL id="+[KqNsisUI]::GetDlgCtrlID($handle)+" text="+(Get-ControlText $handle))
+    return $true
+  }
+  if($Process.MainWindowHandle -ne [IntPtr]::Zero){[void][KqNsisUI]::EnumChildWindows($Process.MainWindowHandle,$diagnostics,[IntPtr]::Zero)}
+  throw "NSIS GUI control was not rendered: id=$Id text=$Text"
+}
+function Get-ControlText([IntPtr]$Handle) {
+  return [KqNsisUI]::Text($Handle)
+}
+function Enter-InstallerWizard($Process) {
+  # Production customWelcomePage includes MUI_PAGE_WELCOME before maintenance
+  # and Directory. Advance that known page once; do not retry clicks by time.
+  $next=Wait-Control $Process '' 1
+  if(-not [KqNsisUI]::IsWindowEnabled($next)){throw 'Welcome Next is not enabled.'}
+  [void][KqNsisUI]::PostMessage($next,0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
 }
 function Close-NSIS($Process) {
   if (-not $Process) { return }
@@ -65,10 +94,12 @@ if ($FreshInstall) {
   $process=$null
   try {
     $process=Start-Process -FilePath ([IO.Path]::GetFullPath($InstallerPath)) -PassThru
+    Enter-InstallerWizard $process
     # MUI directory edit, found recursively rather than assuming it is a direct
     # child of the top-level window. This exercises the actual directory picker.
     $edit=Wait-Control $process '' 1019
-    if (-not [KqNsisUI]::SetWindowText($edit,$InstallDirectory)) { throw 'Could not set the selected installation directory.' }
+    [KqNsisUI]::SetText($edit,$InstallDirectory)
+    if((Get-ControlText $edit) -cne $InstallDirectory){throw 'The actual directory Edit did not accept the selected path.'}
     $process.Refresh()
     [void][KqNsisUI]::PostMessage([KqNsisUI]::GetDlgItem($process.MainWindowHandle,1),0xF5,[IntPtr]::Zero,[IntPtr]::Zero)
     $deadline=[DateTime]::UtcNow.AddSeconds(90)
@@ -82,7 +113,8 @@ if ($FreshInstall) {
         $next=[KqNsisUI]::GetDlgItem($process.MainWindowHandle,1)
         if ($state -and $state.status -eq 'unconfigured' -and -not $state.pending -and
             (Test-Path -LiteralPath (Join-Path $InstallDirectory 'Karaoke Queue.exe')) -and
-            $next -ne [IntPtr]::Zero -and [KqNsisUI]::IsWindowEnabled($next)) { $finished=$true;break }
+            $next -ne [IntPtr]::Zero -and [KqNsisUI]::IsWindowEnabled($next) -and
+            ((Get-ControlText $next).Replace('&','') -match '^(Finish|Concluir|Finalizar|Terminar)$')) { $finished=$true;break }
       }
       Start-Sleep -Milliseconds 50
     } while ([DateTime]::UtcNow -lt $deadline)
@@ -123,6 +155,7 @@ try {
     Start-Sleep -Milliseconds 50
   } while([DateTime]::UtcNow -lt $deadline)
   if(-not $maintenance){throw 'Control Panel repair did not launch the protected cached installer.'}
+  Enter-InstallerWizard $maintenance
   $repairInstall=Wait-Control $maintenance 'Reparar / reinstalar mantendo o modo atual'
   if($ConfiguredRole) {
     [void](Wait-Control $maintenance 'Trocar para Reprodutor')

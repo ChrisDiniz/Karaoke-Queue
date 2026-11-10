@@ -65,3 +65,12 @@ O ensaio local identificou que Playwright Windows lança via `shell:true`: o Chi
 ### Resultado do cleanup e layout corrigidos
 
 Runner oficial completo **PASS**, snapshot `ac304997ce2985aad11635f6d371f9ebc3bfe6ba0cb9df72bbc83c04eadbc7df`, HEAD base `a6f4a2c7e82c1876dfc040d013d15bca549db5ab`. Log `/tmp/kq-owned-main-windows.log`: prova do Main real versus cmd, recusa de imagem divergente, isolamento de perfil com prefixo/espaços, outro Electron mantido vivo, N-API/NSIS, modos, CSV, biblioteca, SQLite, escala/paginação e cleanup/processos residuais PASS. A hipótese genérica anterior sobre taskkill não é confirmação da causa exata da run sem stack; a identidade incorreta do wrapper foi comprovada e corrigida no harness. Instalação/GUI/artifact do novo snapshot seguem dependentes do próximo CI.
+
+
+Run [42731041731](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42731041731), commit `594351e`: Linux completo, build/verificador, provas N-API/NSIS/cleanup, onboarding e smoke empacotado **PASS**. O smoke GUI procurava o controle de diretório antes de avançar a MUI_PAGE_WELCOME que o customWelcomePage inclui; falhou explicitamente, sem artifact. Automação agora avança essa página uma única vez, tanto no instalador inicial quanto no cache de manutenção, e só aciona Finish após manifesto/arquivos confirmados e botão de conclusão identificado. Sem relaxar permissões ou asserções. Acrescentado dump de controles em caso de falha. Nova instalação GUI permanece aguardando CI.
+
+
+A automação entre processos usa WM_SETTEXT/WM_GETTEXT com SendMessageTimeout e readback do Edit, conforme [SetWindowTextW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowtextw) e [WM_GETTEXT](https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-gettext); não confunde o texto real do controle com caption em cache. Mantidos os deadlines e as asserções de caminho/manifesto/término.
+
+
+Antes de executar o cache na manutenção, NSIS verifica que é arquivo comum sem reparse e reutiliza o leitor de owner/DACL para recusar owner não privilegiado ou escrita por contas comuns. O smoke verifica também a segurança do arquivo em si, além do diretório/manifesto protegido. Não relaxa ACL para obter execução; qualquer cache não confiável bloqueia o ramo de reparo com a orientação de executar o instalador original.

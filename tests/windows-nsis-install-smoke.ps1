@@ -135,6 +135,17 @@ try {
   }
 
   Assert-ProtectedManifestWithProductBinding
+  $cache = Join-Path $controlDirectory 'maintenance.exe'
+  if (-not (Test-Path -LiteralPath $cache -PathType Leaf)) { throw 'Protected maintenance installer is missing.' }
+  $cacheAcl = Get-Acl -LiteralPath $cache
+  $privilegedSids = @('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+  if ($cacheAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $privilegedSids) { throw 'Maintenance image has an unprivileged owner.' }
+  foreach($rule in $cacheAcl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
+    if($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+        ([int64]$rule.FileSystemRights -band 0x500D0156) -ne 0 -and $rule.IdentityReference.Value -notin $privilegedSids) {
+      throw 'Maintenance image is writable by an ordinary account.'
+    }
+  }
   Assert-ShortcutTarget $desktopShortcut
   Assert-ShortcutTarget $startMenuShortcut
   & (Join-Path $PSScriptRoot 'windows-nsis-maintenance-ui.ps1') -InstallDirectory $installDirectory -ControlDirectory $controlDirectory
