@@ -101,3 +101,6 @@ Fingerprint de inputs selado/verificado: `4a248b6a547f1a7cac90f767955d9bd380196f
 ## Continuidade — licença Player e fullscreen
 
 O proprietário acrescentou ativação no topo ocioso do Reprodutor, compartilhada com Tudo em um, e abertura Player sempre em fullscreen. [Contratos e evidências desta adição](fase-e-player-licenca-fullscreen.md). A run documental 42734516214 revelou uma corrida no harness de fechamento Linux; corrigida com observação externa, exit normal obrigatório e verificação integral do SQLite após restart, preservando a evidência anterior como histórica. O novo candidato exige seu próprio CI/artifact.
+
+
+Fechamento desta continuidade: [run 42737844704](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42737844704), commit `79f4040`, Linux/Windows e NSIS/smokes **PASS**. [Artifact, checksums e teste manual em andamento](fase-e-player-licenca-fullscreen.md#fechamento-do-ci-e-retomada-após-reinício--2026-11-09). A evidência da seção anterior permanece válida para seu snapshot histórico; esta nova run inclui licença Player/fullscreen e a correção do fechamento Linux. Sem homologação E1–E5.

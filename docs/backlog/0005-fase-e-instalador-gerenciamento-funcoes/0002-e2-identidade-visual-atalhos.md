@@ -125,3 +125,6 @@ Run [42622477298](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42622
 ### Adição autorizada — ativação Player e fullscreen (2026-11-09)
 
 Proprietário autorizou ativação no topo ocioso do Player e fullscreen a cada início, preservando Tudo em um. Implementação usa o serviço/arquivo de licença existente e sender policy restrita, sem alterar decisões A1–A7. [Contratos, testes e limites](../../fase-e-player-licenca-fullscreen.md). Evidências incrementais locais são discriminadas por snapshot; CI e artifact do novo commit continuam obrigatórios. Sem homologação E2 ou aceite visual presumido.
+
+
+Fechamento automatizado: commit `79f4040`, run [42737844704](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42737844704) Linux/Windows **PASS**; artifact ID `13727648716` com checksum conferido. [Hashes, resultados e limites](../../fase-e-player-licenca-fullscreen.md#fechamento-do-ci-e-retomada-após-reinício--2026-11-09). Proprietário informou download e início do teste manual após reinício; resultado e homologação continuam pendentes.

@@ -51,4 +51,28 @@ Checklist do proprietário: abrir Player duas vezes e conferir fullscreen/F11; a
 Reteste após a correção de foco: **PASS**, `/tmp/kq-player-license-linux-focus.log`. Inclui Enter/Espaço após sair de Comandos/Opções, chave inválida, falha de gravação, retry, ativação nas duas direções, restart e fullscreen. Testes focados novamente PASS em `/tmp/kq-player-license-unit-final.log`.
 
 
-Reteste final pelo runner oficial Windows: **PASS**, snapshot `f1d03e6e777ee046fb4dfa1a7116304f10676a1da824287410d27f70b2422591`, HEAD base `ae2d7141925346bc4d64c23e76404cfdd2a47777`, código desta adição com a correção de foco. Log `/tmp/kq-player-license-windows-final.log`: binding/mutex/NSIS de fixture, atalhos, modos, licença compartilhada, Enter/Espaço, SQLite, acervo/catálogo e cleanup sem processos residuais. As edições seguintes são somente documentais. O CI do novo commit ainda deve gerar e identificar seu próprio candidato/artifact.
+Reteste final pelo runner oficial Windows: **PASS**, snapshot `f1d03e6e777ee046fb4dfa1a7116304f10676a1da824287410d27f70b2422591`, HEAD base `ae2d7141925346bc4d64c23e76404cfdd2a47777`, código desta adição com a correção de foco. Log `/tmp/kq-player-license-windows-final.log`: binding/mutex/NSIS de fixture, atalhos, modos, licença compartilhada, Enter/Espaço, SQLite, acervo/catálogo e cleanup sem processos residuais. As edições seguintes são somente documentais. Naquele registro pré-push, CI/artifact ainda estavam pendentes; o resultado confirmado está abaixo.
+
+
+## Fechamento do CI e retomada após reinício — 2026-11-09
+
+Implementação enviada no commit `79f4040d3722723918533d2a90f8bbf116c7c0e9`, branch `feature/remote-player-lan-integration`, PR #4. Run [42737844704](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42737844704) **SUCCESS**, reconfirmada no GitHub após o reinício do computador. O CI testou o merge de validação `4367158d9c9fb33d745ce8a27c9fcedb6af18916` sobre a base `b7516bdaf092a03d841ea8efe3b41785eccdfeb1`; não houve merge do PR.
+
+| Job / comprovação | Resultado |
+|---|---|
+| [Linux compile, unit and Electron E2E](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42737844704/job/129571347470), 3m37s | PASS: compile, unitários/workflow, Electron, Gestão, licenciamento, SQLite e fechamento/restart |
+| [Windows x64 package and smoke test](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42737844704/job/129572741739), 3m42s | PASS: addon N-API x64, NSIS completo, verify/proveniência, mutex/Job/ownership, onboarding/ativação/fullscreen, smoke empacotado e upload |
+| Instalação NSIS no runner Windows descartável | PASS: seleção GUI do diretório, manutenção/reparo/cancelamento, recusa de alteração com app ativo, confiança do caminho, uninstall/reinstall e preservação do userData |
+| Integridade do artifact baixado | PASS: SHA-256 do exe coincide com manifesto e SHA256SUMS; nova cópia reconferida após o reinício |
+| Validação manual do proprietário | EM ANDAMENTO: informou que baixou o artifact e iniciou testes; nenhum PASS manual ou aprovação final foi informado |
+
+Artifact [Karaoke-Queue-PR-4-Windows-x64](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42737844704/artifacts/13727648716), ID `13727648716`, 124.949.973 bytes no ZIP. Instalador `Karaoke-Queue-Setup-0.5.0-x64.exe`, versão 0.5.0 x64, sem assinatura de distribuição.
+
+- SHA-256 do **instalador**: `194d4f933ded71a486401ab06af759d2ad9543c4316986199cf92856fd98cef8`.
+- Fingerprint de inputs selado e verificado no Windows: `503d8c40168039cb55f62b61ce52e48a23788b16d510a3f0188efb33f2f84dc7`.
+- Digest do **ZIP do Actions**, distinto do exe: `sha256:ff509648ea89750f7c2d34e49355d3c3dfd535e6fb721cb81066ef845874fecb`.
+- Manifesto: `sourceSha=4367158d9c9fb33d745ce8a27c9fcedb6af18916`, `runId=42737844704`, packageVerification/packagedElectronSmoke/nsisInstallUninstallSmoke `PASS`, `releasePublished=false`.
+
+As referências `/tmp/` acima são evidências locais históricas e podem desaparecer após reinício; os links dos jobs mantêm a evidência persistente. Na retomada, a cópia temporária antiga do exe ainda tinha o checksum correto, mas seus dois pequenos metadados locais estavam preenchidos com zeros; o motivo não foi estabelecido. Sem alterar essa cópia, um novo download em `%TEMP%\kq-ci-42737844704-rechecked` confirmou manifesto, SHA256SUMS e checksum íntegros. Isso não foi uma falha do CI nem do artifact remoto, e não descreve o download independente do proprietário.
+
+Este complemento é somente documental: o artifact identificado acima continua sendo o candidato de código em teste pelo proprietário. Novos commits documentais não alteram seus inputs de compilação nem constituem nova versão funcional. Permanecem os gates NOT RUN listados acima; S1 PARTIAL e E1–E5 sem homologação. Não houve instalação no host operacional por este agente, Release, tag ou merge.

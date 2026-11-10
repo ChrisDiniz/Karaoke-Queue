@@ -1,6 +1,6 @@
 # Fase E — Plano executivo técnico E0–E5
 
-**Adição autorizada em 2026-11-09:** ativação no topo ocioso do Reprodutor, licença persistida comum às duas funções e startup Player em fullscreen. [Implementação, regressões e limites](fase-e-player-licenca-fullscreen.md). Testes locais e runner Windows PASS nos snapshots indicados; o novo commit exige CI/artifact próprios. Não muda S1 PARTIAL nem a homologação pendente E1–E5.
+**Adição autorizada em 2026-11-09:** ativação no topo ocioso do Reprodutor, licença persistida comum às duas funções e startup Player em fullscreen. [Implementação, regressões e limites](fase-e-player-licenca-fullscreen.md). Testes locais e runner Windows PASS; commit `79f4040` com CI Linux/Windows e artifact PASS na run `42737844704`. [Fechamento e teste manual em andamento](fase-e-player-licenca-fullscreen.md#fechamento-do-ci-e-retomada-após-reinício--2026-11-09). Não muda S1 PARTIAL nem a homologação pendente E1–E5.
 
 **CI de validação — 2026-11-09:** ambos os jobs PASS e primeiro artifact NSIS baixado/verificado no SHA b92e950. [Evidência, fingerprint, hash e limites](fase-e-revisao-independente.md#24-primeiro-ci-integral-pass-e-artifact--2026-11-09). GO somente para validação do candidato; S1 PARTIAL e E1–E5 sem homologação.
 
