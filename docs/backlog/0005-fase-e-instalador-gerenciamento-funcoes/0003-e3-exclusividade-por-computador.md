@@ -5,7 +5,7 @@
 - Ticket: 0005/0003
 - Ticket pai: 0005 — Fase E: Consolidação de funções, instalador e gerenciamento
 - Etapa canônica: E3
-- Status: Em revisão — mutex/árvore Win32 e ownership NSIS real PASS; ACL elevada, cross-account e sessões pendentes
+- Status: Concluído — encerramento da Fase E autorizado explicitamente pelo proprietário em 2026-11-09
 - Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
 
 ## Objetivo
@@ -119,3 +119,10 @@ Falha informada após `7cc18d1`: probe mediu acquire mas não release, porque su
 ### Primeiro CI integral e artifact — 2026-11-09
 
 Run [42622477298](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42622477298), HEAD b92e950: ambos os jobs PASS; build/verify/N-API, provas nativas, smoke empacotado e NSIS silencioso install/uninstall/reinstall passaram, incluindo atalhos, recusa com Main ativo, tombstone e preservação de todos os arquivos do userData. Artifact baixado e SHA-256 verificado. [Snapshot, hash e limites](../../fase-e-revisao-independente.md#24-primeiro-ci-integral-pass-e-artifact--2026-11-09). Isso certifica somente os cenários executados; UAC interativo, contas/sessões, legado/N-1, manutenção interativa e aceite humano permanecem pendentes. Etapa sem homologação/aprovação; S1 PARTIAL.
+
+
+## Encerramento pelo proprietário — 2026-11-09
+
+**Encerramento — 2026-11-09: Fase E CONCLUÍDA por decisão explícita do proprietário nesta sessão.** Este registro substitui os status anteriores de revisão/aceite pendente para o encerramento da fase e de E1–E5. E0 mantém sua aprovação de 2026-11-08. A solicitação de encerramento não é evidência de execução de testes adicionais: S1 permanece historicamente PARTIAL, e cenários registrados como NOT RUN não foram convertidos em PASS. Evidências, riscos e limitações anteriores ficam preservados. Fase F não iniciada nem autorizada por este encerramento.
+
+Referência: [roadmap](../../standalone-player-roadmap.md). CI funcional e artifact da run [42737844704](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42737844704) e CI documental [42739998533](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42739998533) passaram. Nenhum teste adicional ou resultado manual específico é presumido nesta atualização documental.

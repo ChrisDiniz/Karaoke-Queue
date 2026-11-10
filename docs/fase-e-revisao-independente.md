@@ -1,5 +1,9 @@
 # Fase E — Parecer da revisão independente
 
+**Encerramento — 2026-11-09: Fase E CONCLUÍDA por decisão explícita do proprietário nesta sessão.** Este registro substitui os status anteriores de revisão/aceite pendente para o encerramento da fase e de E1–E5. E0 mantém sua aprovação de 2026-11-08. A solicitação de encerramento não é evidência de execução de testes adicionais: S1 permanece historicamente PARTIAL, e cenários registrados como NOT RUN não foram convertidos em PASS. Evidências, riscos e limitações anteriores ficam preservados. Fase F não iniciada nem autorizada por este encerramento.
+
+**Histórico de execução e validação anterior ao encerramento:**
+
 **Último candidato funcional — 2026-11-09:** commit `79f4040`, [run 42737844704](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42737844704) integralmente PASS em Linux/Windows; NSIS e smokes PASS, artifact baixado e checksum reconfirmado após reinício. [Identificação, hashes e limites](fase-e-player-licenca-fullscreen.md#fechamento-do-ci-e-retomada-após-reinício--2026-11-09). Proprietário iniciou teste manual, sem informar aprovação. S1 PARTIAL; E1–E5 sem homologação. Registro de evidência, não nova revisão independente.
 
 **Histórico CI — 2026-11-09:** ajustes de instalação/onboarding integralmente PASS na run 42733046324 (HEAD 896df22), artifact baixado e checksum verificado. [Resultados, limites e checklist](fase-e-ajustes-instalacao-onboarding.md#resultado-consolidado--ci-integral-pass). E1–E5 sem homologação; S1 PARTIAL. A run documental seguinte 42734516214 falhou no harness de fechamento Linux; a continuidade corrige sua sincronização e implementa a adição autorizada de [licença Player/fullscreen](fase-e-player-licenca-fullscreen.md). O novo snapshot exige CI e artifact próprios; estes registros não são uma nova revisão independente.

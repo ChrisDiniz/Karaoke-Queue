@@ -1,5 +1,9 @@
 # Roadmap de migração — Standalone e Combined
 
+**Encerramento — 2026-11-09: Fase E CONCLUÍDA por decisão explícita do proprietário nesta sessão.** Este registro substitui os status anteriores de revisão/aceite pendente para o encerramento da fase e de E1–E5. E0 mantém sua aprovação de 2026-11-08. A solicitação de encerramento não é evidência de execução de testes adicionais: S1 permanece historicamente PARTIAL, e cenários registrados como NOT RUN não foram convertidos em PASS. Evidências, riscos e limitações anteriores ficam preservados. Fase F não iniciada nem autorizada por este encerramento.
+
+**Histórico de execução e validação anterior ao encerramento:**
+
 **Adição autorizada em 2026-11-09:** ativação no topo ocioso do Reprodutor, licença persistida comum às duas funções e startup Player em fullscreen. [Implementação, regressões e limites](fase-e-player-licenca-fullscreen.md). Testes locais e runner Windows PASS; commit `79f4040` com CI Linux/Windows e artifact PASS na run `42737844704`. [Fechamento e teste manual em andamento](fase-e-player-licenca-fullscreen.md#fechamento-do-ci-e-retomada-após-reinício--2026-11-09). Não muda S1 PARTIAL nem a homologação pendente E1–E5.
 
 ## Objetivo
@@ -437,6 +441,10 @@ Esta fase reúne a antiga E1/E2, antecipada para antes do instalador, e organiza
 **Encerramento registrado em 2026-11-07:** D1 concluída (D1.2 alternativa A aprovada, sem movimentação em D1.3); D2 e D3 concluídas; D4.1 concluída, D4.2 aprovada e os oito lotes D4.3 implementados; D5 automatizada PASS em Linux e Windows nativo, incluindo produção Standalone e smoke empacotado. O proprietário validou manualmente no Windows nativo, pelo launcher oficial, Reprodutor e Tudo em um, interfaces e funcionalidades operacionais, sem encontrar defeitos, e aprovou a D5 e a Fase D. Limitações específicas sem evidência individual continuam `NOT RUN` nos tickets, sem invalidar a aprovação global. **Situação naquela data: Fase D CONCLUÍDA E APROVADA; Fase E próxima e NÃO INICIADA.** Em 2026-11-08, E0 foi concluída e aprovada pelo proprietário após validação manual Windows PASS, conforme a seção atual da Fase E. HTTPS/WSS e decisões de produto seguem reservados a G/H.
 
 ### Fase E — Instalador e gerenciamento de funções ([ticket pai 0005](backlog/0005-fase-e-instalador-gerenciamento-funcoes/))
+
+**Encerramento — 2026-11-09: Fase E CONCLUÍDA por decisão explícita do proprietário nesta sessão.** Este registro substitui os status anteriores de revisão/aceite pendente para o encerramento da fase e de E1–E5. E0 mantém sua aprovação de 2026-11-08. A solicitação de encerramento não é evidência de execução de testes adicionais: S1 permanece historicamente PARTIAL, e cenários registrados como NOT RUN não foram convertidos em PASS. Evidências, riscos e limitações anteriores ficam preservados. Fase F não iniciada nem autorizada por este encerramento.
+
+Os registros de execução abaixo são históricos.
 
 **CI do código — 2026-11-09:** [ajustes de instalação/onboarding PASS e artifact verificado](fase-e-ajustes-instalacao-onboarding.md#resultado-consolidado--ci-integral-pass), run 42733046324, HEAD 896df22. Inclui diretório selecionável protegido, Welcome com indexação/CSV parcial, manutenção nativa informativa, repair e uninstall/reinstall com nova escolha de função e preservação integral. Atualização posterior somente documental. S1 PARTIAL, E1–E5 sem homologação; UAC interativo, contas/sessões, legado/N-1, troca efetiva por clique e aceite humano pendentes. Os parágrafos datados abaixo preservam os snapshots anteriores.
 

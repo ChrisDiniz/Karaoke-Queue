@@ -5,7 +5,7 @@
 - Ticket: 0005/0002
 - Ticket pai: 0005 — Fase E: Consolidação de funções, instalador e gerenciamento
 - Etapa canônica: E2
-- Status: Em revisão — links bootstrap pertencem ao helper; shell e atalhos NSIS silencioso PASS; validação visual/identidade por função pendente
+- Status: Concluído — encerramento da Fase E autorizado explicitamente pelo proprietário em 2026-11-09
 - Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
 
 ## Objetivo
@@ -128,3 +128,10 @@ Proprietário autorizou ativação no topo ocioso do Player e fullscreen a cada 
 
 
 Fechamento automatizado: commit `79f4040`, run [42737844704](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42737844704) Linux/Windows **PASS**; artifact ID `13727648716` com checksum conferido. [Hashes, resultados e limites](../../fase-e-player-licenca-fullscreen.md#fechamento-do-ci-e-retomada-após-reinício--2026-11-09). Proprietário informou download e início do teste manual após reinício; resultado e homologação continuam pendentes.
+
+
+## Encerramento pelo proprietário — 2026-11-09
+
+**Encerramento — 2026-11-09: Fase E CONCLUÍDA por decisão explícita do proprietário nesta sessão.** Este registro substitui os status anteriores de revisão/aceite pendente para o encerramento da fase e de E1–E5. E0 mantém sua aprovação de 2026-11-08. A solicitação de encerramento não é evidência de execução de testes adicionais: S1 permanece historicamente PARTIAL, e cenários registrados como NOT RUN não foram convertidos em PASS. Evidências, riscos e limitações anteriores ficam preservados. Fase F não iniciada nem autorizada por este encerramento.
+
+Referência: [roadmap](../../standalone-player-roadmap.md). CI funcional e artifact da run [42737844704](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42737844704) e CI documental [42739998533](https://github.com/ChrisDiniz/Karaoke-Queue/actions/runs/42739998533) passaram. Nenhum teste adicional ou resultado manual específico é presumido nesta atualização documental.

@@ -1,5 +1,9 @@
 # Backlog operacional do Karaoke Queue
 
+**Encerramento — 2026-11-09: Fase E CONCLUÍDA por decisão explícita do proprietário nesta sessão.** Este registro substitui os status anteriores de revisão/aceite pendente para o encerramento da fase e de E1–E5. E0 mantém sua aprovação de 2026-11-08. A solicitação de encerramento não é evidência de execução de testes adicionais: S1 permanece historicamente PARTIAL, e cenários registrados como NOT RUN não foram convertidos em PASS. Evidências, riscos e limitações anteriores ficam preservados. Fase F não iniciada nem autorizada por este encerramento.
+
+As atualizações anteriores abaixo são histórico.
+
 O roadmap continua sendo a fonte autoritativa da direção, escopo, dependências, fases, status e aprovações. Este backlog acompanha a execução e preserva evidências e pendências; não substitui o roadmap nem as especificações técnicas.
 
 ## Hierarquia e IDs
@@ -18,7 +22,7 @@ O roadmap continua sendo a fonte autoritativa da direção, escopo, dependência
 | `0002` | B — Base funcional Standalone | [0002-fase-b-base-funcional-standalone](0002-fase-b-base-funcional-standalone/) | Concluída conforme histórico. |
 | `0003` | C — Interface Standalone | [0003-fase-c-interface-standalone](0003-fase-c-interface-standalone/) | C1–C11 concluídas conforme registros. C9 concluída/resolvida e aprovada pelo proprietário em 2026-11-07; suas limitações de cobertura anteriores são históricas, sem bloqueio ou reteste requerido. C10.5 aprovada explicitamente em 2026-11-06; C11 aprovada manualmente em 2026-11-07. **Fase C concluída e aprovada pelo proprietário.** |
 | `0004` | D — Auditoria, limpeza e modularização do Main | [0004-fase-d-modularizacao-limpeza-legado](0004-fase-d-modularizacao-limpeza-legado/) | **Fase D concluída e aprovada pelo proprietário em 2026-11-07.** D1–D3 concluídas; D4.1 concluída, D4.2 aprovada, D4.3 concluída nos oito lotes; D5 automatizada PASS e validação manual global aprovada. Limites específicos anteriormente `NOT RUN` permanecem identificados como tais nos tickets. |
-| `0005` | E — Consolidação de funções, instalador e gerenciamento | [0005-fase-e-instalador-gerenciamento-funcoes](0005-fase-e-instalador-gerenciamento-funcoes/) | E0 concluída/aprovada em 2026-11-08. Desenvolvimento E1-03→E5-03 autorizado. R1–R10 corrigidos/testados; build/verificador NSIS e runner Windows atuais PASS. GO condicionado a PR de validação após revisão independente das correções. S1 PARTIAL; NSIS instalado/UAC/ACL cross-account/sessões e aceite proprietário pendentes; nenhuma etapa E1–E5 aprovada. |
+| `0005` | E — Consolidação de funções, instalador e gerenciamento | [0005-fase-e-instalador-gerenciamento-funcoes](0005-fase-e-instalador-gerenciamento-funcoes/) | Concluída — encerramento explícito pelo proprietário em 2026-11-09; E0–E5 encerradas. Evidências e limitações históricas preservadas; F não iniciada. |
 | `0006` | F — Regressão e estabilização pós-instalação | [0006-fase-f-regressao-estabilizacao-pos-instalacao](0006-fase-f-regressao-estabilizacao-pos-instalacao/) | Planejada, não iniciada. |
 | `0007` | G — Comunicação remota segura | [0007-fase-g-comunicacao-remota-segura](0007-fase-g-comunicacao-remota-segura/) | Planejada, não iniciada. A decisão de autoridade da fila em conexão/reconexão segue pendente em G4. |
 | `0008` | H — Integração operacional Gestão + Player | [0008-fase-h-integracao-operacional-gestao-player](0008-fase-h-integracao-operacional-gestao-player/) | Planejada, não iniciada. |
