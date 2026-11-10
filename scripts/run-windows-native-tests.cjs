@@ -15,6 +15,7 @@ const LOCK = 'karaoke-queue-windows-test.lock'
 const REPORT = 'karaoke-queue-last-windows-test.json'
 const REPORT_OWNER = 'karaoke-queue-windows-test-runner-v1'
 const EXCLUDED_DIRS = new Set(['.git', '.npm-cache', '.playwright-mcp', 'build', 'coverage', 'dist', 'ia', 'node_modules', 'out'])
+const EXCLUDED_PATH_PREFIXES = ['/build-resources/native/build/', '/build-resources/native/win32-x64/']
 const EXCLUDED_NAMES = new Set(['.ds_store'])
 const EXCLUDED_EXTENSIONS = new Set(['.log', '.tmp', '.temp', '.bak', '.swp'])
 const SENSITIVE_EXTENSIONS = new Set([
@@ -27,6 +28,13 @@ function fail(message, exitCode = 1) {
   const error = new Error(message)
   error.exitCode = exitCode
   throw error
+}
+
+function observeWorkerInputErrors(stream, cancellationRequested, onUnexpectedError) {
+  stream.on('error', error => {
+    if (cancellationRequested() && error && error.code === 'EPIPE') return
+    onUnexpectedError(error)
+  })
 }
 
 function run(executable, args, options = {}) {
@@ -70,6 +78,8 @@ function normalizePath(value) {
 function isExcludedPath(value) {
   const normalized = normalizePath(value)
   if (normalized.split('/').some(part => EXCLUDED_DIRS.has(part.toLowerCase()))) return true
+  const absoluteStyle = '/' + normalized.toLowerCase() + '/'
+  if (EXCLUDED_PATH_PREFIXES.some(prefix => absoluteStyle.startsWith(prefix))) return true
   const name = path.posix.basename(normalized).toLowerCase()
   return EXCLUDED_NAMES.has(name) || EXCLUDED_EXTENSIONS.has(path.posix.extname(name))
 }
@@ -236,19 +246,20 @@ function trackedDiff(root) {
   return changes
 }
 
-function stageSnapshot(root, manifest, targetMarker) {
-  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-queue-windows-stage-'))
-  const sourceTree = path.join(stage, 'tree')
-  const metadata = path.join(stage, 'metadata')
-  fs.mkdirSync(sourceTree)
-  fs.mkdirSync(metadata)
-  for (const item of manifest.files) {
-    const source = path.join(root, ...item.path.split('/'))
-    const target = path.join(sourceTree, ...item.path.split('/'))
-    fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL)
-    if (sha256(target) !== item.sha256) fail('A origem mudou durante o staging: ' + item.path)
+function sourceBranchRef(manifest) {
+  return 'refs/heads/' + manifest.branch
+}
+
+function assertSourceBranchRef(root, manifest) {
+  const ref = sourceBranchRef(manifest)
+  if (git(root, ['rev-parse', '--verify', ref]).stdout.trim() !== manifest.head) {
+    fail('A referência da branch WSL não corresponde ao HEAD informado para o snapshot.')
   }
+  return ref
+}
+
+function stageSnapshot(root, manifest, targetMarker, temporaryRoot = os.tmpdir(), options = {}) {
+  let includeHeadBundle = false
   if (targetMarker && targetMarker.branch !== manifest.branch) {
     fail('Branch do checkout Windows diverge da origem; reconstrua o clone isolado.')
   }
@@ -257,17 +268,51 @@ function stageSnapshot(root, manifest, targetMarker) {
       cwd: root, encoding: 'utf8', shell: false
     })
     if (ancestry.status !== 0) fail('HEAD Windows não é ancestral do HEAD WSL; reconstrua o clone isolado.')
-    const bundle = path.join(metadata, 'source-head.bundle')
-    const bundled = spawnSync('git', ['bundle', 'create', bundle, 'HEAD', '^' + targetMarker.head], {
-      cwd: root, encoding: 'utf8', shell: false, maxBuffer: 4 * 1024 * 1024
-    })
-    if (bundled.status !== 0) fail('Não foi possível preparar o bundle Git incremental: ' + (bundled.stderr || bundled.error))
+    includeHeadBundle = true
   }
-  if (targetMarker && targetMarker.legacyManifest) {
-    fs.writeFileSync(path.join(metadata, 'legacy-baseline.json'), JSON.stringify(targetMarker.legacyManifest), { flag: 'wx' })
+
+  const stage = fs.mkdtempSync(path.join(temporaryRoot, 'karaoke-queue-windows-stage-'))
+  try {
+    const sourceTree = path.join(stage, 'tree')
+    const metadata = path.join(stage, 'metadata')
+    fs.mkdirSync(sourceTree)
+    fs.mkdirSync(metadata)
+    for (const item of manifest.files) {
+      const source = path.join(root, ...item.path.split('/'))
+      const target = path.join(sourceTree, ...item.path.split('/'))
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL)
+      if (sha256(target) !== item.sha256) fail('A origem mudou durante o staging: ' + item.path)
+    }
+    if (includeHeadBundle) {
+      const bundle = path.join(metadata, 'source-head.bundle')
+      const ref = assertSourceBranchRef(root, manifest)
+      const bundled = spawnSync('git', ['bundle', 'create', bundle, ref, '^' + targetMarker.head], {
+        cwd: root, encoding: 'utf8', shell: false, maxBuffer: 4 * 1024 * 1024
+      })
+      if (bundled.status !== 0) fail('Não foi possível preparar o bundle Git incremental: ' + (bundled.stderr || bundled.error))
+    }
+    if (options.bootstrapBundle && !targetMarker) {
+      const bundle = path.join(metadata, 'source-head.bundle')
+      const ref = assertSourceBranchRef(root, manifest)
+      const bundled = spawnSync('git', ['bundle', 'create', bundle, ref], {
+        cwd: root, encoding: 'utf8', shell: false, maxBuffer: 4 * 1024 * 1024
+      })
+      if (bundled.status !== 0) fail('Não foi possível preparar o bundle Git local para o bootstrap: ' + (bundled.stderr || bundled.error))
+    }
+    if (targetMarker && targetMarker.legacyManifest) {
+      fs.writeFileSync(path.join(metadata, 'legacy-baseline.json'), JSON.stringify(targetMarker.legacyManifest), { flag: 'wx' })
+    }
+    fs.writeFileSync(path.join(metadata, 'snapshot.json'), JSON.stringify(manifest), { flag: 'wx' })
+    return stage
+  } catch (error) {
+    try {
+      fs.rmSync(stage, { recursive: true, force: true })
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Falha ao preparar o snapshot e remover o staging temporário.')
+    }
+    throw error
   }
-  fs.writeFileSync(path.join(metadata, 'snapshot.json'), JSON.stringify(manifest), { flag: 'wx' })
-  return stage
 }
 
 function enumerateFiles(root) {
@@ -353,6 +398,62 @@ function assertIndexMatchesHead(root) {
     fail('Não foi possível verificar o índice Git do checkout Windows: ' + String(result.stderr || result.error || result.status))
   }
   if (result.status === 1) fail('O índice Git do checkout Windows contém alterações não autorizadas; nada será sobrescrito.')
+}
+
+function recoverNoopInterruptedSync(root, marker, pendingPath, dependencies = {}) {
+  if (!fs.existsSync(pendingPath)) return false
+
+  const pendingStat = fs.lstatSync(pendingPath)
+  if (!pendingStat.isFile() || pendingStat.isSymbolicLink() ||
+      (process.platform === 'win32' && (pendingStat.attributes & 0x400))) {
+    fail('Sincronização anterior pendente; o marcador não é um arquivo regular e exige revisão manual.')
+  }
+
+  let pending
+  try { pending = JSON.parse(fs.readFileSync(pendingPath, 'utf8')) } catch {
+    fail('Sincronização anterior pendente; o marcador está ilegível e exige revisão manual.')
+  }
+  const expectedKeys = ['fromFingerprint', 'runId', 'startedAt', 'targetFingerprint']
+  if (!pending || typeof pending !== 'object' || Array.isArray(pending) ||
+      Object.keys(pending).sort().join('|') !== expectedKeys.join('|') ||
+      !/^staging-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pending.runId || '') ||
+      pending.fromFingerprint !== marker.fingerprint ||
+      !/^[a-f0-9]{64}$/.test(pending.targetFingerprint || '') ||
+      pending.targetFingerprint === pending.fromFingerprint ||
+      typeof pending.startedAt !== 'string' || !Number.isFinite(Date.parse(pending.startedAt))) {
+    fail('Sincronização anterior pendente; o marcador não comprova uma interrupção sem alterações e exige revisão manual.')
+  }
+
+  const syncBackupRoot = path.join(path.dirname(pendingPath), 'karaoke-queue-sync-backup-' + pending.runId)
+  let backupExists = false
+  try {
+    const backupStat = fs.lstatSync(syncBackupRoot)
+    if (!backupStat.isDirectory() || backupStat.isSymbolicLink() ||
+        (process.platform === 'win32' && (backupStat.attributes & 0x400))) {
+      fail('Sincronização anterior pendente; o backup não é um diretório regular e exige revisão manual.')
+    }
+    backupExists = true
+    if (fs.readdirSync(syncBackupRoot).length !== 0) {
+      fail('Sincronização anterior pendente; o backup contém arquivos e exige revisão manual.')
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+
+  const getState = dependencies.gitState || gitState
+  const verifySnapshot = dependencies.verifySnapshotDirectory || verifySnapshotDirectory
+  const verifyIndex = dependencies.assertIndexMatchesHead || assertIndexMatchesHead
+  const current = getState(root)
+  if (current.branch !== marker.branch || current.head !== marker.head) {
+    fail('Sincronização anterior pendente; branch/HEAD mudou e exige revisão manual.')
+  }
+  verifySnapshot(root, marker)
+  verifyIndex(root)
+
+  if (backupExists) fs.rmdirSync(syncBackupRoot)
+  fs.unlinkSync(pendingPath)
+  process.stdout.write('SYNC RECOVERY PASS anterior falhou antes de alterar HEAD/arquivos; snapshot e índice conferidos\n')
+  return true
 }
 
 function atomicWrite(filePath, content) {
@@ -480,7 +581,7 @@ function advanceHead(root, marker, manifest, stage, backupRoot, records) {
   if (marker.head === manifest.head) return false
   const bundle = path.join(stage, 'metadata', 'source-head.bundle')
   if (!fs.existsSync(bundle)) fail('Bundle da revisão de origem ausente.')
-  gitWin(root, ['fetch', '--no-tags', bundle, 'HEAD'])
+  gitWin(root, ['fetch', '--no-tags', bundle, sourceBranchRef(manifest)])
   const fetched = gitWin(root, ['rev-parse', 'FETCH_HEAD']).stdout.trim()
   if (fetched !== manifest.head) fail('Bundle não corresponde ao HEAD informado.')
   const ancestry = spawnSync('git.exe', ['-C', root, 'merge-base', '--is-ancestor', marker.head, manifest.head], { encoding: 'utf8', shell: false })
@@ -670,6 +771,30 @@ function generatedBuildPaths(manifests) {
       if (file.path === 'src/index.html' || file.path === 'src/style.css') {
         expected.add('build/src/' + file.path.slice(4))
       }
+      if (file.path === 'src/player-playback.html' || file.path === 'src/player-playback.css') {
+        expected.add('build/src/' + file.path.slice(4))
+      }
+      if (file.path === 'src/welcome.html' || file.path === 'src/welcome.css' || file.path === 'src/catalog-import-dialog.css') {
+        expected.add('build/src/' + file.path.slice(4))
+      }
+      if (file.path === 'src/standalone-player.html' || file.path === 'src/standalone-player.css') {
+        expected.add('build/src/' + file.path.slice(4))
+      }
+      if (file.path === 'src/player-playback-renderer.ts') {
+        expected.add('build/src/player-playback.js')
+      }
+      if (file.path === 'src/welcome-renderer.ts') {
+        expected.add('build/src/welcome-renderer.bundle.js')
+      }
+      if (file.path === 'src/standalone-player-renderer.ts') {
+        expected.add('build/src/standalone-player-renderer.bundle.js')
+      }
+      if (file.path === 'standalone-player-preload.ts' || file.path === 'player-preload.ts') {
+        expected.add('build/standalone-player-ui-preload.js')
+      }
+      if (file.path === 'standalone-player-preload.ts') {
+        expected.add('build/standalone-player-preload.bundle.js')
+      }
       if (file.path.startsWith('src/assets/')) expected.add('build/' + file.path)
     }
   }
@@ -691,9 +816,9 @@ function prepareFreshBuild(root, runId) {
   return { buildPath, backupPath, hadBuild: true, runId }
 }
 
-function verifyBuildOutput(root, ...manifests) {
+function verifyBuildOutput(root, manifest) {
   const buildPath = path.join(root, 'build')
-  const expected = generatedBuildPaths(manifests)
+  const expected = generatedBuildPaths([manifest])
   if (!fs.existsSync(buildPath)) fail('Build nativo ausente após compile.')
   const actual = new Set()
   function inspect(directory, relative) {
@@ -723,10 +848,10 @@ function verifyBuildOutput(root, ...manifests) {
   return { fileCount: actual.size, files: [...actual].sort() }
 }
 
-function restorePreviousBuild(root, state, manifests) {
+function restorePreviousBuild(root, state, manifest) {
   if (!state || !state.hadBuild) return
   if (fs.existsSync(state.buildPath)) {
-    verifyBuildOutput(root, ...manifests)
+    verifyBuildOutput(root, manifest)
     fs.rmSync(state.buildPath, { recursive: true, force: false })
   }
   if (!fs.existsSync(state.backupPath)) fail('Backup de build original ausente; não será apagado conteúdo do destino.')
@@ -757,6 +882,91 @@ function focusResult(text) {
   return { status: passed ? 'PASS' : 'NOT VERIFIED', rows }
 }
 
+function requiresWindowFocus(playbackMode) {
+  return ![
+    '--playback-chromium-final',
+    '--playback-chromium-interactive',
+    '--player-playback',
+    '--standalone-playback',
+    '--standalone-integration',
+    '--player-recovery',
+    '--standalone-options',
+    '--standalone-production', '--installation-coordination'
+  ].includes(playbackMode)
+}
+
+function selectWindowsTestSuites(playbackMode) {
+  if (playbackMode === '--installation-coordination') return [
+    { name: 'installation-admin-unit', script: 'build/tests/installation-admin.test.js' },
+    { name: 'installation-control-unit', script: 'build/tests/installation-control.test.js' },
+    { name: 'installation-bootstrap-unit', script: 'build/tests/installation-bootstrap.test.js' },
+    { name: 'windows-runtime-mutex-electron', script: 'scripts/windows-runtime-mutex-electron.cjs' }
+  ]
+  const focusedChromium = playbackMode === '--playback-chromium-final' || playbackMode === '--playback-chromium-interactive'
+  const focusedPlayerPlayback = playbackMode === '--player-playback'
+  const focusedStandalonePlayback = playbackMode === '--standalone-playback'
+  const focusedStandaloneIntegration = playbackMode === '--standalone-integration'
+  const focusedPlayerRecovery = playbackMode === '--player-recovery'
+  const focusedStandaloneOptions = playbackMode === '--standalone-options'
+  const focusedStandaloneProduction = playbackMode === '--standalone-production'
+  if (focusedPlayerRecovery) return [
+    { name: 'player-playback-recovery-unit', script: 'build/tests/player-playback-recovery.test.js' },
+    { name: 'player-playback-recovery-electron', script: 'build/tests/player-playback-recovery-electron.js' }
+  ]
+  if (focusedPlayerPlayback) return [{ name: 'player-playback-electron', script: 'build/tests/player-playback-electron.js' }]
+  if (focusedStandalonePlayback) return [
+    { name: 'standalone-player-contracts-unit', script: 'build/tests/standalone-player-contracts.test.js' },
+    { name: 'standalone-player-runtime-unit', script: 'build/tests/standalone-player-runtime.test.js' },
+    { name: 'standalone-player-sequence-unit', script: 'build/tests/standalone-player-sequence.test.js' },
+    { name: 'standalone-player-interaction-unit', script: 'build/tests/standalone-player-interaction.test.js' },
+    { name: 'standalone-player-playback-adapter-unit', script: 'build/tests/standalone-player-playback-adapter.test.js' },
+    { name: 'player-playback-unit', script: 'build/tests/player-playback.test.js' },
+    { name: 'player-recovery-unit', script: 'build/tests/player-playback-recovery.test.js' },
+    { name: 'standalone-player-playback-electron', script: 'build/tests/standalone-player-playback-electron.js' }
+  ]
+  if (focusedStandaloneIntegration) return [
+    { name: 'standalone-player-contracts-unit', script: 'build/tests/standalone-player-contracts.test.js' },
+    { name: 'standalone-player-runtime-unit', script: 'build/tests/standalone-player-runtime.test.js' },
+    { name: 'standalone-player-sequence-unit', script: 'build/tests/standalone-player-sequence.test.js' },
+    { name: 'standalone-player-interaction-unit', script: 'build/tests/standalone-player-interaction.test.js' },
+    { name: 'standalone-player-interaction-transport-unit', script: 'build/tests/standalone-player-interaction-transport.test.js' },
+    { name: 'standalone-player-ipc-unit', script: 'build/tests/standalone-player-ipc.test.js' },
+    { name: 'standalone-player-playback-adapter-unit', script: 'build/tests/standalone-player-playback-adapter.test.js' },
+    { name: 'player-playback-unit', script: 'build/tests/player-playback.test.js' },
+    { name: 'player-recovery-unit', script: 'build/tests/player-playback-recovery.test.js' },
+    { name: 'standalone-player-integration-electron', script: 'build/tests/standalone-player-integration-electron.js' }
+  ]
+  if (focusedStandaloneOptions) return [
+    { name: 'standalone-player-options-unit', script: 'build/tests/standalone-player-options.test.js' },
+    { name: 'standalone-player-ipc-unit', script: 'build/tests/standalone-player-ipc.test.js' },
+    { name: 'standalone-player-metadata-preview-unit', script: 'build/tests/standalone-player-metadata-preview.test.js' },
+    { name: 'music-catalog-unit', script: 'build/tests/music-catalog.test.js' },
+    { name: 'standalone-options-electron', script: 'build/tests/standalone-player-ui-electron.js' }
+  ]
+  if (focusedStandaloneProduction) return [
+    { name: 'standalone-player-contracts-unit', script: 'build/tests/standalone-player-contracts.test.js' },
+    { name: 'standalone-player-runtime-unit', script: 'build/tests/standalone-player-runtime.test.js' },
+    { name: 'standalone-player-sequence-unit', script: 'build/tests/standalone-player-sequence.test.js' },
+    { name: 'standalone-player-ipc-unit', script: 'build/tests/standalone-player-ipc.test.js' },
+    { name: 'player-playback-unit', script: 'build/tests/player-playback.test.js' },
+    { name: 'player-recovery-unit', script: 'build/tests/player-playback-recovery.test.js' },
+    { name: 'standalone-player-production-electron', script: 'build/tests/standalone-player-production-electron.js' }
+  ]
+  if (focusedChromium) return [{ name: 'playback-harness-unit', script: 'scripts/playback-engine-evaluation.test.cjs' }]
+  return [
+    { name: 'windows-shell-shortcuts-electron', script: 'tests/windows-shell-shortcut-electron.cjs' },
+    { name: 'windows-runtime-mutex-electron', script: 'scripts/windows-runtime-mutex-electron.cjs' },
+    { name: 'database-migration-unit', script: 'build/tests/database-migration.test.js' },
+    { name: 'operating-mode-unit', script: 'build/tests/operating-mode.test.js' },
+    { name: 'video-library-unit', script: 'build/tests/video-library.test.js' },
+    { name: 'music-catalog-unit', script: 'build/tests/music-catalog.test.js' },
+    { name: 'multi-instance', script: 'build/tests/multi-instance-electron.js' },
+    { name: 'operating-modes', script: 'build/tests/operating-modes-electron.js' },
+    { name: 'video-library', script: 'build/tests/video-library-electron.js' },
+    { name: 'music-catalog', script: 'build/tests/music-catalog-electron.js' }
+  ]
+}
+
 function residualProcessCheck(profileRoot) {
   const escaped = profileRoot.replaceAll("'", "''")
   const script = "$ErrorActionPreference='Stop'; try { $needle='" + escaped + "'; $items=@(Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction Stop | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($needle) }); foreach($item in $items){ Write-Output ('RESIDUAL_ELECTRON pid=' + $item.ProcessId) }; if($items.Count){ exit 3 } } catch { Write-Error $_; exit 4 }"
@@ -768,7 +978,327 @@ function residualProcessCheck(profileRoot) {
   return { status: 'PASS', detail: 'Nenhum processo Electron com o perfil exclusivo deste run permaneceu.' }
 }
 
-async function windowsWorker(root, stage) {
+function assertNoElectronUsingCheckout(root) {
+  const normalized = path.resolve(root)
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    "$root=[IO.Path]::GetFullPath('" + normalized.replaceAll("'", "''") + "').TrimEnd('\\') + '\\'",
+    "$items=@(Get-CimInstance Win32_Process -Filter \"Name = 'electron.exe'\" -ErrorAction Stop | Where-Object {",
+    '  ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($root,[StringComparison]::OrdinalIgnoreCase)) -or',
+    '  ($_.CommandLine -and $_.CommandLine.IndexOf($root,[StringComparison]::OrdinalIgnoreCase) -ge 0)',
+    '})',
+    'foreach($item in $items){ Write-Output ("CHECKOUT_ELECTRON pid=" + $item.ProcessId + " path=" + $item.ExecutablePath) }',
+    'if($items.Count){ exit 3 }'
+  ].join('\n')
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  const result = spawnSync('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded
+  ], { encoding: 'utf8', shell: false, maxBuffer: 4 * 1024 * 1024 })
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  if (result.status === 3) fail('Há uma instância Electron usando o checkout; feche-a antes da sincronização.')
+  if (result.status !== 0) fail('Não foi possível confirmar que o checkout está sem instâncias Electron: ' +
+    String(result.stderr || result.error?.message || ('exit ' + result.status)))
+}
+
+function safeManualProfile(root, options) {
+  const manualRoot = path.win32.resolve(process.env.KQ_MANUAL_ROOT || 'E:\\KaraokeQueue\\manual-windows')
+  if (manualRoot.toLowerCase() !== path.win32.resolve('E:\\KaraokeQueue\\manual-windows').toLowerCase()) {
+    fail('O launcher manual exige o ambiente persistente em E:\\KaraokeQueue\\manual-windows.')
+  }
+  const profilesRoot = path.win32.join(manualRoot, 'profiles')
+  if (!options || !['new', 'existing'].includes(options.profileKind) ||
+      typeof options.profileName !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(options.profileName)) {
+    fail('A seleção do perfil manual está ausente ou inválida.')
+  }
+  const profilePath = path.win32.join(profilesRoot, options.profileName)
+  if (path.win32.dirname(profilePath).toLowerCase() !== profilesRoot.toLowerCase()) fail('O perfil selecionado está fora da pasta profiles.')
+  if (options.profileKind === 'existing') {
+    if (!fs.existsSync(profilePath)) fail('O perfil selecionado não existe: ' + profilePath)
+    const stat = fs.lstatSync(profilePath)
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.attributes & 0x400)) fail('O perfil selecionado não é uma pasta local regular.')
+  } else if (fs.existsSync(profilePath)) {
+    fail('O destino do novo perfil já existe; nenhum perfil será sobrescrito: ' + profilePath)
+  }
+  return { manualRoot, profilesRoot, profilePath }
+}
+
+function queryWindowsProcess(pid) {
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    '$item=Get-CimInstance Win32_Process -Filter ("ProcessId = " + ' + Number(pid) + ') -ErrorAction Stop',
+    'if(-not $item){ exit 3 }',
+    '$item | Select-Object ProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress'
+  ].join('\n')
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  const result = spawnSync('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded
+  ], { encoding: 'utf8', shell: false, maxBuffer: 1024 * 1024 })
+  if (result.status === 3) return null
+  if (result.status !== 0) fail('Não foi possível consultar o processo Electron iniciado: ' +
+    String(result.stderr || result.error?.message || ('exit ' + result.status)))
+  return JSON.parse(lastNonEmptyLine(result.stdout))
+}
+
+function parseWindowsCommandLine(commandLine) {
+  if (typeof commandLine !== 'string' || !commandLine.trim() || commandLine.includes('\0')) return null
+  const args = []
+  let index = 0
+  while (index < commandLine.length) {
+    while (index < commandLine.length && /\s/.test(commandLine[index])) index++
+    if (index >= commandLine.length) break
+
+    let value = ''
+    let quoted = false
+    while (index < commandLine.length) {
+      if (!quoted && /\s/.test(commandLine[index])) break
+      if (commandLine[index] === '\\') {
+        const start = index
+        while (commandLine[index] === '\\') index++
+        const slashes = index - start
+        if (commandLine[index] === '"') {
+          value += '\\'.repeat(Math.floor(slashes / 2))
+          if (slashes % 2 === 1) {
+            value += '"'
+            index++
+          } else if (quoted && commandLine[index + 1] === '"') {
+            value += '"'
+            index += 2
+          } else {
+            quoted = !quoted
+            index++
+          }
+        } else {
+          value += '\\'.repeat(slashes)
+        }
+        continue
+      }
+      if (commandLine[index] === '"') {
+        if (quoted && commandLine[index + 1] === '"') {
+          value += '"'
+          index += 2
+        } else {
+          quoted = !quoted
+          index++
+        }
+        continue
+      }
+      value += commandLine[index++]
+    }
+    if (quoted) return null
+    args.push(value)
+    while (index < commandLine.length && /\s/.test(commandLine[index])) index++
+  }
+  return args
+}
+
+function sameWindowsPath(left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string' || !left || !right) return false
+  return path.win32.normalize(path.win32.resolve(left)).toLowerCase() ===
+    path.win32.normalize(path.win32.resolve(right)).toLowerCase()
+}
+
+function isExpectedManualElectronProcess(observed, expectedPid, electronExe, appRoot, profilePath) {
+  if (!observed || Number(observed.ProcessId) !== Number(expectedPid)) return false
+  if (observed.Name && String(observed.Name).toLowerCase() !== 'electron.exe') return false
+  const args = parseWindowsCommandLine(observed.CommandLine)
+  if (!args || args.length !== 3 || !sameWindowsPath(args[0], electronExe) ||
+      !sameWindowsPath(args[1], appRoot) || args[2].slice(0, 16).toLowerCase() !== '--user-data-dir=') return false
+  if (!sameWindowsPath(args[2].slice(16), profilePath)) return false
+  if (observed.ExecutablePath && !sameWindowsPath(observed.ExecutablePath, electronExe)) return false
+  return true
+}
+
+async function launchProductionManually(root, manifest, runId, approvals, options) {
+  const { manualRoot, profilePath } = safeManualProfile(root, options)
+  const cacheRoot = path.win32.join(manualRoot, 'cache')
+  const logsRoot = path.win32.join(manualRoot, 'logs')
+  const dependencyMarkerPath = path.win32.join(cacheRoot, 'windows-dependencies.json')
+  fs.mkdirSync(cacheRoot, { recursive: true })
+  fs.mkdirSync(logsRoot, { recursive: true })
+
+  const nodeVersionResult = spawnSync(process.execPath, ['-p', 'JSON.stringify({platform:process.platform,version:process.version,arch:process.arch})'], {
+    cwd: root, encoding: 'utf8', shell: false
+  })
+  if (nodeVersionResult.status !== 0) fail('Não foi possível consultar o Node Windows antes da compilação.')
+  const nodeInfo = JSON.parse(lastNonEmptyLine(nodeVersionResult.stdout))
+  const [nodeMajor, nodeMinor] = nodeInfo.version.replace(/^v/, '').split('.').map(Number)
+  if (nodeInfo.platform !== 'win32' || nodeMajor < 22 || (nodeMajor === 22 && nodeMinor < 12)) {
+    fail('A compilação requer Node.js nativo Windows compatível com package.json; recebido ' + JSON.stringify(nodeInfo))
+  }
+  process.stdout.write('RUNTIME PASS Node Windows=' + JSON.stringify(nodeInfo) + '\n')
+
+  const npmVersion = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd --version'], {
+    cwd: root, encoding: 'utf8', shell: false
+  })
+  if (npmVersion.status !== 0) fail('npm.cmd nativo do Windows não está disponível: ' + String(npmVersion.stderr || npmVersion.error))
+  const npmVersionText = lastNonEmptyLine(npmVersion.stdout)
+  const lockPath = path.join(root, 'package-lock.json')
+  if (!fs.existsSync(lockPath)) fail('package-lock.json ausente; npm ci não pode garantir dependências reproduzíveis.')
+  const lockHash = sha256(lockPath)
+  let cachedDependencies = null
+  try { cachedDependencies = JSON.parse(fs.readFileSync(dependencyMarkerPath, 'utf8')) } catch {}
+  const electronPackagePath = path.join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
+  const typescriptPath = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc')
+  const reusableDependencies = cachedDependencies?.lockHash === lockHash &&
+    cachedDependencies?.nodeVersion === nodeInfo.version && cachedDependencies?.npmVersion === npmVersionText &&
+    fs.existsSync(electronPackagePath) && fs.existsSync(typescriptPath)
+  let electronExe
+  if (reusableDependencies) {
+    process.stdout.write('DEPENDENCIES REUSE lockfile=' + lockHash + ' Node=' + nodeInfo.version + ' npm=' + npmVersionText + '\n')
+  } else {
+    process.stdout.write('DEPENDENCIES START npm.cmd ci; cache=' + path.win32.join(cacheRoot, 'npm') + '\n')
+    const cachePath = path.win32.join(cacheRoot, 'npm')
+    fs.mkdirSync(cachePath, { recursive: true })
+    commandWithStdio(process.env.ComSpec || 'cmd.exe', [
+      // The fixed E: cache path contains no spaces; passing it unquoted avoids
+      // cmd.exe preserving quote characters as part of npm's cache path.
+      '/d', '/s', '/c', 'npm.cmd ci --cache ' + cachePath
+    ], root, 'npm.cmd ci nativo do Windows')
+  }
+  if (!fs.existsSync(typescriptPath)) fail('TypeScript não está instalado no checkout NTFS após preparar as dependências.')
+
+  // Electron 45 resolves/downloads its platform binary lazily from index.js;
+  // npm ci alone leaves node_modules/electron/dist empty because this package
+  // version does not declare a postinstall hook.
+  const electronResult = spawnSync(process.execPath, ['-p', 'require("electron")'], {
+    cwd: root, encoding: 'utf8', shell: false
+  })
+  if (electronResult.status !== 0) {
+    fail('O pacote Electron não conseguiu preparar o binário nativo Windows: ' + String(electronResult.stderr || electronResult.error))
+  }
+  electronExe = path.resolve(lastNonEmptyLine(electronResult.stdout))
+  if (!electronExe.toLowerCase().startsWith(path.resolve(root, 'node_modules', 'electron', 'dist').toLowerCase() + path.sep) ||
+      path.basename(electronExe).toLowerCase() !== 'electron.exe' || !fs.existsSync(electronExe)) {
+    fail('Electron não resolveu para o binário Windows instalado no checkout: ' + electronExe)
+  }
+  if (!reusableDependencies) {
+    atomicWrite(dependencyMarkerPath, JSON.stringify({
+      lockHash, nodeVersion: nodeInfo.version, npmVersion: npmVersionText, installedAt: new Date().toISOString()
+    }))
+    process.stdout.write('DEPENDENCIES PASS Electron/TypeScript Windows preparados no checkout NTFS\n')
+  }
+
+  assertNoElectronUsingCheckout(root)
+  verifySnapshotDirectory(root, manifest)
+  let buildState
+  // Manual mode relies on the validated SYNC checkpoint. The interactive
+  // PowerShell launcher must keep the application worker detached afterward;
+  // WSL rechecks the original fingerprint before reporting launch success.
+  try {
+    assertNoElectronUsingCheckout(root)
+    buildState = prepareFreshBuild(root, runId)
+    process.stdout.write('BUILD START npm.cmd run compile no Windows\n')
+    commandWithStdio(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd run compile'], root,
+      'npm.cmd run compile nativo do Windows')
+    verifyBuildOutput(root, manifest)
+    const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+    if (packageJson.main !== 'build/main.js') fail('package.json.main mudou; esperado build/main.js, encontrado ' + packageJson.main)
+    const entryPoint = path.resolve(root, packageJson.main)
+    if (!entryPoint.startsWith(path.resolve(root) + path.sep) || !fs.existsSync(entryPoint)) {
+      fail('Entry point Main de produção ausente ou fora do checkout: ' + entryPoint)
+    }
+    process.stdout.write('BUILD PASS package.json.main=' + packageJson.main + ' Electron=' + electronExe + '\n')
+    verifySnapshotDirectory(root, manifest)
+
+    const profile = safeManualProfile(root, options)
+    if (options.profileKind === 'new') {
+      const forbiddenFiles = [
+        'operating-mode.json', 'karaoke.sqlite', 'karaoke-data.json', 'ui-preferences.json',
+        'video-library.json', 'player-music-catalog.sqlite', 'player-playback-recovery.json'
+      ]
+      if (fs.existsSync(profile.profilePath)) fail('O perfil de instalação nova já existe; nada será sobrescrito.')
+      fs.mkdirSync(profile.profilePath, { recursive: false })
+      const unexpected = forbiddenFiles.filter(name => fs.existsSync(path.join(profile.profilePath, name)))
+      if (unexpected.length) fail('O perfil novo não está vazio; campos preservados: ' + unexpected.join(', '))
+    }
+
+    const appLog = path.join(profile.profilePath, 'logs', 'app.log')
+    const priorAppLogBytes = fs.existsSync(appLog) ? fs.statSync(appLog).size : 0
+    const launchStartedAt = Date.now()
+    assertNoElectronUsingCheckout(root)
+    if (buildState.hadBuild) {
+      const backupDirectory = path.join(cacheRoot, 'build-backups')
+      fs.mkdirSync(backupDirectory, { recursive: true })
+      const backupTarget = path.join(backupDirectory, runId)
+      if (fs.existsSync(backupTarget)) fail('Destino de backup de build já existe; backup original mantido em .git.')
+      fs.renameSync(buildState.backupPath, backupTarget)
+      process.stdout.write('BUILD BACKUP preservado em ' + backupTarget + '\n')
+    }
+
+    assertNoElectronUsingCheckout(root)
+    const { spawn } = require('node:child_process')
+    const appEnvironment = { ...process.env }
+    for (const key of Object.keys(appEnvironment)) {
+      if (/^(KQ_C1|KQ_STANDALONE_C|KQ_PLAYER_(TEST|RECOVERY_TEST)|KQ_TEST_|KARAOKE_TEST_)/.test(key) ||
+          ['KQ_PROJECT_ROOT', 'KQ_MANUAL_ROOT', 'KQ_MANUAL_PROFILE_NAME', 'KQ_MANUAL_PROFILE_KIND',
+            'KARAOKE_QUEUE_WIN_CHECKOUT', 'ELECTRON_RUN_AS_NODE'].includes(key)) delete appEnvironment[key]
+    }
+    process.stdout.write('PROFILE ' + (options.profileKind === 'new' ? 'nova instalação, diretório vazio; onboarding escolherá o modo' : 'instalação existente preservada') +
+      ' path=' + profile.profilePath + '\n')
+    process.stdout.write('APPLICATION START Main de produção: Electron Windows + ' + entryPoint + '\n')
+    const electronProcess = spawn(electronExe, [path.resolve(root), '--user-data-dir=' + profile.profilePath], {
+      cwd: root, detached: true, stdio: 'ignore', windowsHide: false, env: appEnvironment
+    })
+    electronProcess.unref()
+
+    let observed = null
+    const deadline = Date.now() + 15000
+    while (Date.now() < deadline && !observed) {
+      observed = queryWindowsProcess(electronProcess.pid)
+      if (!observed) await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    if (!observed) fail('Electron foi iniciado, mas o processo Windows não pôde ser confirmado. Perfil preservado: ' + profile.profilePath)
+    if (!isExpectedManualElectronProcess(observed, electronProcess.pid, electronExe, root, profile.profilePath)) {
+      fail('O processo iniciado não corresponde ao Electron do checkout e perfil esperados: ' + JSON.stringify(observed))
+    }
+    const verifiedBy = observed.ExecutablePath ? 'ExecutablePath+CommandLine' : 'CommandLine (ExecutablePath indisponível no WMI)'
+    process.stdout.write('ELECTRON WINDOWS PROCESS PASS pid=' + observed.ProcessId + ' image=' + electronExe + ' verifiedBy=' + verifiedBy + '\n')
+    let appReady = false
+    const readyDeadline = Date.now() + 5000
+    while (Date.now() < readyDeadline && !appReady) {
+      if (fs.existsSync(appLog)) {
+        const appLogText = fs.readFileSync(appLog, 'utf8')
+        appReady = appLogText.split(/\r?\n/).some(line => {
+          try {
+            const record = JSON.parse(line)
+            return record.event === 'APP_READY' && Date.parse(record.timestamp) >= launchStartedAt
+          } catch { return false }
+        })
+      }
+      if (!appReady && options.profileKind !== 'new' && (!fs.existsSync(appLog) || fs.statSync(appLog).size >= priorAppLogBytes)) {
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+      else break
+    }
+    if (appReady) process.stdout.write('APP_READY encontrado em ' + appLog + '\n')
+    else if (options.profileKind === 'new') process.stdout.write('ONBOARDING: perfil sem operating-mode.json; APP_READY só é esperado depois da escolha feita na interface.\n')
+    else process.stdout.write('APP_READY ainda não apareceu em ' + appLog + '; consulte esse log após startup.\n')
+    process.stdout.write('MANUAL LAUNCH PASS. A aplicação permanece aberta; feche-a normalmente. Perfil preservado em ' + profile.profilePath + '\n')
+
+  } catch (error) {
+    if (buildState.hadBuild && fs.existsSync(buildState.backupPath)) {
+      try {
+        const buildPath = path.join(root, 'build')
+        if (fs.existsSync(buildPath)) {
+          const failedBuilds = path.join(cacheRoot, 'failed-builds')
+          fs.mkdirSync(failedBuilds, { recursive: true })
+          const failedBuildPath = path.join(failedBuilds, runId)
+          if (fs.existsSync(failedBuildPath)) fail('Build interrompido já existe; backup preservado em .git.')
+          fs.renameSync(buildPath, failedBuildPath)
+        }
+        fs.renameSync(buildState.backupPath, buildPath)
+        process.stdout.write('BUILD RECOVERY: build anterior restaurado; build interrompido preservado em cache.\n')
+      } catch (restoreError) {
+        error.message += '; recuperação do build manual requer revisão: ' + restoreError.message
+        error.preserveRunnerLock = true
+      }
+    }
+    throw error
+  }
+}
+
+async function windowsWorker(root, stage, playbackEvaluation = false, playbackMode = null, manualOptions = null, packageCandidate = false) {
   if (process.platform !== 'win32') fail('O worker precisa de Node.js nativo Windows.')
   root = path.resolve(root)
   stage = path.resolve(stage)
@@ -791,7 +1321,7 @@ async function windowsWorker(root, stage) {
   let reportStage = 'SYNC'
   let reportInitialized = false
   try {
-    if (fs.existsSync(reportPath)) {
+    if (!manualOptions && fs.existsSync(reportPath)) {
       let previousReport
       try { previousReport = JSON.parse(fs.readFileSync(reportPath, 'utf8')) } catch {
         fail('O relatório local existente não é reconhecido pelo runner; nenhum arquivo foi sobrescrito.')
@@ -806,13 +1336,18 @@ async function windowsWorker(root, stage) {
       fingerprint: manifest.fingerprint,
       ...report
     }))
-    saveReport({
-      status: 'RUNNING',
-      stage: reportStage,
-      startedAt: new Date().toISOString()
-    })
-    reportInitialized = true
-    if (fs.existsSync(pendingPath)) fail('Sincronização anterior incompleta; revise ou reconstrua o checkout Windows.')
+    if (!manualOptions) {
+      saveReport({
+        status: 'RUNNING',
+        stage: reportStage,
+        startedAt: new Date().toISOString()
+      })
+      reportInitialized = true
+    }
+    if (fs.existsSync(pendingPath) && !fs.existsSync(markerPath)) {
+      fail('Sincronização anterior incompleta sem snapshot confirmado; revise ou reconstrua o checkout Windows.')
+    }
+    if (manualOptions) assertNoElectronUsingCheckout(root)
     const current = gitState(root)
     if (current.branch !== manifest.branch) fail('Branch diferente: WSL=' + manifest.branch + ', Windows=' + current.branch)
     if (fs.existsSync(markerPath)) {
@@ -833,7 +1368,8 @@ async function windowsWorker(root, stage) {
       }
       atomicWrite(markerPath, JSON.stringify(marker))
     }
-    assertIndexMatchesHead(root)
+    if (fs.existsSync(pendingPath)) recoverNoopInterruptedSync(root, marker, pendingPath)
+    else assertIndexMatchesHead(root)
 
     atomicWrite(pendingPath, JSON.stringify({
       runId,
@@ -864,6 +1400,7 @@ async function windowsWorker(root, stage) {
     const nodeInfo = spawnSync(process.execPath, ['-p', 'JSON.stringify({platform:process.platform,version:process.version,arch:process.arch})'], { cwd: root, encoding: 'utf8', shell: false })
     if (nodeInfo.status !== 0 || !nodeInfo.stdout.includes('"platform":"win32"')) fail('Node do Windows não confirmou process.platform=win32.')
     process.stdout.write('RUNTIME PASS node=' + nodeInfo.stdout.trim() + '\n')
+    if (manualOptions) return launchProductionManually(root, manifest, runId, approvals, manualOptions)
     runNpmCommand(root, 'npm.cmd --version', 'npm.cmd --version')
 
     process.stdout.write('DEPENDENCIES START npm.cmd ci (node_modules e cache no checkout Windows)\n')
@@ -895,9 +1432,38 @@ async function windowsWorker(root, stage) {
     await approvals.wait(manifest.fingerprint)
     process.stdout.write('BUILD START npm.cmd run compile\n')
     runNpmCommand(root, 'npm.cmd run compile', 'npm.cmd run compile')
-    verifyBuildOutput(root, marker, manifest)
+    verifyBuildOutput(root, manifest)
     if (!fs.existsSync(path.join(root, 'build', 'main.js'))) fail('build/main.js não foi gerado no Windows.')
     process.stdout.write('BUILD PASS native Windows artifacts\n')
+
+    if (packageCandidate) {
+      const outputDirectory = path.join(root, 'dist')
+      if (fs.existsSync(outputDirectory)) fail('dist/ já existe no checkout Windows; nenhum artifact será sobrescrito.')
+      reportStage = 'PACKAGE'
+      saveReport({ status: 'RUNNING', stage: reportStage, startedAt: new Date().toISOString() })
+      process.stdout.write('KQ_SOURCE_GATE PACKAGE ' + manifest.fingerprint + '\n')
+      await approvals.wait(manifest.fingerprint)
+      process.stdout.write('PACKAGE START npm.cmd run build:windows\n')
+      runNpmCommand(root, 'npm.cmd run build:windows', 'npm.cmd run build:windows')
+      process.stdout.write('PACKAGE VERIFY npm.cmd run verify:windows-build\n')
+      runNpmCommand(root, 'npm.cmd run verify:windows-build', 'npm.cmd run verify:windows-build')
+      const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+      const installerPath = path.join(outputDirectory, `Karaoke-Queue-Setup-${packageJson.version}-x64.exe`)
+      assertPlainFile(installerPath, 'Instalador candidato')
+      const installerSha256 = sha256(installerPath)
+      process.stdout.write('PACKAGE CANDIDATE PASS path=' + installerPath + ' sha256=' + installerSha256 + '\n')
+      restorePreviousBuild(root, buildState, manifest)
+      buildState = null
+      verifySnapshotDirectory(root, manifest)
+      const finalState = gitState(root)
+      if (finalState.branch !== manifest.branch || finalState.head !== manifest.head) fail('Branch/HEAD do checkout mudou durante o build do candidato.')
+      saveReport({ status: 'PASS', stage: 'PACKAGE', node: process.version, installer: path.relative(root, installerPath), installerSha256, testedAt: new Date().toISOString() })
+      const releaseLock = release
+      release = null
+      try { releaseLock() } catch (error) { preserveLock = true; throw error }
+      process.stdout.write('REPORT PACKAGE CANDIDATE PASS branch=' + manifest.branch + ' HEAD=' + manifest.head + ' fingerprint=' + manifest.fingerprint + '\n')
+      return
+    }
 
     const gui = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
       'if ([Environment]::UserInteractive -and (Get-Process explorer -ErrorAction SilentlyContinue)) { exit 0 } else { exit 1 }'],
@@ -911,7 +1477,7 @@ async function windowsWorker(root, stage) {
     if (fs.existsSync(profileRoot)) fail('Perfil temporário já existe; nenhum dado foi alterado: ' + profileRoot)
     const env = { ...process.env, KARAOKE_TEST_TEMP_ROOT: profileRoot }
     verifySnapshotDirectory(root, manifest)
-    verifyBuildOutput(root, marker, manifest)
+    verifyBuildOutput(root, manifest)
     reportStage = 'TEST'
     saveReport({
       status: 'RUNNING',
@@ -921,13 +1487,74 @@ async function windowsWorker(root, stage) {
     })
     process.stdout.write('KQ_SOURCE_GATE TEST ' + manifest.fingerprint + '\n')
     await approvals.wait(manifest.fingerprint)
-    process.stdout.write('TEST START Electron real + Playwright + SQLite temporário; sessão gráfica Windows\n')
-    const test = spawnSync(process.execPath, ['build/tests/multi-instance-electron.js'], {
-      cwd: root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: false
-    })
-    if (test.stdout) process.stdout.write(test.stdout)
-    if (test.stderr) process.stderr.write(test.stderr)
-    const focus = focusResult(test.stdout || '')
+    const focusedChromium = playbackMode === '--playback-chromium-final' || playbackMode === '--playback-chromium-interactive'
+    const focusedPlayerPlayback = playbackMode === '--player-playback'
+    const focusedStandalonePlayback = playbackMode === '--standalone-playback'
+    const focusedStandaloneIntegration = playbackMode === '--standalone-integration'
+    const focusedPlayerRecovery = playbackMode === '--player-recovery'
+    const focusedStandaloneOptions = playbackMode === '--standalone-options'
+    const focusedStandaloneProduction = playbackMode === '--standalone-production'
+    if (focusedPlayerPlayback && !process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
+      fail('O modo player-playback requer KQ_PLAYER_TEST_MEDIA_DIR com os vídeos de teste de leitura.')
+    }
+    if (focusedStandalonePlayback && !process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
+      fail('O modo standalone-playback requer KQ_PLAYER_TEST_MEDIA_DIR com os vídeos MP4 de teste de leitura.')
+    }
+    if (focusedStandaloneIntegration && !process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
+      fail('O modo standalone-integration requer KQ_PLAYER_TEST_MEDIA_DIR com os vídeos MP4 de teste de leitura.')
+    }
+    if (focusedPlayerRecovery && !process.env.KQ_PLAYER_RECOVERY_TEST_MEDIA_DIR) {
+      fail('O modo player-recovery requer KQ_PLAYER_RECOVERY_TEST_MEDIA_DIR com os vídeos de teste de leitura.')
+    }
+    if (focusedStandaloneProduction) {
+      const mediaPath = process.env.KQ_PLAYER_TEST_MEDIA_DIR
+      if (!mediaPath || !path.isAbsolute(mediaPath) || !fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isDirectory() ||
+          !fs.existsSync(path.join(mediaPath, '01001.mp4')) || !fs.statSync(path.join(mediaPath, '01001.mp4')).isFile()) {
+        fail('O modo standalone-production requer KQ_PLAYER_TEST_MEDIA_DIR com 01001.mp4 real no Windows.')
+      }
+    }
+    if (focusedStandaloneOptions) {
+      if (!process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
+        fail('O modo standalone-options requer KQ_PLAYER_TEST_MEDIA_DIR com o MP4 real de teste e a biblioteca local.')
+      }
+      for (const variable of ['KQ_STANDALONE_C8_REPRO_ORIGINAL_CSV', 'KQ_STANDALONE_C8_REPRO_REPLACEMENT_CSV']) {
+        const value = process.env[variable]
+        if (!value || !path.isAbsolute(value) || !fs.existsSync(value) || !fs.statSync(value).isFile()) {
+          fail('O modo standalone-options requer ' + variable + ' como caminho absoluto para arquivo regular Windows.')
+        }
+      }
+    }
+    process.stdout.write(playbackMode === '--installation-coordination' ? 'TEST START focused installation unit + native Electron/NSIS fixtures; no installed-product proof\n' : focusedChromium
+      ? 'TEST START isolated Chromium playback harness; interactive Windows desktop\n'
+      : focusedPlayerPlayback ? 'TEST START production Chromium service in isolated Electron host\n'
+      : focusedStandalonePlayback ? 'TEST START isolated Standalone sequence/runtime with real Chromium and MP4; no production Main wiring\n'
+      : focusedStandaloneIntegration ? 'TEST START isolated Standalone B2/Preload/IPC/Main/Chromium integration with real MP4; no production Main wiring\n'
+      : focusedPlayerRecovery ? 'TEST START production Player recovery in isolated Electron processes; Windows desktop\n'
+      : focusedStandaloneOptions ? 'TEST START focused C8 options/catalog UI in real Electron + Playwright + SQLite + MP4; Windows paths supplied read-only\n'
+      : focusedStandaloneProduction ? 'TEST START C9 production Standalone Main/Preload/IPC/shutdown with real Electron, MP4 and isolated SQLite\n'
+      : 'TEST START Electron real + Playwright + SQLite temporário; sessão gráfica Windows\n')
+    if (focusedStandaloneOptions) env.KQ_STANDALONE_C8_ONLY = '1'
+    const suiteResults = []
+    let suites = selectWindowsTestSuites(playbackMode)
+    if (playbackEvaluation || focusedChromium) {
+      const playbackArgs = playbackMode === '--playback-chromium-final'
+        ? ['--chromium-final-validation']
+        : playbackMode === '--playback-chromium-interactive' ? ['--interactive-chromium'] : []
+      suites.push({ name: 'playback-engine-evaluation', script: 'scripts/playback-engine-evaluation.cjs', args: playbackArgs })
+    }
+    for (const suite of suites) {
+      const result = spawnSync(process.execPath, [suite.script, ...(suite.args || [])], {
+        cwd: root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: false
+      })
+      suiteResults.push({ ...suite, ...result })
+      if (result.stdout) process.stdout.write(result.stdout)
+      if (result.stderr) process.stderr.write(result.stderr)
+      if (result.status !== 0) break
+    }
+    const multiInstance = suiteResults.find(result => result.name === 'multi-instance')
+    const focus = requiresWindowFocus(playbackMode)
+      ? focusResult(multiInstance?.stdout || '')
+      : { status: 'NOT APPLICABLE', rows: [] }
     process.stdout.write('WINDOW_FOCUS ' + focus.status + ' evidence=' + JSON.stringify(focus.rows) + '\n')
     reportStage = 'CLEANUP'
     const residuals = residualProcessCheck(profileRoot)
@@ -938,11 +1565,20 @@ async function windowsWorker(root, stage) {
     }
     if (fs.existsSync(profileRoot)) fail('O teste deixou o perfil temporário: ' + profileRoot)
     process.stdout.write('CLEANUP PASS perfis temporários removidos; nenhum processo residual\n')
-    if (test.status !== 0) fail('E2E Windows falhou com código ' + test.status + ': ' + (test.stderr || test.error || ''))
-    if (focus.status !== 'PASS') fail('Foco da janela não foi observado como confirmado; causa não presumida.')
-    verifyBuildOutput(root, marker, manifest)
-    process.stdout.write('TEST PASS multi-instance Electron E2E\n')
-    restorePreviousBuild(root, buildState, [marker, manifest])
+    const failedSuite = suiteResults.find(result => result.status !== 0)
+    if (failedSuite) fail('E2E Windows ' + failedSuite.name + ' falhou com código ' + failedSuite.status + ': ' + (failedSuite.stderr || failedSuite.error || ''))
+    if (requiresWindowFocus(playbackMode) && focus.status !== 'PASS') fail('Foco da janela não foi observado como confirmado; causa não presumida.')
+    verifyBuildOutput(root, manifest)
+    process.stdout.write(playbackMode === '--installation-coordination' ? 'TEST PASS focused installation unit + native Electron/NSIS fixtures; unrelated regression not run\n' : focusedChromium
+      ? 'TEST PASS focused Chromium playback evaluation; unrelated regression suites not run by request\n'
+      : focusedPlayerPlayback ? 'TEST PASS production Chromium playback service integration; unrelated regression suites not run by request\n'
+      : focusedStandalonePlayback ? 'TEST PASS focused Standalone real Chromium/MP4 integration; unrelated Controller/Combined suites not run by request\n'
+      : focusedStandaloneIntegration ? 'TEST PASS focused Standalone B2/IPC/Chromium/MP4 integration; unrelated Controller/Combined suites not run by request\n'
+      : focusedPlayerRecovery ? 'TEST PASS production Player recovery Electron integration; unrelated regression suites not run by request\n'
+      : focusedStandaloneOptions ? 'TEST PASS focused C8 options/catalog UI through real Electron, Playwright, IPC, SQLite and MP4; native file-picker window is represented by the test-only dialog port\n'
+      : focusedStandaloneProduction ? 'TEST PASS production C9 Standalone Electron lifecycle with real MP4 and recovery; unrelated Controller/Combined suites not run by request\n'
+      : 'TEST PASS database migration, operating-mode, video-library and music-catalog unit; multi-instance, operating-modes, video-library and music-catalog Electron suites\n')
+    restorePreviousBuild(root, buildState, manifest)
     buildState = null
     reportStage = 'REPORT'
     const finalState = gitState(root)
@@ -957,9 +1593,10 @@ async function windowsWorker(root, stage) {
     }
     process.stdout.write('REPORT PASS branch=' + manifest.branch + ' HEAD=' + manifest.head + ' fingerprint=' + manifest.fingerprint + '\n')
   } catch (error) {
+    if (error.preserveRunnerLock) preserveLock = true
     if (buildState && buildState.hadBuild) {
       try {
-        restorePreviousBuild(root, buildState, [marker, manifest])
+        restorePreviousBuild(root, buildState, manifest)
         buildState = null
       } catch (restoreError) {
         preserveLock = true
@@ -989,8 +1626,98 @@ async function windowsWorker(root, stage) {
   }
 }
 
-function powershellLauncher(stagePath, runId) {
-  const data = Buffer.from(JSON.stringify({ stagePath, runId }), 'utf8').toString('base64')
+function powershellManualLauncher(stagePath, runId, profileKind, profileName) {
+  if (!['new', 'existing'].includes(profileKind) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(profileName || '')) {
+    fail('A seleção do perfil do launcher manual está inválida.')
+  }
+  const data = Buffer.from(JSON.stringify({ stagePath, runId, profileKind, profileName }), 'utf8').toString('base64')
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "$payload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + data + "')) | ConvertFrom-Json",
+    "$manualRoot = 'E:\\KaraokeQueue\\manual-windows'",
+    "$checkout = Join-Path $manualRoot 'checkout'",
+    "$profiles = Join-Path $manualRoot 'profiles'",
+    "$cache = Join-Path $manualRoot 'cache'",
+    "$logs = Join-Path $manualRoot 'logs'",
+    "if (-not (Test-Path -LiteralPath 'E:\\' -PathType Container)) { throw 'Unidade E: indisponível. O launcher não usa fallback para C:.' }",
+    "$drive = New-Object IO.DriveInfo 'E:\\'",
+    "if (-not $drive.IsReady -or $drive.DriveFormat -ne 'NTFS') { throw ('E: precisa estar disponível em NTFS; encontrado ' + $drive.DriveFormat) }",
+    'function Assert-PlainDirectory([string]$Path,[string]$Label) { if (-not (Test-Path -LiteralPath $Path -PathType Container)) { throw "$Label não existe: $Path" }; $item=Get-Item -LiteralPath $Path -Force; if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "$Label é reparse point: $Path" } }',
+    'foreach ($directory in @($manualRoot,$checkout,$profiles,$cache,$logs)) { if ($directory -eq $checkout) { continue }; if (-not (Test-Path -LiteralPath $directory)) { New-Item -ItemType Directory -Path $directory -Force:$false | Out-Null }; Assert-PlainDirectory $directory "Diretório manual" }',
+    'if (Test-Path -LiteralPath $checkout) { Assert-PlainDirectory $checkout "Checkout" }',
+    "$selectedProfile = Join-Path $profiles $payload.profileName",
+    'if ([IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($selectedProfile)) -ine [IO.Path]::GetFullPath($profiles)) { throw "Perfil fora da pasta profiles." }',
+    'if ($payload.profileKind -eq "existing") { Assert-PlainDirectory $selectedProfile "Perfil existente" } elseif (Test-Path -LiteralPath $selectedProfile) { throw "O novo perfil já existe; nenhum conteúdo será sobrescrito: $selectedProfile" }',
+    `$profileProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" -ErrorAction Stop | Where-Object { $_.CommandLine -and $_.CommandLine.IndexOf($selectedProfile,[StringComparison]::OrdinalIgnoreCase) -ge 0 })`,
+    'if ($profileProcesses.Count) { throw ("O perfil já está em uso por Electron PID(s): " + (($profileProcesses | ForEach-Object { $_.ProcessId }) -join ",")) }',
+    '$logPath = Join-Path $logs ("manual-" + $payload.runId + ".log")',
+    '$transcriptStarted = $false',
+    '$localStage = Join-Path $cache ("staging-" + $payload.runId)',
+    'try {',
+    '  Start-Transcript -LiteralPath $logPath -Force | Out-Null; $transcriptStarted = $true',
+    '  Write-Output "Destino E: NTFS confirmado; branch/HEAD/fingerprint serão informados pelo runner oficial."',
+    '  if (Test-Path -LiteralPath $localStage) { throw "Staging E: já existe; nenhum arquivo será sobrescrito: $localStage" }',
+    '  New-Item -ItemType Directory -Path $localStage -Force:$false | Out-Null',
+    "  Copy-Item -Path ($payload.stagePath.TrimEnd('\\') + '\\*') -Destination $localStage -Recurse -Force",
+    `  $manifestPath = Join-Path (Join-Path $localStage 'metadata') 'snapshot.json'`,
+    '  if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "Manifesto de snapshot ausente no staging." }',
+    '  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json',
+    '  if ($manifest.fingerprint -notmatch "^[a-f0-9]{64}$" -or $manifest.branch -notmatch "^[A-Za-z0-9._/-]+$" -or $manifest.head -notmatch "^[a-f0-9]{40,64}$") { throw "Metadados do snapshot inválidos." }',
+    '  if (Test-Path -LiteralPath $checkout) {',
+    '    if (-not (Test-Path -LiteralPath (Join-Path $checkout ".git") -PathType Container)) { throw "O caminho checkout existe, mas não é um clone Git local válido; preservado." }',
+    `    $checkoutPrefix = $checkout.TrimEnd([char]92) + [char]92`,
+    `    $active = @(Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" -ErrorAction Stop | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($checkoutPrefix,[StringComparison]::OrdinalIgnoreCase)) -or ($_.CommandLine -and $_.CommandLine.IndexOf($checkout,[StringComparison]::OrdinalIgnoreCase) -ge 0) })`,
+    '    if ($active.Count) { throw ("Feche a aplicação que usa checkout antes de sincronizar. PID(s): " + (($active | ForEach-Object { $_.ProcessId }) -join ",")) }',
+    '  } else {',
+    `    $bundle = Join-Path (Join-Path $localStage 'metadata') 'source-head.bundle'`,
+    '    if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) { throw "Checkout ausente e bundle local de bootstrap não existe; nenhum clone remoto será usado." }',
+    '    $bootstrap = Join-Path $cache ("bootstrap-" + $payload.runId)',
+    '    if (Test-Path -LiteralPath $bootstrap) { throw "Staging de bootstrap já existe; preservado: $bootstrap" }',
+    '    $git = (Get-Command git.exe -ErrorAction Stop).Source',
+    '    $branch = [string]$manifest.branch',
+    '    & $git clone --branch $branch $bundle $bootstrap',
+    '    if ($LASTEXITCODE -ne 0) { throw "Bootstrap do checkout falhou usando o bundle local WSL." }',
+    '    $clonedBranch = (& $git -C $bootstrap branch --show-current).Trim()',
+    '    $clonedHead = (& $git -C $bootstrap rev-parse HEAD).Trim()',
+    '    if ($LASTEXITCODE -ne 0 -or $clonedBranch -ne $manifest.branch -or $clonedHead -ne $manifest.head) { throw "O bundle local não produziu a branch/HEAD esperados." }',
+    '    Move-Item -LiteralPath $bootstrap -Destination $checkout',
+    '    Assert-PlainDirectory $checkout "Checkout inicial"',
+    '    Write-Output "Checkout persistente criado de bundle Git local do WSL; sem git clone remoto."',
+    '  }',
+    `  $checkoutPrefix = $checkout.TrimEnd([char]92) + [char]92`,
+    `  $active = @(Get-CimInstance Win32_Process -Filter "Name = 'electron.exe'" -ErrorAction Stop | Where-Object { ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($checkoutPrefix,[StringComparison]::OrdinalIgnoreCase)) -or ($_.CommandLine -and $_.CommandLine.IndexOf($checkout,[StringComparison]::OrdinalIgnoreCase) -ge 0) })`,
+    '  if ($active.Count) { throw ("Feche a aplicação que usa checkout antes de sincronizar. PID(s): " + (($active | ForEach-Object { $_.ProcessId }) -join ",")) }',
+    `  $worker = Join-Path (Join-Path $localStage 'tree') (Join-Path 'scripts' 'run-windows-native-tests.cjs')`,
+    '  if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) { throw "Runner oficial ausente no snapshot." }',
+    '  $env:KARAOKE_QUEUE_WIN_CHECKOUT = $checkout',
+    '  $env:KQ_MANUAL_ROOT = $manualRoot',
+    '  $env:KQ_MANUAL_PROFILE_NAME = [string]$payload.profileName',
+    '  $env:KQ_MANUAL_PROFILE_KIND = [string]$payload.profileKind',
+    '  Push-Location $checkout',
+    '  try {',
+    '    & node.exe $worker "--windows-worker" $checkout $localStage "--manual-launch" "--manual-profile-kind" ([string]$payload.profileKind) "--manual-profile-name" ([string]$payload.profileName); $workerExit = $LASTEXITCODE',
+    '  } finally { Pop-Location }',
+    '} finally {',
+    '  if (Test-Path -LiteralPath $localStage) { $item=Get-Item -LiteralPath $localStage -Force; if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Staging virou reparse point e foi preservado: $localStage" }; Remove-Item -LiteralPath $localStage -Recurse -Force }',
+    '  if ($transcriptStarted) { Stop-Transcript | Out-Null }',
+    '}',
+    'if ($null -eq $workerExit) { $workerExit = 1 }',
+    'exit $workerExit'
+  ].join('\n')
+}
+
+function powershellLauncher(stagePath, runId, playbackEvaluation = false, playbackMode = null, manualOptions = null, screenshotRoot = null, packageCandidate = false) {
+  if (manualOptions) return powershellManualLauncher(stagePath, runId, manualOptions.profileKind, manualOptions.profileName)
+  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination'].includes(playbackMode)) {
+    fail('Modo de playback não permitido para o worker Windows.')
+  }
+  if (screenshotRoot !== null && (typeof screenshotRoot !== 'string' || !/^[A-Za-z]:\\/.test(screenshotRoot) || screenshotRoot.startsWith('\\\\'))) {
+    fail('O diretório de screenshot precisa ser um caminho absoluto em unidade Windows local.')
+  }
+  if (typeof packageCandidate !== 'boolean') fail('Modo de build candidato inválido.')
+  if (packageCandidate && (playbackEvaluation || playbackMode !== null)) fail('Build candidato não combina com testes ou harnesses.')
+  const data = Buffer.from(JSON.stringify({ stagePath, runId, playbackEvaluation, playbackMode, screenshotRoot, packageCandidate }), 'utf8').toString('base64')
   return [
     "$ErrorActionPreference = 'Stop'",
     "$payload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + data + "')) | ConvertFrom-Json",
@@ -1003,6 +1730,19 @@ function powershellLauncher(stagePath, runId) {
     "if ($drive.DriveFormat -ne 'NTFS') { throw ('O checkout precisa estar em NTFS; encontrado ' + $drive.DriveFormat) }",
     "$stageName = 'karaoke-queue-windows-stage-' + $payload.runId",
     '$localStage = Join-Path $env:TEMP $stageName',
+    'if ($payload.screenshotRoot) {',
+    '  $screenshotRoot = [IO.Path]::GetFullPath([string]$payload.screenshotRoot).TrimEnd([char]92)',
+    "  if ($screenshotRoot -notmatch '^[A-Za-z]:\\\\') { throw 'O destino de screenshot precisa ser local, absoluto e usar uma letra de unidade.' }",
+    "  $checkoutPrefix = $checkout.TrimEnd([char]92) + [char]92",
+    "  if ($screenshotRoot.StartsWith($checkoutPrefix,[StringComparison]::OrdinalIgnoreCase) -or $screenshotRoot.Equals($checkout.TrimEnd([char]92),[StringComparison]::OrdinalIgnoreCase)) { throw 'O destino de screenshot não pode ficar dentro do checkout Windows.' }",
+    "  if ($screenshotRoot.StartsWith($localStage,[StringComparison]::OrdinalIgnoreCase)) { throw 'O destino de screenshot não pode ficar no staging temporário do runner.' }",
+    '  $cursor = $screenshotRoot',
+    '  while ($cursor) { if (Test-Path -LiteralPath $cursor) { $item=Get-Item -LiteralPath $cursor -Force; if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw ("Destino de screenshot contém reparse point: " + $cursor) } }; $parent=[IO.Directory]::GetParent($cursor); if (-not $parent) { break }; $cursor=$parent.FullName }',
+    "  $shotDrive = New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($screenshotRoot))",
+    "  if ($shotDrive.DriveFormat -ne 'NTFS') { throw ('O destino de screenshot precisa estar em NTFS; encontrado ' + $shotDrive.DriveFormat) }",
+    '  [IO.Directory]::CreateDirectory($screenshotRoot) | Out-Null',
+    '  $env:KQ_PLAYER_SCREENSHOT_DIR = $screenshotRoot',
+    '}',
     "if (Test-Path -LiteralPath $localStage) { throw 'Diretório temporário já existe; nada foi sobrescrito.' }",
     'New-Item -ItemType Directory -Path $localStage | Out-Null',
     'try {',
@@ -1011,7 +1751,19 @@ function powershellLauncher(stagePath, runId) {
     "  if (-not (Test-Path -LiteralPath $worker -PathType Leaf)) { throw 'Worker nativo ausente no snapshot.' }",
     '  Push-Location $checkout',
     '  try {',
-    '    & node.exe $worker --windows-worker $checkout $localStage',
+    '    $workerArgs = @("--windows-worker", $checkout, $localStage)',
+    '    if ($payload.packageCandidate) { $workerArgs += "--package-candidate" }',
+    '    if ($payload.playbackEvaluation) { $workerArgs += "--playback-evaluation" }',
+    '    if ($payload.playbackMode -eq "--playback-chromium-final") { $workerArgs += "--playback-chromium-final" }',
+    '    elseif ($payload.playbackMode -eq "--playback-chromium-interactive") { $workerArgs += "--playback-chromium-interactive" }',
+    '    elseif ($payload.playbackMode -eq "--player-playback") { $workerArgs += "--player-playback" }',
+    '    elseif ($payload.playbackMode -eq "--standalone-playback") { $workerArgs += "--standalone-playback" }',
+    '    elseif ($payload.playbackMode -eq "--standalone-integration") { $workerArgs += "--standalone-integration" }',
+    '    elseif ($payload.playbackMode -eq "--player-recovery") { $workerArgs += "--player-recovery" }',
+    '    elseif ($payload.playbackMode -eq "--standalone-options") { $workerArgs += "--standalone-options" }',
+    '    elseif ($payload.playbackMode -eq "--standalone-production") { $workerArgs += "--standalone-production" }',
+    '    elseif ($payload.playbackMode -eq "--installation-coordination") { $workerArgs += "--installation-coordination" }',
+    '    & node.exe $worker @workerArgs',
     '    $workerExit = $LASTEXITCODE',
     '  } finally { Pop-Location }',
     '} finally {',
@@ -1022,15 +1774,21 @@ function powershellLauncher(stagePath, runId) {
   ].join('\n')
 }
 
-function powershellCancellation(runId) {
+function powershellCancellation(runId, recoveryOnly = false) {
+  if (typeof runId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
+    fail('runId inválido para recuperação de cancelamento.')
+  }
+  if (typeof recoveryOnly !== 'boolean') fail('Modo de recuperação do runner inválido.')
   return [
     "$ErrorActionPreference = 'Stop'",
     "$runId = '" + runId + "'",
+    '$recoveryOnly = $' + String(recoveryOnly).toLowerCase(),
     '$checkout = $env:KARAOKE_QUEUE_WIN_CHECKOUT',
     "if ([string]::IsNullOrWhiteSpace($checkout)) { $checkout = Join-Path $env:USERPROFILE 'source\\karaoke-queue-win' }",
     '$checkout = [IO.Path]::GetFullPath($checkout)',
     '$gitDir = Join-Path $checkout ".git"',
     '$lock = Join-Path $gitDir "' + LOCK + '"',
+    '$reportPath = Join-Path $gitDir "' + REPORT + '"',
     '$deadline = (Get-Date).AddSeconds(5)',
     '$worker = $null',
     '$lockInfo = $null',
@@ -1045,8 +1803,9 @@ function powershellCancellation(runId) {
     '      try {',
     '        $info = Get-Content -Raw -LiteralPath $lock | ConvertFrom-Json',
     '        if ($info.runId -eq $runId) {',
+    '          $lockInfo = $info',
     '          $candidate = Get-CimInstance Win32_Process -Filter ("ProcessId = " + [int]$info.pid) -ErrorAction Stop',
-    '          if ($candidate -and $candidate.Name -eq "node.exe" -and $candidate.CommandLine -and $candidate.CommandLine.Contains($runId) -and $candidate.CommandLine.Contains("--windows-worker") -and $candidate.CommandLine.Contains("run-windows-native-tests.cjs")) { $worker = $candidate; $lockInfo = $info }',
+    '          if ($candidate -and $candidate.Name -eq "node.exe" -and $candidate.CommandLine -and $candidate.CommandLine.Contains($runId) -and $candidate.CommandLine.Contains("--windows-worker") -and $candidate.CommandLine.Contains("run-windows-native-tests.cjs")) { $worker = $candidate }',
     '        }',
     '      } catch { }',
     '    }',
@@ -1055,38 +1814,76 @@ function powershellCancellation(runId) {
     '    }',
     '    if (-not $worker) { Start-Sleep -Milliseconds 100 }',
     '  }',
-    '  if (-not $worker) { Write-Output "CANCEL NOT VERIFIED: worker runId not found; process state is unknown."; exit 2 }',
-    '  $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
-    '  $treeIds = New-Object \'System.Collections.Generic.HashSet[int]\'',
-    '  [void]$treeIds.Add([int]$worker.ProcessId)',
-    '  $changed = $true',
-    '  while ($changed) {',
-    '    $changed = $false',
-    '    foreach ($process in $processes) { if ($treeIds.Contains([int]$process.ParentProcessId) -and $treeIds.Add([int]$process.ProcessId)) { $changed = $true } }',
-    '  }',
-    '  $original = @{}',
-    '  foreach ($process in $processes) { if ($treeIds.Contains([int]$process.ProcessId)) { $original[[int]$process.ProcessId] = [string]$process.CreationDate } }',
-    '  Write-Output ("CANCEL TARGETED pid=" + $worker.ProcessId + " runId=" + $runId + " tree=" + $treeIds.Count)',
-    '  & taskkill.exe /PID ([int]$worker.ProcessId) /T /F | Out-Null',
-    '  if ($LASTEXITCODE -ne 0) { Write-Output "CANCEL NOT VERIFIED: taskkill did not confirm termination."; exit 4 }',
-    '  $stopDeadline = (Get-Date).AddSeconds(8)',
-    '  do {',
-    '    $current = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
-    '    $liveIds = New-Object \'System.Collections.Generic.HashSet[int]\'',
-    '    foreach ($process in $current) { if ($original.ContainsKey([int]$process.ProcessId) -and [string]$process.CreationDate -eq $original[[int]$process.ProcessId]) { [void]$liveIds.Add([int]$process.ProcessId) } }',
+    '  if (-not $lockInfo) { Write-Output "CANCEL NOT VERIFIED: owned run lock was not found."; exit 2 }',
+    '  if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { Write-Output "CANCEL NOT VERIFIED: owned report is missing."; exit 8 }',
+    '  $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json',
+    '  $validReportStatuses = @("RUNNING")',
+    '  if ($recoveryOnly) { $validReportStatuses += "CANCELLED_RECOVERY_REQUIRED" }',
+    '  if ($report.owner -ne "' + REPORT_OWNER + '" -or $report.runId -ne $runId -or $report.status -notin $validReportStatuses) { Write-Output "CANCEL NOT VERIFIED: report owner/runId/status mismatch."; exit 8 }',
+    '  if ($recoveryOnly -and $worker) { Write-Output "CANCEL NOT VERIFIED: the matching worker is still active; use the normal runner cancellation path."; exit 3 }',
+    '  if ($worker) {',
+    '    $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
+    '    $treeIds = New-Object \'System.Collections.Generic.HashSet[int]\'',
+    '    [void]$treeIds.Add([int]$worker.ProcessId)',
     '    $changed = $true',
     '    while ($changed) {',
     '      $changed = $false',
-    '      foreach ($process in $current) { if ($liveIds.Contains([int]$process.ParentProcessId) -and $liveIds.Add([int]$process.ProcessId)) { $changed = $true } }',
+    '      foreach ($process in $processes) { if ($treeIds.Contains([int]$process.ParentProcessId) -and $treeIds.Add([int]$process.ProcessId)) { $changed = $true } }',
     '    }',
-    '    $live = @($current | Where-Object { $liveIds.Contains([int]$_.ProcessId) })',
-    '    if ($live.Count -and (Get-Date) -lt $stopDeadline) { Start-Sleep -Milliseconds 100 }',
-    '  } while ($live.Count -and (Get-Date) -lt $stopDeadline)',
-    '  if ($live.Count) { Write-Output ("CANCEL NOT VERIFIED: process IDs still alive=" + (($live | ForEach-Object { $_.ProcessId }) -join ",")); exit 6 }',
-    '  $reportPath = Join-Path $gitDir "' + REPORT + '"',
-    '  if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { Write-Output "CANCEL NOT VERIFIED: owned report is missing."; exit 8 }',
-    '  $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json',
-    '  if ($report.owner -ne "' + REPORT_OWNER + '" -or $report.runId -ne $runId) { Write-Output "CANCEL NOT VERIFIED: report owner/runId mismatch."; exit 8 }',
+    '    $original = @{}',
+    '    foreach ($process in $processes) { if ($treeIds.Contains([int]$process.ProcessId)) { $original[[int]$process.ProcessId] = [string]$process.CreationDate } }',
+    '    Write-Output ("CANCEL TARGETED WORKER pid=" + $worker.ProcessId + " runId=" + $runId + " tree=" + $treeIds.Count)',
+    '    & taskkill.exe /PID ([int]$worker.ProcessId) /T /F | Out-Null',
+    '    $stopDeadline = (Get-Date).AddSeconds(8)',
+    '    do {',
+    '      $current = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
+    '      $liveIds = New-Object \'System.Collections.Generic.HashSet[int]\'',
+    '      foreach ($process in $current) { if ($original.ContainsKey([int]$process.ProcessId) -and [string]$process.CreationDate -eq $original[[int]$process.ProcessId]) { [void]$liveIds.Add([int]$process.ProcessId) } }',
+    '      $changed = $true',
+    '      while ($changed) {',
+    '        $changed = $false',
+    '        foreach ($process in $current) { if ($liveIds.Contains([int]$process.ParentProcessId) -and $liveIds.Add([int]$process.ProcessId)) { $changed = $true } }',
+    '      }',
+    '      $live = @($current | Where-Object { $liveIds.Contains([int]$_.ProcessId) })',
+    '      if ($live.Count -and (Get-Date) -lt $stopDeadline) { Start-Sleep -Milliseconds 100 }',
+    '    } while ($live.Count -and (Get-Date) -lt $stopDeadline)',
+    '    if ($live.Count) { Write-Output ("CANCEL NOT VERIFIED: worker process IDs still alive=" + (($live | ForEach-Object { $_.ProcessId }) -join ",")); exit 6 }',
+    '  } elseif (-not $recoveryOnly) { Write-Output "CANCEL RESUMING: matching worker already exited; validating its isolated profile and lock." }',
+    '  $expectedProfileName = "karaoke-queue-windows-e2e-" + $runId',
+    '  if ($report.profileName -and [string]$report.profileName -ne $expectedProfileName) { Write-Output "CANCEL NOT VERIFIED: profile name does not match the runId."; exit 8 }',
+    '  if (-not $report.profileName -and [string]$report.stage -eq "TEST") { Write-Output "CANCEL NOT VERIFIED: TEST started without a recorded temporary profile identity."; exit 8 }',
+    '  $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)',
+    '  $profilePath = [IO.Path]::GetFullPath((Join-Path $tempRoot $expectedProfileName))',
+    '  if (-not $profilePath.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Profile path escaped the Windows temp directory." }',
+    '  $electronPath = [IO.Path]::GetFullPath((Join-Path $checkout "node_modules\\electron\\dist\\electron.exe"))',
+    '  $matchesProfile = { param($process) $process.Name -eq "electron.exe" -and $process.CommandLine -and $process.CommandLine.IndexOf($profilePath, [StringComparison]::OrdinalIgnoreCase) -ge 0 }',
+    '  if (-not $report.profileName -and (Test-Path -LiteralPath $profilePath)) { throw "An unrecorded test profile exists; preserving it for manual inspection." }',
+    '  $allProfileCheckProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
+    '  $profileProcesses = @($allProfileCheckProcesses | Where-Object { & $matchesProfile $_ })',
+    '  foreach ($process in $profileProcesses) { if ($process.CommandLine.IndexOf($electronPath, [StringComparison]::OrdinalIgnoreCase) -lt 0) { throw "A process referenced the isolated profile but did not match the expected Electron binary." } }',
+    '  if ($profileProcesses.Count) {',
+    '    Write-Output ("CANCEL TARGETED ELECTRON profile=" + $expectedProfileName + " processes=" + $profileProcesses.Count)',
+    '    $electronTreeIds = New-Object \'System.Collections.Generic.HashSet[int]\'',
+    '    foreach ($process in $profileProcesses) { [void]$electronTreeIds.Add([int]$process.ProcessId) }',
+    '    $electronTreeChanged = $true',
+    '    while ($electronTreeChanged) {',
+    '      $electronTreeChanged = $false',
+    '      foreach ($process in $allProfileCheckProcesses) { if ($electronTreeIds.Contains([int]$process.ParentProcessId) -and $electronTreeIds.Add([int]$process.ProcessId)) { $electronTreeChanged = $true } }',
+    '    }',
+    '    $electronTreeOriginal = @{}',
+    '    foreach ($process in $allProfileCheckProcesses) { if ($electronTreeIds.Contains([int]$process.ProcessId)) { $electronTreeOriginal[[int]$process.ProcessId] = [string]$process.CreationDate } }',
+    '    foreach ($process in $profileProcesses | Where-Object { $_.CommandLine -notmatch "--type=" }) { & taskkill.exe /PID ([int]$process.ProcessId) /T /F | Out-Null }',
+    '    $electronStopDeadline = (Get-Date).AddSeconds(8)',
+    '    do {',
+    '      $currentProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
+    '      $profileProcesses = @($currentProcesses | Where-Object { & $matchesProfile $_ })',
+    '      $liveTree = @($currentProcesses | Where-Object { $electronTreeOriginal.ContainsKey([int]$_.ProcessId) -and [string]$_.CreationDate -eq $electronTreeOriginal[[int]$_.ProcessId] })',
+    '      foreach ($process in $profileProcesses) { & taskkill.exe /PID ([int]$process.ProcessId) /T /F | Out-Null }',
+    '      foreach ($process in $liveTree) { & taskkill.exe /PID ([int]$process.ProcessId) /F | Out-Null }',
+    '      if (($profileProcesses.Count -or $liveTree.Count) -and (Get-Date) -lt $electronStopDeadline) { Start-Sleep -Milliseconds 100 }',
+    '    } while (($profileProcesses.Count -or $liveTree.Count) -and (Get-Date) -lt $electronStopDeadline)',
+    '    if ($profileProcesses.Count -or $liveTree.Count) { Write-Output ("CANCEL NOT VERIFIED: isolated Electron process tree remains; PIDs=" + ((@($profileProcesses) + @($liveTree) | ForEach-Object { $_.ProcessId } | Sort-Object -Unique) -join ",")); exit 6 }',
+    '  }',
     '  $buildPath = Join-Path $checkout "build"',
     '  $backupPath = Join-Path $gitDir ("karaoke-queue-build-backup-" + $runId)',
     '  $cancelledBuildPath = Join-Path $gitDir ("karaoke-queue-build-cancelled-" + $runId)',
@@ -1094,15 +1891,10 @@ function powershellCancellation(runId) {
     '    if (Test-Path -LiteralPath $cancelledBuildPath) { Write-Output "CANCEL NOT VERIFIED: cancellation build path already exists."; exit 9 }',
     '    if (Test-Path -LiteralPath $buildPath) { Move-Item -LiteralPath $buildPath -Destination $cancelledBuildPath }',
     '    Move-Item -LiteralPath $backupPath -Destination $buildPath',
-    '    $report.buildRecovery = "Original build restored; interrupted build preserved under .git/karaoke-queue-build-cancelled-<runId>."',
-    '  } else { $report.buildRecovery = "No pre-run build backup required restoration." }',
+    '    $report | Add-Member -NotePropertyName buildRecovery -NotePropertyValue "Original build restored; interrupted build preserved under .git/karaoke-queue-build-cancelled-<runId>." -Force',
+    '  } else { $report | Add-Member -NotePropertyName buildRecovery -NotePropertyValue "No pre-run build backup required restoration." -Force }',
     '  $profileClean = $true',
     '  if ($report.profileName) {',
-    '    $expectedProfileName = "karaoke-queue-windows-e2e-" + $runId',
-    '    if ([string]$report.profileName -ne $expectedProfileName) { throw "Profile name does not match the runId." }',
-    '    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar)',
-    '    $profilePath = [IO.Path]::GetFullPath((Join-Path $tempRoot $expectedProfileName))',
-    '    if (-not $profilePath.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Profile path escaped the Windows temp directory." }',
     '    if (Test-Path -LiteralPath $profilePath) {',
     '      $profileItem = Get-Item -LiteralPath $profilePath -Force',
     '      if (-not $profileItem.PSIsContainer -or ($profileItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Profile root is not a plain directory." }',
@@ -1121,12 +1913,14 @@ function powershellCancellation(runId) {
     '    $ownedLock = ($currentLock.runId -eq $lockInfo.runId -and [int]$currentLock.pid -eq [int]$lockInfo.pid -and $currentLock.token -eq $lockInfo.token)',
     '  }',
     '  $canRelease = $ownedLock -and -not $syncRecoveryRequired -and $profileClean',
-    '  $report.status = if ($canRelease) { "CANCELLED" } else { "CANCELLED_RECOVERY_REQUIRED" }',
-    '  $report.reason = if ($syncRecoveryRequired) { "Interrupted sync requires checkout recovery." } elseif (-not $profileClean) { "Temporary profile requires review." } elseif (-not $ownedLock) { "Runner lock ownership could not be confirmed." } else { "Runner process tree stopped and owned temporary data cleaned." }',
-    '  $report.cancelledAt = (Get-Date).ToUniversalTime().ToString("o")',
-    '  $report.lockRelease = if ($canRelease) { "attempted after PID/runId/token and process-tree verification" } else { "retained for manual recovery" }',
+    '  $finalStatus = if ($canRelease) { "CANCELLED" } else { "CANCELLED_RECOVERY_REQUIRED" }',
+    '  $finalReason = if ($syncRecoveryRequired) { "Interrupted sync requires checkout recovery." } elseif (-not $profileClean) { "Temporary profile requires review." } elseif (-not $ownedLock) { "Runner lock ownership could not be confirmed." } else { "Owned worker and Electron profile processes stopped; temporary data cleaned." }',
+    '  $report | Add-Member -NotePropertyName status -NotePropertyValue $finalStatus -Force',
+    '  $report | Add-Member -NotePropertyName reason -NotePropertyValue $finalReason -Force',
+    '  $report | Add-Member -NotePropertyName cancelledAt -NotePropertyValue ((Get-Date).ToUniversalTime().ToString("o")) -Force',
+    '  $report | Add-Member -NotePropertyName lockRelease -NotePropertyValue $(if ($canRelease) { "attempted after PID/runId/token and process-tree verification" } else { "retained for manual recovery" }) -Force',
     '  Save-CancelReport $reportPath $report',
-    '  if (-not $canRelease) { Write-Output ("CANCEL NOT VERIFIED: " + $report.reason); exit 10 }',
+    '  if (-not $canRelease) { Write-Output ("CANCEL NOT VERIFIED: " + $finalReason); exit 10 }',
     '  Remove-Item -LiteralPath $lock -Force',
     '  if (Test-Path -LiteralPath $lock) { throw "Verified runner lock could not be removed." }',
     '  Write-Output "CANCEL PASS: worker tree stopped, temporary data recovered, owned lock released."',
@@ -1135,12 +1929,52 @@ function powershellCancellation(runId) {
     '  $cancelError = $_.Exception.Message',
     '  try {',
     '    $reportPath = Join-Path (Join-Path $checkout ".git") "' + REPORT + '"',
-    '    if (Test-Path -LiteralPath $reportPath) { $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json; if ($report.owner -eq "' + REPORT_OWNER + '" -and $report.runId -eq $runId) { $report.status = "CANCELLED_RECOVERY_REQUIRED"; $report.reason = $cancelError; $report.cancelledAt = (Get-Date).ToUniversalTime().ToString("o"); Save-CancelReport $reportPath $report } }',
+    '    if (Test-Path -LiteralPath $reportPath) { $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json; if ($report.owner -eq "' + REPORT_OWNER + '" -and $report.runId -eq $runId) { $report | Add-Member -NotePropertyName status -NotePropertyValue "CANCELLED_RECOVERY_REQUIRED" -Force; $report | Add-Member -NotePropertyName reason -NotePropertyValue $cancelError -Force; $report | Add-Member -NotePropertyName cancelledAt -NotePropertyValue ((Get-Date).ToUniversalTime().ToString("o")) -Force; Save-CancelReport $reportPath $report } }',
     '  } catch { }',
     '  Write-Output ("CANCEL NOT VERIFIED: " + $cancelError)',
     '  exit 7',
     '}'
   ].join('\n')
+}
+
+function runWindowsCancellation(runId, recoveryOnly) {
+  const result = spawnPowerShellScript(powershellCancellation(runId, recoveryOnly))
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  if (result.status !== 0) {
+    fail(recoveryOnly
+      ? 'A recuperação do cancelamento Windows não foi confirmada.'
+      : 'O cancelamento do runner Windows não foi confirmado.', result.status || 1)
+  }
+}
+
+function recoverWindowsCancellation(runId) {
+  return runWindowsCancellation(runId, true)
+}
+
+function spawnPowerShellScript(script) {
+  const env = { ...process.env }
+  if (process.platform === 'linux' && typeof env.PATH === 'string') {
+    env.PATH = env.PATH.split(path.delimiter)
+      .map(entry => entry.replace(/\/+$/, '') || '/')
+      .join(path.delimiter)
+  }
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-queue-windows-runner-ps-'))
+  try {
+    const scriptPath = path.join(temporaryDirectory, 'runner.ps1')
+    fs.writeFileSync(scriptPath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(script, 'utf8')]),
+      { flag: 'wx', mode: 0o600 })
+    const convertedPath = spawnSync('wslpath', ['-w', scriptPath], { encoding: 'utf8', shell: false, env })
+    if (convertedPath.error || convertedPath.status !== 0) {
+      const detail = convertedPath.stderr || convertedPath.error?.message || String(convertedPath.status)
+      throw new Error('Não foi possível preparar o caminho NTFS do script PowerShell temporário: ' + detail)
+    }
+    return spawnSync('powershell.exe', [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', convertedPath.stdout.trim()
+    ], { encoding: 'utf8', shell: false, env })
+  } finally {
+    fs.rmSync(temporaryDirectory, { recursive: true, force: true })
+  }
 }
 function sourceRoot() {
   const result = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', shell: false })
@@ -1148,7 +1982,7 @@ function sourceRoot() {
   return result.stdout.trim()
 }
 
-function readWindowsTargetMarker() {
+function readWindowsTargetMarker(allowAbsent = false) {
   const script = [
     "$ErrorActionPreference = 'Stop'",
     '$checkout = $env:KARAOKE_QUEUE_WIN_CHECKOUT',
@@ -1190,6 +2024,7 @@ function readWindowsTargetMarker() {
   }
   const lines = result.stdout.split(/\r?\n/)
   const checkoutStatus = lines.find(line => line.startsWith('KQ_TARGET_CHECKOUT='))
+  if (checkoutStatus === 'KQ_TARGET_CHECKOUT=ABSENT' && allowAbsent) return null
   if (!checkoutStatus || checkoutStatus === 'KQ_TARGET_CHECKOUT=ABSENT' || checkoutStatus.startsWith('KQ_TARGET_CHECKOUT=NOT_NTFS:')) {
     process.stderr.write('WINDOWS NOT RUN: validation checkout is absent or not on NTFS.\n')
     fail('O clone Windows isolado não está disponível para validação.', 2)
@@ -1232,10 +2067,46 @@ async function approveUntracked(files) {
 
 async function runOrchestrator() {
   if (process.platform === 'win32') fail('Este comando precisa ser iniciado no WSL2; ele sincroniza e valida o checkout Windows.', 2)
+  const rawArguments = process.argv.slice(2)
+  const manualLaunch = rawArguments.includes('--manual-launch')
+  const packageCandidate = rawArguments.includes('--package-candidate')
+  const profileKindIndex = rawArguments.indexOf('--manual-profile-kind')
+  const profileNameIndex = rawArguments.indexOf('--manual-profile-name')
+  const manualOptions = manualLaunch ? {
+    profileKind: profileKindIndex >= 0 ? rawArguments[profileKindIndex + 1] : null,
+    profileName: profileNameIndex >= 0 ? rawArguments[profileNameIndex + 1] : null
+  } : null
+  if (manualLaunch && (!['new', 'existing'].includes(manualOptions.profileKind) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(manualOptions.profileName || ''))) {
+    fail('O launcher manual requer --manual-profile-kind e --manual-profile-name válidos.')
+  }
+  if (!manualLaunch && (profileKindIndex >= 0 || profileNameIndex >= 0)) fail('As opções de perfil só podem ser usadas com --manual-launch.')
+  if (manualLaunch && rawArguments.some(argument => argument.startsWith('--standalone-') || argument.startsWith('--player-') || argument.startsWith('--playback-'))) {
+    fail('O launcher manual não combina com modos de teste ou harness.')
+  }
+  if (packageCandidate && (manualLaunch || rawArguments.some(argument => argument.startsWith('--standalone-') || argument.startsWith('--player-') || argument.startsWith('--playback-')) || rawArguments.includes('--playback-evaluation'))) {
+    fail('O build candidato não combina com launcher manual, testes ou harnesses.')
+  }
+  const unexpectedArguments = process.argv.slice(2).filter(argument =>
+    !['--approve-untracked', '--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--manual-launch', '--manual-profile-kind', '--manual-profile-name'].includes(argument) &&
+    argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName
+  )
+  if (unexpectedArguments.length) fail('Argumento não permitido: ' + unexpectedArguments.join(' '))
+  const playbackModes = process.argv.slice(2).filter(argument =>
+    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination'].includes(argument)
+  )
+  if (playbackModes.length > 1) fail('Escolha apenas um modo de avaliação de playback.')
+  const playbackEvaluation = process.argv.includes('--playback-evaluation')
+  const playbackMode = playbackModes.find(argument => argument !== '--playback-evaluation') || null
+  if (manualLaunch && (playbackModes.length || playbackEvaluation)) fail('O launcher manual não executa testes nem harnesses.')
   const root = sourceRoot()
+  if (manualLaunch) process.env.KARAOKE_QUEUE_WIN_CHECKOUT = 'E:\\KaraokeQueue\\manual-windows\\checkout'
+  const preflightCommand = manualLaunch
+    ? '$ErrorActionPreference = \'Stop\'; if (-not (Test-Path -LiteralPath \'E:\\\' -PathType Container)) { throw \'Unidade E: indisponível. Não há fallback para C:.\' }; $drive = New-Object IO.DriveInfo \'E:\\\'; if (-not $drive.IsReady -or $drive.DriveFormat -ne \'NTFS\') { throw (\'E: precisa estar em NTFS; encontrado \' + $drive.DriveFormat) }; $PSVersionTable.PSVersion.ToString(); (Get-Command node.exe -ErrorAction Stop).Name; (Get-Command npm.cmd -ErrorAction Stop).Name; (Get-Command git.exe -ErrorAction Stop).Name'
+    : '$ErrorActionPreference = \'Stop\'; $PSVersionTable.PSVersion.ToString(); (Get-Command node.exe -ErrorAction Stop).Name; (Get-Command npm.cmd -ErrorAction Stop).Name; (Get-Command git.exe -ErrorAction Stop).Name'
   const preflight = spawnSync('powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-    '$ErrorActionPreference = \'Stop\'; $PSVersionTable.PSVersion.ToString(); (Get-Command node.exe -ErrorAction Stop).Name; (Get-Command npm.cmd -ErrorAction Stop).Name; (Get-Command git.exe -ErrorAction Stop).Name'
+    preflightCommand
   ], { encoding: 'utf8', shell: false })
   if (preflight.status === null || preflight.status !== 0) {
     process.stderr.write('WINDOWS NOT RUN: PowerShell/WSL interop or native Node.js/npm is unavailable. ' +
@@ -1243,30 +2114,36 @@ async function runOrchestrator() {
     fail('A validação Windows não foi executada.', 2)
   }
   process.stdout.write('WINDOWS INTEROP PASS PowerShell=' + preflight.stdout.trim().split(/\r?\n/)[0] + ' native Node.js/npm/Git found\n')
-  const targetMarker = readWindowsTargetMarker()
+  const targetMarker = readWindowsTargetMarker(manualLaunch)
   const manifest = readSourceSnapshot(root)
   await approveUntracked(manifest.files.filter(item => item.kind === 'untracked'))
   process.stdout.write('SOURCE branch=' + manifest.branch + ' HEAD=' + manifest.head + ' fingerprint=' +
     manifest.fingerprint + ' tracked=' + manifest.trackedPaths.length + ' files=' + manifest.files.length + '\n')
   process.stdout.write('SOURCE TRACKED CHANGES ' + JSON.stringify(manifest.trackedChanges) + '\n')
   process.stdout.write('SOURCE DELETED TRACKED ' + JSON.stringify(manifest.deletedTracked) + '\n')
-  const stage = stageSnapshot(root, manifest, targetMarker)
+  const stage = stageSnapshot(root, manifest, targetMarker, os.tmpdir(), { bootstrapBundle: manualLaunch && !targetMarker })
   const stageWindows = run('wslpath', ['-w', stage]).stdout.trim()
   const runId = crypto.randomUUID()
-  const encoded = Buffer.from(powershellLauncher(stageWindows, runId), 'utf16le').toString('base64')
+  const encoded = Buffer.from(powershellLauncher(stageWindows, runId, playbackEvaluation, playbackMode, manualOptions,
+    process.env.KQ_PLAYER_SCREENSHOT_DIR || null, packageCandidate), 'utf16le').toString('base64')
   const child = require('node:child_process').spawn('powershell.exe', [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded
   ], { stdio: ['pipe', 'pipe', 'pipe'], env: process.env })
   let output = ''
   let cancellationRequested = false
   let cancellationPromise = null
+  let workerInputError
+  observeWorkerInputErrors(child.stdin, () => cancellationRequested, error => {
+    workerInputError = workerInputError || error
+    process.stderr.write('WORKER INPUT ERROR: ' + String(error && (error.stack || error)) + '\n')
+  })
   const approvedGates = new Set()
   const lines = readline.createInterface({ input: child.stdout })
   lines.on('line', line => {
     process.stdout.write(line + '\n')
     output += line + '\n'
     const syncMatch = line.match(/^KQ_SYNC_READY ([a-f0-9]{64}) ([^ ]+) ([a-f0-9]{40,64})$/)
-    const sourceMatch = line.match(/^KQ_SOURCE_GATE (BUILD|TEST) ([a-f0-9]{64})$/)
+    const sourceMatch = line.match(/^KQ_SOURCE_GATE (BUILD|PACKAGE|TEST|LAUNCH) ([a-f0-9]{64})$/)
     const gate = syncMatch ? 'SYNC' : sourceMatch ? sourceMatch[1] : null
     const expectedFingerprint = syncMatch ? syncMatch[1] : sourceMatch ? sourceMatch[2] : null
     if (!gate || approvedGates.has(gate) || cancellationRequested) return
@@ -1294,11 +2171,14 @@ async function runOrchestrator() {
     process.stderr.write('CANCEL requested (' + signal + '); stopping only the worker identified by this runId.\n')
     try { child.stdin.write('ABORT\n') } catch {}
     try { child.stdin.end() } catch {}
-    const cancellation = Buffer.from(powershellCancellation(runId), 'utf16le').toString('base64')
+    if (manualLaunch) {
+      cancellationPromise = Promise.resolve()
+      return
+    }
     cancellationPromise = new Promise(resolve => {
-      const stopped = spawnSync('powershell.exe', [
-        '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', cancellation
-      ], { encoding: 'utf8', shell: false, stdio: 'inherit' })
+      const stopped = spawnPowerShellScript(powershellCancellation(runId))
+      if (stopped.stdout) process.stdout.write(stopped.stdout)
+      if (stopped.stderr) process.stderr.write(stopped.stderr)
       if (stopped.status !== 0) {
         process.stderr.write('CANCEL WARNING: worker tree was not confirmed stopped; inspect the runner lock and processes before retrying.\n')
         if (!child.killed) child.kill('SIGTERM')
@@ -1319,12 +2199,15 @@ async function runOrchestrator() {
     process.removeListener('SIGINT', onSigint)
     process.removeListener('SIGTERM', onSigterm)
     if (cancellationRequested) fail('Execução cancelada; status Windows não é PASS.', 130)
+    if (workerInputError) fail('Falha ao enviar controle ao worker Windows: ' + String(workerInputError.message || workerInputError))
     const finalFingerprint = readSourceSnapshot(root).fingerprint
     if (!approvedGates.has('SYNC')) fail('O Windows não confirmou SYNC/VERIFY; build e teste não são válidos.')
     if (finalFingerprint !== manifest.fingerprint) fail('SYNC STALE: a origem mudou durante build/test; resultado inválido.')
     if (result.code !== 0) fail('Pipeline Windows terminou com código ' + result.code + (result.signal ? ' (' + result.signal + ')' : '') + '.')
-    for (const gate of ['BUILD', 'TEST']) if (!approvedGates.has(gate)) fail('O worker não revalidou a origem antes de ' + gate + '.')
-    process.stdout.write('WINDOWS REPORT PASS branch=' + manifest.branch + ' HEAD=' + manifest.head + ' fingerprint=' + manifest.fingerprint + '\n')
+    const requiredGates = manualLaunch ? ['SYNC'] : packageCandidate ? ['BUILD', 'PACKAGE'] : ['BUILD', 'TEST']
+    for (const gate of requiredGates) if (!approvedGates.has(gate)) fail('O worker não revalidou a origem antes de ' + gate + '.')
+    process.stdout.write((manualLaunch ? 'WINDOWS MANUAL LAUNCH PASS' : packageCandidate ? 'WINDOWS PACKAGE CANDIDATE PASS' : 'WINDOWS REPORT PASS') +
+      ' branch=' + manifest.branch + ' HEAD=' + manifest.head + ' fingerprint=' + manifest.fingerprint + '\n')
     return output
   } finally {
     process.removeListener('SIGINT', onSigint)
@@ -1357,12 +2240,49 @@ async function divergenceSelfTest() {
 }
 
 async function main() {
+  const cancellationIndex = process.argv.indexOf('--cancel-windows-run')
+  if (cancellationIndex >= 0) {
+    const args = process.argv.slice(cancellationIndex)
+    if (cancellationIndex !== 2 || args.length !== 2) fail('Uso: --cancel-windows-run <runId>.')
+    return runWindowsCancellation(args[1], false)
+  }
+  const recoveryIndex = process.argv.indexOf('--recover-windows-cancel')
+  if (recoveryIndex >= 0) {
+    const args = process.argv.slice(recoveryIndex)
+    if (recoveryIndex !== 2 || args.length !== 2) fail('Uso: --recover-windows-cancel <runId>.')
+    return recoverWindowsCancellation(args[1])
+  }
   const worker = process.argv.indexOf('--windows-worker')
   if (worker >= 0) {
     const root = process.argv[worker + 1]
     const stage = process.argv[worker + 2]
     if (!root || !stage) fail('Worker requer checkout e staging.')
-    return windowsWorker(root, stage)
+    const workerArguments = process.argv.slice(worker + 3)
+    const manualLaunch = workerArguments.includes('--manual-launch')
+    const profileKindIndex = workerArguments.indexOf('--manual-profile-kind')
+    const profileNameIndex = workerArguments.indexOf('--manual-profile-name')
+    const manualOptions = manualLaunch ? {
+      profileKind: profileKindIndex >= 0 ? workerArguments[profileKindIndex + 1] : null,
+      profileName: profileNameIndex >= 0 ? workerArguments[profileNameIndex + 1] : null
+    } : null
+    if (manualLaunch && (!['new', 'existing'].includes(manualOptions.profileKind) ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/.test(manualOptions.profileName || ''))) {
+      fail('O worker manual requer uma seleção de perfil válida.')
+    }
+    if (!manualLaunch && (profileKindIndex >= 0 || profileNameIndex >= 0)) fail('Perfil manual sem --manual-launch.')
+    const allowedWorkerArguments = ['--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--manual-launch', '--manual-profile-kind', '--manual-profile-name']
+    if (workerArguments.some(argument => !allowedWorkerArguments.includes(argument) &&
+        argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName)) {
+      fail('O worker recebeu argumentos não permitidos.')
+    }
+    const playbackModes = workerArguments.filter(argument =>
+      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination'].includes(argument)
+    )
+    if (playbackModes.length > 1) fail('O worker recebeu modos de playback conflitantes.')
+    if (workerArguments.includes('--package-candidate') && (playbackModes.length || workerArguments.includes('--playback-evaluation'))) fail('O worker recebeu build candidato combinado com testes.')
+    if (manualLaunch && playbackModes.length) fail('O worker manual não pode iniciar harnesses ou testes.')
+    const playbackMode = playbackModes.find(argument => argument !== '--playback-evaluation') || null
+    return windowsWorker(root, stage, workerArguments.includes('--playback-evaluation'), playbackMode, manualOptions, workerArguments.includes('--package-candidate'))
   }
   if (process.argv.includes('--verify-divergence')) return divergenceSelfTest()
   return runOrchestrator()
@@ -1376,6 +2296,9 @@ if (require.main === module) {
 }
 
 module.exports = {
+  approveUntracked,
+  isExpectedManualElectronProcess,
+  observeWorkerInputErrors,
   generatedBuildPaths,
   isExcludedPath,
   isSensitivePath,
@@ -1383,7 +2306,14 @@ module.exports = {
   makeFingerprint,
   normalizePath,
   prepareFreshBuild,
+  powershellCancellation,
+  powershellLauncher,
+  recoverNoopInterruptedSync,
+  readSourceSnapshot,
+  requiresWindowFocus,
+  selectWindowsTestSuites,
   restorePreviousBuild,
+  stageSnapshot,
   cleanupSyncBackup,
   syncSnapshot,
   validateLegacyManifest,

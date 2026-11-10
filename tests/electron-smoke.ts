@@ -1,4 +1,5 @@
 import { assertFrozenDragBlocked, dragQueuePreview, assertDragClean, settleQueue, observeDrag, saveDragDiagnostics } from './drag-diagnostics'
+import { prepareControllerModeProfile } from './electron-test-profile'
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -17,6 +18,7 @@ async function run() {
   let windowIndex = 0
   const traceNames = new Map<import('playwright').ElectronApplication, string>()
   const launch = async () => {
+    prepareControllerModeProfile(userDataDir)
     const launched = await electron.launch({
     executablePath: require('electron'),
     args: [projectRoot, `--user-data-dir=${userDataDir}`],
@@ -581,7 +583,11 @@ async function run() {
     }
     await electronApp.evaluate(({ BrowserWindow }: typeof import('electron')) =>
       BrowserWindow.getAllWindows()[0].setContentSize(1280, 800))
-    await page.waitForTimeout(100)
+    // Main resize/zoom and Renderer resize are asynchronous. A late resize
+    // intentionally closes menus; elapsed time is not a readiness contract.
+    await page.waitForFunction(() => innerWidth === 1280 && innerHeight === 800)
+    assert.equal(await electronApp.evaluate(({ BrowserWindow }: typeof import('electron')) =>
+      BrowserWindow.getAllWindows()[0].webContents.getZoomFactor()), 1)
 
     assert.equal(await page.locator('#app-name').count(), 0, 'the editable centered app title is removed from the header')
     assert.equal(await page.locator('#clock').count(), 0, 'clock is removed from the compact header')
@@ -589,9 +595,18 @@ async function run() {
     assert.equal(await page.locator('#btn-notifications').isEnabled(), true, 'notification placeholder remains clickable')
     const firstCardMenu = page.locator('#queue-list .queue-card .queue-action-menu').first()
     const firstCardMenuToggle = firstCardMenu.locator('.queue-action-menu-toggle')
+    await firstCardMenuToggle.scrollIntoViewIfNeeded()
     await firstCardMenuToggle.focus()
+    assert.equal(await firstCardMenuToggle.evaluate((button: HTMLButtonElement) => document.activeElement === button), true,
+      'the queue action toggle has focus before keyboard activation')
     await firstCardMenuToggle.press('ArrowDown')
-    assert.equal(await page.locator('.queue-action-menu-popover.is-open').isVisible(), true, 'keyboard opens the queue action menu')
+    const keyboardMenuOpen = await page.locator('.queue-action-menu-popover.is-open').isVisible()
+    const keyboardFailure = keyboardMenuOpen ? '' : JSON.stringify(await firstCardMenuToggle.evaluate((button: HTMLButtonElement) => ({
+      viewport: [innerWidth, innerHeight], expanded: button.getAttribute('aria-expanded'),
+      focused: document.activeElement?.outerHTML, connected: button.isConnected,
+      bounds: button.getBoundingClientRect().toJSON()
+    })))
+    assert.equal(keyboardMenuOpen, true, `keyboard opens the queue action menu ${keyboardFailure}`)
     await page.keyboard.press('Escape')
     assert.equal(await firstCardMenuToggle.getAttribute('aria-expanded'), 'false', 'Escape closes the queue action menu')
     await firstCardMenuToggle.click()
@@ -849,9 +864,9 @@ async function run() {
     await closeWithEvidence(reopened)
     app = undefined
 
-    const newShiftApp = await launch()
+    let newShiftApp = await launch()
     app = newShiftApp
-    const newShiftPage = await newShiftApp.firstWindow()
+    let newShiftPage = await newShiftApp.firstWindow()
     await newShiftPage.locator('#form-entry').waitFor({ state: 'visible' })
     const startNew = newShiftPage.locator('#btn-startup-secondary')
     if (await startNew.isVisible()) {
@@ -893,6 +908,11 @@ async function run() {
       await dialog.accept()
     })
     await newShiftPage.evaluate(() => window.__kqueue?.flushState())
+
+    // Stop the Main SQLite writer before changing this test fixture directly.
+    // A Renderer reload keeps the Main-owned application state by design.
+    await closeWithEvidence(newShiftApp)
+    app = undefined
     const overdueDb = new DatabaseSync(databasePath)
     try {
       overdueDb.prepare("UPDATE entries SET inserted_at = ? WHERE status = 'pending'")
@@ -900,7 +920,14 @@ async function run() {
     } finally {
       overdueDb.close()
     }
-    await newShiftPage.reload()
+    newShiftApp = await launch()
+    app = newShiftApp
+    newShiftPage = await newShiftApp.firstWindow()
+    newShiftPage.on('dialog', async (dialog: import('playwright').Dialog) => {
+      waitAlertDialogs.push(dialog.message())
+      await dialog.accept()
+    })
+    await newShiftPage.locator('#form-entry').waitFor({ state: 'visible' })
     const continueShiftAgain = newShiftPage.locator('#btn-startup-primary')
     if (await continueShiftAgain.isVisible()) await continueShiftAgain.click()
     await newShiftPage.locator('.card-boost-msg').first().waitFor()

@@ -364,7 +364,7 @@ test('reabre estado encerrado criando nova sessão vazia e arquiva fila antiga s
   const repository: StateRepository = {
     async load() { return structuredClone(saved) },
     async save(state) { saved = structuredClone(state); return true },
-    finishMigration() {}, async flush() {}
+    finishMigration() { return false }, async flush() {}
   }
   const app = new KaraokeApplication(repository)
   await app.load()
@@ -399,7 +399,7 @@ test('falha ao persistir encerramento restaura a sessão aberta e não limpa a f
       saved = structuredClone(state)
       return true
     },
-    finishMigration() {}, async flush() {}
+    finishMigration() { return false }, async flush() {}
   }
   const app = new KaraokeApplication(repository)
   await app.load()
@@ -685,7 +685,7 @@ test('ordem e fase operacional são recuperadas sem reordenar o estado salvo', a
   const repository: StateRepository = {
     async load() { return structuredClone(saved) },
     async save(state) { saved = structuredClone(state); return true },
-    finishMigration() {}, async flush() {}
+    finishMigration() { return false }, async flush() {}
   }
   const first = new KaraokeApplication(repository)
   await first.load()

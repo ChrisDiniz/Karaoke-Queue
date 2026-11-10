@@ -2,6 +2,8 @@ IA/
 node_modules/
 dist/
 build/
+/build-resources/native/build/
+/build-resources/native/win32-x64/
 out/
 .DS_Store
 *.log

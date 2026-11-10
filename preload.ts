@@ -29,11 +29,21 @@ process.on('unhandledRejection', reason => {
   })
 })
 
-// Keep SQLite in the main process. The isolated renderer receives only the
-// state load/save operations it needs, never a database connection or SQL API.
-contextBridge.exposeInMainWorld('karaokeDatabase', {
-  load: ()     => invokeLogged<StoredAppState>('app-data:load'),
-  save: (data: AppState) => invokeLogged<boolean>('app-data:save', data)
+contextBridge.exposeInMainWorld('karaokeManagement', {
+  initialize: (legacyState: import('./src/persistence-contracts').LegacyStateStorageDto) =>
+    invokeLogged<import('./src/management-contracts').ManagementSnapshot>('management:initialize', legacyState),
+  getSnapshot: () => invokeLogged<import('./src/management-contracts').ManagementSnapshot>('management:snapshot'),
+  command: (request: import('./src/management-contracts').ManagementCommandRequest) =>
+    invokeLogged<import('./src/management-contracts').ManagementCommandReply>('management:command', request),
+  acknowledge: async (operationId: string) => {
+    await invokeLogged<boolean>('management:acknowledge', operationId)
+  },
+  flush: async () => { await invokeLogged<boolean>('management:flush') },
+  onStateChanged: (callback: (snapshot: import('./src/management-contracts').ManagementSnapshot) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: import('./src/management-contracts').ManagementSnapshot) => callback(snapshot)
+    ipcRenderer.on('management:state-changed', listener)
+    return () => ipcRenderer.removeListener('management:state-changed', listener)
+  }
 })
 
 contextBridge.exposeInMainWorld('karaokeLicense', {
@@ -54,8 +64,7 @@ contextBridge.exposeInMainWorld('karaokeUiScale', {
 
 contextBridge.exposeInMainWorld('karaokePreferences', {
   getSidebarDisplayName: () => invokeLogged<string>('ui-preferences:sidebar-name:get'),
-  setSidebarDisplayName: (name: string) =>
-    invokeLogged<string>('ui-preferences:sidebar-name:set', name)
+  setSidebarDisplayName: (name: string) => invokeLogged<string>('ui-preferences:sidebar-name:set', name)
 })
 
 contextBridge.exposeInMainWorld('karaokeDiagnostics', {
@@ -64,4 +73,31 @@ contextBridge.exposeInMainWorld('karaokeDiagnostics', {
     ipcRenderer.send('diagnostics:session-event', { event, sessionId, result }),
   reportRendererError: (event: string, message: string, stack?: string) =>
     ipcRenderer.send('diagnostics:renderer-log', { event, message, stack })
+})
+
+contextBridge.exposeInMainWorld('karaokePlayer', {
+  getSnapshot: () => invokeLogged<import('./src/player-ui-contracts').PlayerUiSnapshot>('player:get-snapshot'),
+  lookupMusicCode: (code: string) => invokeLogged<import('./src/player-ui-contracts').PlayerMusicMetadata>('player:lookup-code', code),
+  playNow: (code: string) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:play-now', code),
+  addToSequence: (code: string) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:sequence:add', code),
+  removeFromSequence: (itemId: string) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:sequence:remove', itemId),
+  removeCurrent: (itemId: string, attemptId: string) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:sequence:remove-current', itemId, attemptId),
+  reorderSequence: (itemIds: string[]) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:sequence:reorder', itemIds),
+  clearSequence: () => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:sequence:clear'),
+  pause: () => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:pause'),
+  resume: () => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:resume'),
+  restart: () => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:restart'),
+  stop: () => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:stop'),
+  next: () => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:next'),
+  previous: () => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:previous'),
+  importCatalog: () => invokeLogged<import('./src/music-catalog-service').MusicCatalogImportResult | { cancelled: true }>('player:catalog:import'),
+  replayPreviousRecovery: (attemptId: string) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:recovery:replay', attemptId),
+  chooseAnotherRecovery: (attemptId: string, code: string) => invokeLogged<import('./src/manual-playback-service').ManualPlaybackResult>('player:recovery:choose-another', attemptId, code),
+  leaveRecoveryStopped: (attemptId: string) => invokeLogged<import('./src/player-playback-recovery').PlayerRecoverySnapshot>('player:recovery:leave-stopped', attemptId),
+  resolveInvalidRecovery: () => invokeLogged<{ state: import('./src/player-playback-recovery').PlayerRecoverySnapshot; preservedFileCount: number }>('player:recovery:resolve-invalid'),
+  onPlaybackEvent: (callback: (event: import('./src/player-playback-contracts').PlayerPlaybackEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: import('./src/player-playback-contracts').PlayerPlaybackEvent) => callback(value)
+    ipcRenderer.on('player:playback-event', listener)
+    return () => ipcRenderer.removeListener('player:playback-event', listener)
+  }
 })

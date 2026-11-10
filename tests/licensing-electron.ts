@@ -7,12 +7,14 @@ const os = require('node:os')
 const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
+const { prepareControllerModeProfile } = require('./electron-test-profile')
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-license-e2e-'))
 const validToken = 'YU3ZYVR88H4DRH2KLW43'
 const dayMs = 24 * 60 * 60 * 1000
 
 async function launch(profile) {
+  prepareControllerModeProfile(profile)
   const app = await electron.launch({
     executablePath: require('electron'),
     args: [path.resolve(__dirname, '../..'), `--user-data-dir=${profile}`],
@@ -131,10 +133,13 @@ async function run() {
     assert.equal(await page.locator('#license-lock-message').isVisible(), true)
     assert.match(await page.locator('#license-trial-label').textContent(), /Teste expirado/)
     await page.screenshot({ path: path.join(screenshots, 'trial-expired.png') })
-    const visibleData = await page.evaluate(() => window.karaokeDatabase.load())
-    assert.ok(visibleData.queue.some(entry => entry.name === 'Fila preservada'), 'expired users can still read their queue')
-    await assert.rejects(page.evaluate(state => window.karaokeDatabase.save({ ...state, queue: [] }), visibleData), /LICENSE_EXPIRED/)
-    assert.deepEqual(readDatabase(expiredProfile), beforeExpired, 'blocked save leaves SQLite sessions and entries intact')
+    const visibleData = await page.evaluate(() => window.karaokeManagement.getSnapshot())
+    assert.ok(visibleData.state.queue.some(entry => entry.name === 'Fila preservada'), 'expired users can still read their confirmed queue projection')
+    await assert.rejects(page.evaluate(() => window.karaokeManagement.command({
+      operationId: 'expired-write-check',
+      command: { type: 'addEntries', entries: [{ name: 'Forbidden', songNumber: '1', songNumber2: '', table: '8' }], selectCurrent: true }
+    })), /LICENSE_EXPIRED/)
+    assert.deepEqual(readDatabase(expiredProfile), beforeExpired, 'blocked application command leaves SQLite sessions and entries intact')
 
     const closedWithoutEnding = await app.evaluate(({ BrowserWindow }) => new Promise(resolve => {
       const window = BrowserWindow.getAllWindows()[0]

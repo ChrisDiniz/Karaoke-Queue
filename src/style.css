@@ -2059,7 +2059,6 @@ input::placeholder { color: var(--text-dim); }
 .settings-sidebar-name-status { min-height: 1.2em; color: var(--text-dim); font-size: .82rem; }
 .settings-diagnostics-control { margin-top: 4px; }
 .settings-diagnostics-status { min-height: 1.2em; margin-top: 12px; color: var(--text-dim); font-size: .84rem; }
-
 @media (max-width: 680px) {
   .settings-section { padding: 18px 16px; }
   .settings-control { align-items: stretch; flex-direction: column; gap: 14px; }

@@ -156,13 +156,40 @@ jobs:
       - name: Launch packaged app and verify trial, IPC, SQLite and restart
         run: node tests/packaged-windows-smoke.cjs "dist/win-unpacked/Karaoke Queue.exe"
 
+      - name: Install and uninstall NSIS candidate on disposable hosted runner
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ needs.validate.outputs.version }}
+        run: ./tests/windows-nsis-install-smoke.ps1 -InstallerPath "dist/Karaoke-Queue-Setup-$env:EXPECTED_VERSION-x64.exe"
+
       - name: Generate installer SHA-256 checksum
         shell: pwsh
+        env:
+          SOURCE_SHA: ${{ needs.validate.outputs.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_RUN_ID: ${{ github.run_id }}
+          SOURCE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
           $installer = Get-ChildItem dist -Filter 'Karaoke-Queue-Setup-*-x64.exe' | Select-Object -First 1
           if (-not $installer) { throw 'Cannot checksum a missing installer.' }
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  $($installer.Name)" | Out-File dist/SHA256SUMS.txt -Encoding ascii
+          $manifest = [ordered]@{
+            format = 1
+            event = 'workflow_dispatch'
+            ref = $env:SOURCE_REF
+            sourceSha = $env:SOURCE_SHA
+            runId = $env:SOURCE_RUN_ID
+            packageVersion = $env:SOURCE_VERSION
+            architecture = 'x64'
+            installer = $installer.Name
+            installerSha256 = $hash
+            packageVerification = 'PASS'
+            packagedElectronSmoke = 'PASS'
+            nsisInstallUninstallSmoke = 'PASS'
+            releasePublished = $false
+          }
+          [IO.File]::WriteAllText((Join-Path $PWD 'dist/artifact-manifest.json'), ($manifest | ConvertTo-Json -Depth 4), [System.Text.UTF8Encoding]::new($false))
           Write-Output (Get-Content dist/SHA256SUMS.txt)
 
       - name: Upload validated Windows release candidate
@@ -172,6 +199,7 @@ jobs:
           path: |
             dist/Karaoke-Queue-Setup-${{ needs.validate.outputs.version }}-x64.exe
             dist/SHA256SUMS.txt
+            dist/artifact-manifest.json
           if-no-files-found: error
           retention-days: 30
 

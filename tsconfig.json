@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "noEmitOnError": true
   },
-  "include": ["main.ts", "database.ts", "preload.ts", "types.d.ts", "src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
+  "include": ["main.ts", "main-runtime.ts", "database.ts", "preload.ts", "player-preload.ts", "welcome-preload.ts", "standalone-player-preload.ts", "types.d.ts", "src/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
 }

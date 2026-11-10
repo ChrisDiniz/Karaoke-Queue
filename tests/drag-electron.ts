@@ -6,6 +6,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
+const { prepareControllerModeProfile } = require('./electron-test-profile')
 const { assertFrozenDragBlocked, dragQueuePreview, assertDragClean, settleQueue, saveDragDiagnostics } = require('./drag-diagnostics')
 const { applyFrozenQueueOrder } = require('../src/frozen-queue-rules')
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-drag-e2e-'))
@@ -33,6 +34,7 @@ async function check() {
   return data
 }
 async function launch() {
+  prepareControllerModeProfile(profile)
   app = await electron.launch({ executablePath: require('electron'),
     args: [path.resolve(__dirname, '../..'), `--user-data-dir=${profile}`],
     env: { ...process.env, XDG_CONFIG_HOME: path.join(root, 'config'), XDG_CACHE_HOME: path.join(root, 'cache'), XDG_DATA_HOME: path.join(root, 'data') } })

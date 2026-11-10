@@ -1,0 +1,869 @@
+!include LogicLib.nsh
+!include TextFunc.nsh
+!include nsDialogs.nsh
+!include WinMessages.nsh
+!include installation-operation.nsh
+!include installation-fence.nsh
+!include installation-path.nsh
+
+!macro customCheckAppRunning
+  !ifndef BUILD_UNINSTALLER
+  ${If} $KQInstallerExistingMachineInstall == "1"
+  ${AndIf} $INSTDIR != $KQRegisteredInstallDirectory
+    SetErrorLevel 231
+    MessageBox MB_OK|MB_ICONSTOP "A manutenção usa o local da instalação atual. Para mudar o local, desinstale e instale novamente; seus dados serão preservados." /SD IDOK
+    Abort
+  ${EndIf}
+  ${If} $KQInstallerExistingMachineInstall != "1"
+    ClearErrors
+    FindFirst $R7 $R8 "$INSTDIR\*"
+    kq_empty_target_loop:
+      ${If} ${Errors}
+        Goto kq_empty_target_done
+      ${EndIf}
+      ${If} $R8 != "."
+      ${AndIf} $R8 != ".."
+      ${AndIf} $R8 != ""
+        FindClose $R7
+        SetErrorLevel 233
+        MessageBox MB_OK|MB_ICONSTOP "Escolha uma pasta vazia para o Karaoke Queue. A pasta selecionada já contém arquivos e foi preservada." /SD IDOK
+        Abort
+      ${EndIf}
+      FindNext $R7 $R8
+      Goto kq_empty_target_loop
+    kq_empty_target_done:
+      FindClose $R7
+      ClearErrors
+  ${EndIf}
+  StrCpy $KQPathCreate 1
+  Call KQ_CheckInstallPath
+  ${If} $KQManifestReinstall == "1"
+    Call KQ_LockInstallationRecovery
+  ${ElseIf} $KQManifestPending == "1"
+    Call KQ_LockInstallationRecovery
+  ${ElseIf} $KQInstallerExistingMachineInstall == "1"
+    Call KQ_PrepareAndLockInstallation
+  ${Else}
+    Call KQ_CreateMaintenanceMutexHandles
+    Call KQ_TakeMaintenanceMutexes
+    ${If} $KQBootstrapPending == "1"
+      Call KQ_AssertControlSecurity
+      Call KQ_AssertRemovalFence
+    ${EndIf}
+  ${EndIf}
+  !endif
+!macroend
+
+!ifdef BUILD_UNINSTALLER
+!insertmacro KQ_OPERATION_TREE "un."
+!insertmacro KQ_OPERATION_FENCE "un."
+!insertmacro KQ_INSTALL_PATH "un."
+; The generated components page is internal and always skipped: the final
+; mandatory section exists only to release on the section worker thread.
+!define MUI_PAGE_CUSTOMFUNCTION_PRE un.KQ_SkipInternalComponents
+Function un.KQ_SkipInternalComponents
+  Abort
+FunctionEnd
+Var KQUninstallIsUpdated
+!macro customUnInit
+  StrCpy $KQUninstallIsUpdated "0"
+  ${If} ${isUpdated}
+    StrCpy $KQUninstallIsUpdated "1"
+  ${EndIf}
+  ReadRegStr $0 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ${If} $0 != $INSTDIR
+    SetErrorLevel 231
+    Quit
+  ${EndIf}
+  StrCpy $KQPathCreate 0
+  Call un.KQ_CheckInstallPath
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "--delete-app-data" $R1
+  ${IfNot} ${Errors}
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+  ClearErrors
+  Call un.KQ_EnterOperationTree
+  System::Call 'SHELL32::SHGetKnownFolderPath(g "{62AB5D82-FDC1-4DC3-A9DD-070D1D495D97}", i 0, p 0, *p .r2)i.r1'
+  ${If} $1 != 0
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+  System::Call 'KERNEL32::lstrcpynW(w .r0, p r2, i ${NSIS_MAX_STRLEN})p'
+  System::Call 'OLE32::CoTaskMemFree(p r2)'
+  StrCpy $KQFenceManifest "$0\KaraokeQueue\installation.json"
+  Call un.KQ_AssertControlSecurity
+  Call un.KQ_ReadOperationFence
+  ${If} ${isUpdated}
+  ${AndIf} $KQOperationDelegated != "1"
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
+!macroend
+Var KQUninstallRepairChoice
+Var KQUninstallRemoveChoice
+Var KQUninstallControlDirectory
+Function un.KQ_ActionPageCreate
+  ${If} $KQUninstallIsUpdated == "1"
+    Abort
+  ${EndIf}
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+  ${NSD_CreateLabel} 0 0 100% 66u "O que deseja fazer com o Karaoke Queue?$\r$\n$\r$\nReparar abre o instalador para reinstalar os arquivos ou trocar entre Reprodutor e Tudo em um. Desinstalar remove o aplicativo e seus atalhos.$\r$\n$\r$\nEm ambos os casos, bancos, histórico, licença e configurações de cada conta Windows serão preservados."
+  Pop $0
+  ${NSD_CreateRadioButton} 0 78u 100% 24u "Reparar / trocar o modo do aplicativo"
+  Pop $KQUninstallRepairChoice
+  ${NSD_CreateRadioButton} 0 113u 100% 24u "Desinstalar o Karaoke Queue"
+  Pop $KQUninstallRemoveChoice
+  ${NSD_Check} $KQUninstallRepairChoice
+  GetDlgItem $0 $HWNDPARENT 1
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:Continuar"
+  nsDialogs::Show
+FunctionEnd
+Function un.KQ_ActionPageLeave
+  ${NSD_GetState} $KQUninstallRepairChoice $0
+  ${If} $0 == ${BST_CHECKED}
+    ${GetParent} "$KQFenceManifest" $KQUninstallControlDirectory
+    IfFileExists "$KQUninstallControlDirectory\maintenance.exe" 0 kq_no_cached_maintenance
+    ; The elevated maintenance image must itself be immutable to ordinary
+    ; accounts, in addition to the protected control directory/manifest.
+    StrCpy $KQPathWalk "$KQUninstallControlDirectory\maintenance.exe"
+    System::Call 'kernel32::GetFileAttributesW(w "$KQPathWalk") i.r0'
+    IntOp $0 $0 & 0x410
+    ${If} $0 != 0
+      Goto kq_no_cached_maintenance
+    ${EndIf}
+    StrCpy $KQPathMask 0x500D0156
+    Call un.KQ_VerifyPathACL
+    ${If} $KQPathSafe != 1
+      Goto kq_no_cached_maintenance
+    ${EndIf}
+    SetOutPath $TEMP
+    ClearErrors
+    ExecWait '$\"$KQUninstallControlDirectory\maintenance.exe$\"' $0
+    ${If} ${Errors}
+      Goto kq_no_cached_maintenance
+    ${EndIf}
+    SetErrorLevel $0
+    Quit
+    kq_no_cached_maintenance:
+      MessageBox MB_OK|MB_ICONEXCLAMATION "O instalador de manutenção não está disponível. Baixe e execute o instalador do Karaoke Queue para reparar ou trocar o modo. Nenhum arquivo ou dado foi removido."
+      Abort
+  ${EndIf}
+  ${NSD_GetState} $KQUninstallRemoveChoice $0
+  ${If} $0 != ${BST_CHECKED}
+    Abort
+  ${EndIf}
+FunctionEnd
+!macro customUnWelcomePage
+  UninstPage custom un.KQ_ActionPageCreate un.KQ_ActionPageLeave
+!macroend
+Var KQUninstallAdminMutexHandle
+Var KQUninstallRuntimeMutexHandle
+Var KQUninstallAdminMutexOwned
+Var KQUninstallRuntimeMutexOwned
+
+!macro customUnInstall
+  ${IfNot} ${isUpdated}
+    ClearErrors
+    ExecWait '"$INSTDIR\Karaoke Queue.exe" --kq-install-admin uninstall-cleanup ${KQ_FENCE_ARGS}' $0
+    ${If} ${Errors}
+      MessageBox MB_OK|MB_ICONSTOP "Não foi possível verificar e remover os atalhos gerenciados. A desinstalação foi interrompida sem alterar dados." /SD IDOK
+      Abort
+    ${EndIf}
+    ${If} $0 != 0
+      SetErrorLevel $0
+      MessageBox MB_OK|MB_ICONSTOP "Os atalhos gerenciados não foram removidos com segurança (código $0). A desinstalação foi interrompida." /SD IDOK
+      Abort
+    ${EndIf}
+    ; The helper leaves a durable uninstall intent and exits its own locks.
+    ; NSIS then owns both global mutexes through the final uninstaller mutation.
+    StrCpy $KQFenceKind "uninstall"
+    Call un.KQ_CreateUninstallMutexHandles
+    Call un.KQ_TakeUninstallMutexes
+    Call un.KQ_AssertControlSecurity
+    Call un.KQ_AssertRemovalFence
+  ${EndIf}
+!macroend
+
+Function un.KQ_AbortUninstallBusy
+  SetErrorLevel 2
+  MessageBox MB_OK|MB_ICONSTOP "A instalação está ocupada ou exige recuperação. Nenhum processo será encerrado à força; execute novamente a desinstalação após resolver o bloqueio." /SD IDOK
+  Call un.KQ_CloseUninstallMutexHandles
+  Abort
+FunctionEnd
+
+Function un.KQ_ReleaseUninstallMutexOwnership
+  ${If} $KQUninstallRuntimeMutexOwned == "1"
+    System::Call 'kernel32::ReleaseMutex(p $KQUninstallRuntimeMutexHandle) i.r0'
+    ${If} $0 == 0
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    StrCpy $KQUninstallRuntimeMutexOwned "0"
+  ${EndIf}
+  ${If} $KQUninstallAdminMutexOwned == "1"
+    System::Call 'kernel32::ReleaseMutex(p $KQUninstallAdminMutexHandle) i.r0'
+    ${If} $0 == 0
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    StrCpy $KQUninstallAdminMutexOwned "0"
+  ${EndIf}
+FunctionEnd
+
+Function un.KQ_CloseUninstallMutexHandles
+  Call un.KQ_ReleaseUninstallMutexOwnership
+  ${If} $KQUninstallRuntimeMutexHandle != ""
+  ${AndIf} $KQUninstallRuntimeMutexHandle != "0"
+    System::Call 'kernel32::CloseHandle(p $KQUninstallRuntimeMutexHandle) i.r0'
+    ${If} $0 == 0
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    StrCpy $KQUninstallRuntimeMutexHandle "0"
+  ${EndIf}
+  ${If} $KQUninstallAdminMutexHandle != ""
+  ${AndIf} $KQUninstallAdminMutexHandle != "0"
+    System::Call 'kernel32::CloseHandle(p $KQUninstallAdminMutexHandle) i.r0'
+    ${If} $0 == 0
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    StrCpy $KQUninstallAdminMutexHandle "0"
+  ${EndIf}
+FunctionEnd
+
+Function un.KQ_CreateUninstallMutexHandles
+  StrCpy $KQUninstallAdminMutexHandle "0"
+  StrCpy $KQUninstallRuntimeMutexHandle "0"
+  StrCpy $KQUninstallAdminMutexOwned "0"
+  StrCpy $KQUninstallRuntimeMutexOwned "0"
+
+  System::Call 'advapi32::ConvertStringSecurityDescriptorToSecurityDescriptorW(w "D:P(A;;0x001f0001;;;SY)(A;;0x001f0001;;;BA)", i 1, *p .r0, p 0) i.r1'
+  ${If} $1 == 0
+    Call un.KQ_AbortUninstallBusy
+  ${EndIf}
+  System::Call '*(i 12, p r0, i 0) p.r2'
+  System::Call 'kernel32::CreateMutexExW(p r2, w "Global\com.karaoke.queue.install-admin.v1", i 0, i 0x00120001) p.r3'
+  System::Free $2
+  System::Call 'kernel32::LocalFree(p r0) p.r4'
+  ${If} $3 == 0
+    Call un.KQ_AbortUninstallBusy
+  ${EndIf}
+  StrCpy $KQUninstallAdminMutexHandle $3
+
+  System::Call 'advapi32::ConvertStringSecurityDescriptorToSecurityDescriptorW(w "D:P(A;;0x001f0001;;;SY)(A;;0x001f0001;;;BA)(A;;0x00120001;;;AU)(A;;0x00120001;;;OW)S:(ML;;NW;;;ME)", i 1, *p .r0, p 0) i.r1'
+  ${If} $1 == 0
+    Call un.KQ_AbortUninstallBusy
+  ${EndIf}
+  System::Call '*(i 12, p r0, i 0) p.r2'
+  System::Call 'kernel32::CreateMutexExW(p r2, w "Global\com.karaoke.queue.runtime.v1", i 0, i 0x00120001) p.r3'
+  System::Free $2
+  System::Call 'kernel32::LocalFree(p r0) p.r4'
+  ${If} $3 == 0
+    Call un.KQ_AbortUninstallBusy
+  ${EndIf}
+  StrCpy $KQUninstallRuntimeMutexHandle $3
+FunctionEnd
+
+Function un.KQ_TakeUninstallMutexes
+  System::Call 'kernel32::WaitForSingleObject(p $KQUninstallAdminMutexHandle, i 30000) i.r0'
+  ${If} $0 != 0
+    ${If} $0 == 128
+      System::Call 'kernel32::ReleaseMutex(p $KQUninstallAdminMutexHandle) i.r1'
+    ${EndIf}
+    Call un.KQ_AbortUninstallBusy
+  ${EndIf}
+  StrCpy $KQUninstallAdminMutexOwned "1"
+  System::Call 'kernel32::WaitForSingleObject(p $KQUninstallRuntimeMutexHandle, i 30000) i.r0'
+  ${If} $0 != 0
+    ${If} $0 == 128
+      System::Call 'kernel32::ReleaseMutex(p $KQUninstallRuntimeMutexHandle) i.r1'
+    ${EndIf}
+    Call un.KQ_AbortUninstallBusy
+  ${EndIf}
+  StrCpy $KQUninstallRuntimeMutexOwned "1"
+FunctionEnd
+
+!macro customUnInstallSection
+  Section "-un.KQFinish"
+    SectionIn RO
+    Call un.KQ_CloseUninstallMutexHandles
+  SectionEnd
+!macroend
+!endif
+
+!ifndef BUILD_UNINSTALLER
+!insertmacro KQ_OPERATION_TREE ""
+!insertmacro KQ_OPERATION_FENCE ""
+!insertmacro KQ_INSTALL_PATH ""
+
+!define KQ_INSTALLATION_DIRECTORY_SDDL "O:BAD:P(A;OICI;0x001f01ff;;;SY)(A;OICI;0x001f01ff;;;BA)(A;OICI;0x001200a9;;;AU)"
+!define KQ_INSTALLATION_OWNER_SDDL "O:BA"
+
+Var KQInstallerFailureCode
+Var KQInstallationDirectory
+Var KQInstallationManifest
+Var KQInstallerExistingMachineInstall
+Var KQProgramDataDirectory
+Var KQManifestUnconfigured
+Var KQManifestPending
+Var KQManifestUninstallPending
+Var KQManifestReinstall
+Var KQManifestRole
+Var KQBootstrapPending
+Var KQManifestRestored
+Var KQRegisteredInstallDirectory
+Var KQMaintenanceRepair
+Var KQMaintenancePlayer
+Var KQMaintenanceCombined
+Var KQMaintenanceTargetRole
+Var KQAdminMutexHandle
+Var KQRuntimeMutexHandle
+Var KQAdminMutexOwned
+Var KQRuntimeMutexOwned
+
+Function KQ_MaintenancePageCreate
+  ${If} $KQManifestReinstall == "1"
+    Abort
+  ${EndIf}
+  ${If} $KQInstallerExistingMachineInstall != "1"
+    Abort
+  ${EndIf}
+  ${If} $KQManifestPending == "1"
+    Abort
+  ${EndIf}
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+  ${NSD_CreateLabel} 0 0 100% 62u "O Karaoke Queue já está instalado neste computador.$\r$\n$\r$\nReparar reinstala os arquivos e mantém o modo atual. Você também pode trocar o modo de uso. Bancos, histórico, licença, acervo e configurações de cada conta serão preservados. Feche o aplicativo normalmente antes de continuar."
+  Pop $1
+  ${NSD_CreateRadioButton} 0 74u 100% 20u "Reparar / reinstalar mantendo o modo atual"
+  Pop $KQMaintenanceRepair
+  ${NSD_Check} $KQMaintenanceRepair
+  ${If} $KQManifestUnconfigured == "1"
+    ${NSD_CreateLabel} 0 105u 100% 35u "O modo ainda não foi escolhido. Depois da instalação, abra o aplicativo para selecionar Reprodutor ou Tudo em um."
+    Pop $0
+    nsDialogs::Show
+    Return
+  ${EndIf}
+  ${NSD_CreateRadioButton} 0 104u 100% 20u "Trocar para Reprodutor"
+  Pop $KQMaintenancePlayer
+  ${NSD_CreateRadioButton} 0 134u 100% 20u "Trocar para Tudo em um"
+  Pop $KQMaintenanceCombined
+  nsDialogs::Show
+FunctionEnd
+
+Function KQ_ReadManifestUnconfigured
+  StrCpy $KQManifestUnconfigured "0"
+  StrCpy $KQManifestPending "0"
+  StrCpy $KQManifestUninstallPending "0"
+  StrCpy $KQManifestRole "unknown"
+  StrCpy $KQManifestRestored "0"
+  IfFileExists "$KQInstallationManifest" 0 kq_manifest_status_done
+  ClearErrors
+  FileOpen $0 "$KQInstallationManifest" r
+  IfErrors kq_manifest_status_done
+  kq_manifest_status_read:
+    FileRead $0 $1
+    IfErrors kq_manifest_status_close
+    ${TrimNewLines} "$1" $1
+    StrCmp $1 "  $\"role$\": null," kq_manifest_role_null
+    StrCmp $1 "  $\"role$\": null" kq_manifest_role_null
+    StrCmp $1 "  $\"role$\": $\"player$\"," kq_manifest_role_player
+    StrCmp $1 "  $\"role$\": $\"player$\"" kq_manifest_role_player
+    StrCmp $1 "  $\"role$\": $\"combined$\"," kq_manifest_role_combined
+    StrCmp $1 "  $\"role$\": $\"combined$\"" kq_manifest_role_combined
+    StrCmp $1 "    $\"kind$\": $\"uninstall$\"," kq_manifest_uninstall_pending
+    StrCmp $1 "    $\"kind$\": $\"uninstall$\"" kq_manifest_uninstall_pending
+    StrCmp $1 "    $\"kind$\": $\"restore-installation$\"," kq_manifest_restored
+    StrCmp $1 "    $\"kind$\": $\"restore-installation$\"" kq_manifest_restored
+    StrCmp $1 "  $\"status$\": $\"unconfigured$\"," kq_manifest_unconfigured
+    StrCmp $1 "  $\"status$\": $\"unconfigured$\"" kq_manifest_unconfigured
+    StrCmp $1 "  $\"status$\": $\"pending$\"," kq_manifest_pending
+    StrCmp $1 "  $\"status$\": $\"pending$\"" kq_manifest_pending
+    StrCmp $1 "  $\"status$\": $\"repairRequired$\"," kq_manifest_pending
+    StrCmp $1 "  $\"status$\": $\"repairRequired$\"" kq_manifest_pending
+    Goto kq_manifest_status_read
+  kq_manifest_role_null:
+    StrCpy $KQManifestRole "null"
+    Goto kq_manifest_status_read
+  kq_manifest_role_player:
+    StrCpy $KQManifestRole "player"
+    Goto kq_manifest_status_read
+  kq_manifest_role_combined:
+    StrCpy $KQManifestRole "combined"
+    Goto kq_manifest_status_read
+  kq_manifest_uninstall_pending:
+    StrCpy $KQManifestUninstallPending "1"
+    StrCpy $KQManifestPending "1"
+    Goto kq_manifest_status_read
+  kq_manifest_restored:
+    StrCpy $KQManifestRestored "1"
+    Goto kq_manifest_status_read
+  kq_manifest_unconfigured:
+    StrCpy $KQManifestUnconfigured "1"
+    Goto kq_manifest_status_read
+  kq_manifest_pending:
+    StrCpy $KQManifestPending "1"
+    Goto kq_manifest_status_read
+  kq_manifest_status_close:
+  FileClose $0
+  kq_manifest_status_done:
+FunctionEnd
+
+Function KQ_MaintenancePageLeave
+  ${If} $KQManifestReinstall == "1"
+    Return
+  ${EndIf}
+  ${NSD_GetState} $KQMaintenanceRepair $0
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $KQMaintenanceTargetRole ""
+    Return
+  ${EndIf}
+  ${NSD_GetState} $KQMaintenancePlayer $0
+  ${NSD_GetState} $KQMaintenanceCombined $1
+  ${If} $0 != ${BST_CHECKED}
+  ${AndIf} $1 != ${BST_CHECKED}
+    MessageBox MB_OK|MB_ICONEXCLAMATION "Escolha Reprodutor ou Tudo em um para continuar." /SD IDOK
+    Abort
+  ${EndIf}
+
+  ${If} $0 == ${BST_CHECKED}
+    StrCpy $KQMaintenanceTargetRole "player"
+  ${Else}
+    StrCpy $KQMaintenanceTargetRole "combined"
+  ${EndIf}
+FunctionEnd
+
+!macro customWelcomePage
+  !insertmacro MUI_PAGE_WELCOME
+  Page custom KQ_MaintenancePageCreate KQ_MaintenancePageLeave
+!macroend
+
+Function KQ_AbortUnsafeInstallationState
+  ${If} $KQInstallerFailureCode == ""
+    StrCpy $KQInstallerFailureCode 2
+  ${EndIf}
+  SetErrorLevel $KQInstallerFailureCode
+  MessageBox MB_OK|MB_ICONSTOP "Não é possível continuar com segurança. Há uma instalação legada ou um estado global de instalação incompleto. Nenhum perfil ou banco foi movido ou excluído. Resolva o conflito antes de instalar (código $KQInstallerFailureCode)." /SD IDOK
+  Abort
+FunctionEnd
+
+Function KQ_AbortMaintenanceBusy
+  SetErrorLevel 2
+  MessageBox MB_OK|MB_ICONEXCLAMATION "O Karaoke Queue ainda está aberto ou a instalação está ocupada. Feche o aplicativo normalmente e tente novamente. Nenhum arquivo será substituído à força." /SD IDOK
+  Abort
+FunctionEnd
+
+Function KQ_ReleaseMaintenanceMutexOwnership
+  ${If} $KQRuntimeMutexOwned == "1"
+    System::Call 'kernel32::ReleaseMutex(p $KQRuntimeMutexHandle) i.r0'
+    ${If} $0 == 0
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    StrCpy $KQRuntimeMutexOwned "0"
+  ${EndIf}
+  ${If} $KQAdminMutexOwned == "1"
+    System::Call 'kernel32::ReleaseMutex(p $KQAdminMutexHandle) i.r0'
+    ${If} $0 == 0
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    StrCpy $KQAdminMutexOwned "0"
+  ${EndIf}
+FunctionEnd
+
+Function KQ_CloseMaintenanceMutexHandles
+  Call KQ_ReleaseMaintenanceMutexOwnership
+  ${If} $KQRuntimeMutexHandle != 0
+    System::Call 'kernel32::CloseHandle(p $KQRuntimeMutexHandle) i.r0'
+    ${If} $0 == 0
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    StrCpy $KQRuntimeMutexHandle 0
+  ${EndIf}
+  ${If} $KQAdminMutexHandle != 0
+    System::Call 'kernel32::CloseHandle(p $KQAdminMutexHandle) i.r0'
+    ${If} $0 == 0
+      SetErrorLevel 2
+      Quit
+    ${EndIf}
+    StrCpy $KQAdminMutexHandle 0
+  ${EndIf}
+FunctionEnd
+
+
+Function KQ_CreateMaintenanceMutexHandles
+  StrCpy $KQInstallerFailureCode 219
+  StrCpy $KQAdminMutexHandle 0
+  StrCpy $KQRuntimeMutexHandle 0
+  StrCpy $KQAdminMutexOwned "0"
+  StrCpy $KQRuntimeMutexOwned "0"
+
+  System::Call 'advapi32::ConvertStringSecurityDescriptorToSecurityDescriptorW(w "D:P(A;;0x001f0001;;;SY)(A;;0x001f0001;;;BA)", i 1, *p .r0, p 0) i.r1'
+  ${If} $1 == 0
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+  System::Call '*(i 12, p r0, i 0) p.r2'
+  System::Call 'kernel32::CreateMutexExW(p r2, w "Global\com.karaoke.queue.install-admin.v1", i 0, i 0x00120001) p.r3'
+  System::Free $2
+  System::Call 'kernel32::LocalFree(p r0) p.r4'
+  ${If} $3 == 0
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+  StrCpy $KQAdminMutexHandle $3
+
+  System::Call 'advapi32::ConvertStringSecurityDescriptorToSecurityDescriptorW(w "D:P(A;;0x001f0001;;;SY)(A;;0x001f0001;;;BA)(A;;0x00120001;;;AU)(A;;0x00120001;;;OW)S:(ML;;NW;;;ME)", i 1, *p .r0, p 0) i.r1'
+  ${If} $1 == 0
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+  System::Call '*(i 12, p r0, i 0) p.r2'
+  System::Call 'kernel32::CreateMutexExW(p r2, w "Global\com.karaoke.queue.runtime.v1", i 0, i 0x00120001) p.r3'
+  System::Free $2
+  System::Call 'kernel32::LocalFree(p r0) p.r4'
+  ${If} $3 == 0
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+  StrCpy $KQRuntimeMutexHandle $3
+FunctionEnd
+
+Function KQ_TakeMaintenanceMutexes
+  StrCpy $KQInstallerFailureCode 220
+  System::Call 'kernel32::WaitForSingleObject(p $KQAdminMutexHandle, i 0) i.r0'
+  ${If} $0 != 0
+    ${If} $0 == 128
+      System::Call 'kernel32::ReleaseMutex(p $KQAdminMutexHandle) i.r1'
+    ${EndIf}
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+  StrCpy $KQAdminMutexOwned "1"
+  System::Call 'kernel32::WaitForSingleObject(p $KQRuntimeMutexHandle, i 0) i.r0'
+  ${If} $0 != 0
+    ${If} $0 == 128
+      System::Call 'kernel32::ReleaseMutex(p $KQRuntimeMutexHandle) i.r1'
+    ${EndIf}
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+  StrCpy $KQRuntimeMutexOwned "1"
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR") i.r0'
+  ${If} $0 != -1
+    IntOp $1 $0 & 0x410
+    ${If} $1 != 16
+      SetErrorLevel 2
+      Abort "O diretório da aplicação não é confiável."
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+
+Function KQ_PrepareAndLockInstallation
+  Call KQ_CreateMaintenanceMutexHandles
+  ClearErrors
+  ExecWait '"$INSTDIR\Karaoke Queue.exe" --kq-install-admin prepare-update ${KQ_FENCE_ARGS}' $0
+  ${If} ${Errors}
+    Call KQ_AbortMaintenanceBusy
+  ${EndIf}
+  ${If} $0 != 0
+    Call KQ_AbortMaintenanceBusy
+  ${EndIf}
+  StrCpy $KQManifestPending "1"
+  ${If} $KQFenceKind == ""
+    StrCpy $KQFenceKind "prepare-update"
+  ${EndIf}
+  Call KQ_TakeMaintenanceMutexes
+  Call KQ_AssertControlSecurity
+  Call KQ_AssertRemovalFence
+FunctionEnd
+
+Function KQ_LockInstallationRecovery
+  ; A durable uninstall intent is not an update intent. Take the same global
+  ; locks directly so a concurrent uninstaller or installer cannot replace
+  ; files while recovery is running.
+  Call KQ_CreateMaintenanceMutexHandles
+  Call KQ_TakeMaintenanceMutexes
+  Call KQ_AssertControlSecurity
+  Call KQ_AssertRemovalFence
+FunctionEnd
+
+Function KQ_ResolveInstallationControlPaths
+  Push $0
+  Push $1
+  Push $2
+  StrCpy $2 0
+  System::Call 'SHELL32::SHGetKnownFolderPath(g "{62AB5D82-FDC1-4DC3-A9DD-070D1D495D97}", i 0, p 0, *p .r2)i.r1'
+  ${If} $1 == 0
+    System::Call 'KERNEL32::lstrcpynW(w .r0, p r2, i ${NSIS_MAX_STRLEN})p'
+  ${EndIf}
+  ${If} $2 != 0
+    System::Call 'OLE32::CoTaskMemFree(p r2)'
+  ${EndIf}
+  ${If} $0 == ""
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+  StrCpy $KQProgramDataDirectory $0
+  StrCpy $KQInstallationDirectory "$KQProgramDataDirectory\KaraokeQueue"
+  StrCpy $KQInstallationManifest "$KQInstallationDirectory\installation.json"
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+
+Function KQ_InitializeInstallationControl
+  StrCpy $KQInstallerFailureCode 210
+  System::Call 'kernel32::GetFileAttributesW(w "$KQProgramDataDirectory") i.r0'
+  ${If} $0 == -1
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+  IntOp $1 $0 & 0x10
+  ${If} $1 == 0
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+  IntOp $1 $0 & 0x400
+  ${If} $1 != 0
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+
+  StrCpy $KQInstallerFailureCode 211
+  System::Call 'advapi32::ConvertStringSecurityDescriptorToSecurityDescriptorW(w "${KQ_INSTALLATION_DIRECTORY_SDDL}", i 1, *p .r0, p 0) i.r1'
+  ${If} $1 == 0
+    Goto kq_init_acl_failed
+  ${EndIf}
+  System::Call '*(i 12, p r0, i 0) p.r2'
+  StrCpy $KQInstallerFailureCode 212
+  System::Call 'kernel32::CreateDirectoryW(w "$KQInstallationDirectory", p r2) i.r3'
+  System::Free $2
+  System::Call 'kernel32::LocalFree(p r0) p.r4'
+  ${If} $3 == 0
+    Goto kq_init_directory_failed
+  ${EndIf}
+
+  StrCpy $KQInstallerFailureCode 213
+  System::Call 'ole32::CoCreateGuid(g .s) i.r0'
+  Pop $4
+  ${If} $0 != 0
+    Goto kq_init_manifest_failed
+  ${EndIf}
+  StrCpy $5 $4 36 1
+  System::Call 'ole32::CoCreateGuid(g .s) i.r0'
+  Pop $7
+  ${If} $0 != 0
+    Goto kq_init_manifest_failed
+  ${EndIf}
+  StrCpy $KQFenceOperationId $7 36 1
+  StrCpy $KQInstallerFailureCode 215
+  ClearErrors
+  FileOpen $6 "$KQInstallationManifest" w
+  IfErrors kq_init_open_failed
+  FileWrite $6 "{$\r$\n"
+  FileWrite $6 "  $\"formatVersion$\": 1,$\r$\n"
+  FileWrite $6 "  $\"installationId$\": $\"$5$\",$\r$\n"
+  FileWrite $6 "  $\"generation$\": 0,$\r$\n"
+  FileWrite $6 "  $\"role$\": null,$\r$\n"
+  FileWrite $6 "  $\"status$\": $\"pending$\",$\r$\n"
+  FileWrite $6 "  $\"identityRevision$\": 0,$\r$\n"
+  FileWrite $6 "  $\"pending$\": {$\r$\n"
+  FileWrite $6 "    $\"operationId$\": $\"$KQFenceOperationId$\",$\r$\n"
+  FileWrite $6 "    $\"kind$\": $\"prepare-update$\",$\r$\n"
+  FileWrite $6 "    $\"baseGeneration$\": 0,$\r$\n"
+  FileWrite $6 "    $\"role$\": null$\r$\n"
+  FileWrite $6 "  },$\r$\n"
+  FileWrite $6 "  $\"lastCompletedOperation$\": null$\r$\n"
+  FileWrite $6 "}$\r$\n"
+  FileClose $6
+  StrCpy $KQInstallerFailureCode 216
+  System::Call 'advapi32::ConvertStringSecurityDescriptorToSecurityDescriptorW(w "${KQ_INSTALLATION_OWNER_SDDL}", i 1, *p .r0, p 0) i.r1'
+  ${If} $1 == 0
+    Goto kq_init_manifest_failed
+  ${EndIf}
+  StrCpy $KQInstallerFailureCode 217
+  System::Call 'advapi32::SetFileSecurityW(w "$KQInstallationManifest", i 0x1, p r0) i.r2'
+  System::Call 'kernel32::LocalFree(p r0) p.r3'
+  ${If} $2 == 0
+    Goto kq_init_manifest_failed
+  ${EndIf}
+  Return
+
+  kq_init_open_failed:
+    System::Call 'kernel32::GetLastError() i.r0'
+    IntOp $KQInstallerFailureCode 215000 + $0
+    Goto kq_init_manifest_failed
+  kq_init_directory_failed:
+  kq_init_acl_failed:
+  kq_init_manifest_failed:
+  Call KQ_AbortUnsafeInstallationState
+FunctionEnd
+
+!macro customInit
+  StrCpy $KQInstallerFailureCode 2
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "--delete-app-data" $R1
+  ${IfNot} ${Errors}
+    SetErrorLevel 202
+    Quit
+  ${EndIf}
+  ClearErrors
+  Call KQ_EnterOperationTree
+  StrCpy $KQInstallerFailureCode 203
+  Call KQ_ResolveInstallationControlPaths
+  StrCpy $KQBootstrapPending "0"
+  StrCpy $KQInstallerExistingMachineInstall "0"
+  StrCpy $KQManifestReinstall "0"
+  StrCpy $KQRegisteredInstallDirectory ""
+
+  StrCpy $KQInstallerFailureCode 204
+  ReadRegStr $0 HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
+  ${If} $0 != ""
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+  StrCpy $KQInstallerFailureCode 205
+  ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ${If} $0 != ""
+    Call KQ_AbortUnsafeInstallationState
+  ${EndIf}
+  ReadRegStr $0 HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation
+  ${If} $0 != ""
+    StrCpy $KQInstallerExistingMachineInstall "1"
+    StrCpy $KQRegisteredInstallDirectory $0
+  ${EndIf}
+
+  StrCpy $KQInstallerFailureCode 206
+  IfFileExists "$KQInstallationManifest" kq_custom_init_manifest_exists kq_custom_init_manifest_missing
+  kq_custom_init_manifest_exists:
+    StrCpy $KQFenceManifest "$KQInstallationManifest"
+    Call KQ_AssertControlSecurity
+    Call KQ_ReadManifestUnconfigured
+    Call KQ_ReadOperationFence
+    ${If} $KQInstallerExistingMachineInstall == "0"
+    ${AndIf} $KQManifestRole == "null"
+    ${AndIf} $KQFenceGeneration == "0"
+    ${AndIf} $KQFenceKind == "prepare-update"
+      StrCpy $KQBootstrapPending "1"
+      Goto kq_custom_init_done
+    ${EndIf}
+    ${If} $KQManifestUninstallPending == "1"
+      ${If} $KQInstallerExistingMachineInstall == "1"
+      ${AndIf} $KQRegisteredInstallDirectory != "$INSTDIR"
+        Call KQ_AbortUnsafeInstallationState
+      ${EndIf}
+      StrCpy $KQManifestReinstall "1"
+      Goto kq_custom_init_done
+    ${EndIf}
+    ${If} $KQManifestPending == "1"
+      ${If} $KQFenceKind == "prepare-update"
+      ${OrIf} $KQFenceKind == "confirm-initial"
+      ${OrIf} $KQFenceKind == "change-role"
+        Goto kq_custom_init_done
+      ${EndIf}
+    ${EndIf}
+    ${If} $KQInstallerExistingMachineInstall == "0"
+      ; A ready/orphaned machine record is a conflict, not permission to create a second install.
+      Call KQ_AbortUnsafeInstallationState
+    ${EndIf}
+    Goto kq_custom_init_done
+  kq_custom_init_manifest_missing:
+    IfFileExists "$KQInstallationDirectory\*.*" kq_custom_init_directory_conflict kq_custom_init_no_directory
+  kq_custom_init_directory_conflict:
+    Call KQ_AbortUnsafeInstallationState
+  kq_custom_init_no_directory:
+    ${If} $KQInstallerExistingMachineInstall == "1"
+      Call KQ_AbortUnsafeInstallationState
+    ${EndIf}
+    Call KQ_InitializeInstallationControl
+    StrCpy $KQBootstrapPending "1"
+    StrCpy $KQManifestPending "1"
+  kq_custom_init_done:
+  StrCpy $KQFenceManifest "$KQInstallationManifest"
+  Call KQ_ReadOperationFence
+!macroend
+
+!macro customUnInstallCheck
+  ${If} $KQManifestPending == "1"
+  ${AndIf} $KQRegisteredInstallDirectory == "$INSTDIR"
+    IfFileExists "$INSTDIR\Uninstall Karaoke Queue.exe" kq_old_uninstall_check_result
+    Call KQ_AssertControlSecurity
+    Call KQ_AssertRemovalFence
+    ClearErrors
+    StrCpy $R0 0
+    Return
+  ${EndIf}
+  kq_old_uninstall_check_result:
+  ${If} ${Errors}
+  ${OrIf} $R0 != 0
+    SetErrorLevel 2
+    Abort "A versão anterior não foi removida com segurança. O estado pendente foi preservado."
+  ${EndIf}
+!macroend
+
+!macro customInstall
+  ; Cache the same installer for the Control Panel repair entry. Never use a
+  ; per-user download path as a future elevated maintenance executable.
+  ${If} $EXEPATH != "$KQInstallationDirectory\maintenance.exe"
+    ClearErrors
+    CopyFiles /SILENT "$EXEPATH" "$KQInstallationDirectory\maintenance.exe"
+    ${If} ${Errors}
+      SetErrorLevel 232
+      Abort "Não foi possível preparar a manutenção. Execute o instalador novamente; seus dados foram preservados."
+    ${EndIf}
+  ${EndIf}
+  ${If} $KQManifestReinstall == "1"
+    Call KQ_ReleaseMaintenanceMutexOwnership
+    ClearErrors
+    ExecWait '"$INSTDIR\Karaoke Queue.exe" --kq-install-admin restore-after-uninstall ${KQ_FENCE_ARGS}' $0
+    ${If} ${Errors}
+      MessageBox MB_OK|MB_ICONSTOP "Não foi possível restaurar a instalação após a desinstalação interrompida. O estado anterior permanece protegido." /SD IDOK
+      Abort
+    ${EndIf}
+    ${If} $0 != 0
+      MessageBox MB_OK|MB_ICONSTOP "A restauração não foi confirmada (código $0). O aplicativo permanecerá bloqueado até nova recuperação." /SD IDOK
+      Abort
+    ${EndIf}
+    Call KQ_CloseMaintenanceMutexHandles
+  ${Else}
+    ${If} $KQManifestPending == "1"
+      Call KQ_ReleaseMaintenanceMutexOwnership
+      ClearErrors
+      ExecWait '"$INSTDIR\Karaoke Queue.exe" --kq-install-admin repair-pending ${KQ_FENCE_ARGS}' $0
+      ${If} ${Errors}
+        MessageBox MB_OK|MB_ICONSTOP "Não foi possível iniciar a recuperação segura. A função e os dados confirmados foram preservados." /SD IDOK
+        Abort
+      ${EndIf}
+      ${If} $0 != 0
+        MessageBox MB_OK|MB_ICONSTOP "A operação pendente não foi reconciliada (código $0). A instalação permanece bloqueada para recuperação." /SD IDOK
+        Abort
+      ${EndIf}
+      Call KQ_CloseMaintenanceMutexHandles
+    ${EndIf}
+    ; Apply a selected function only after the user committed to Install and the
+    ; package files are in place. Cancelling earlier leaves the role untouched.
+    ${If} $KQMaintenanceTargetRole != ""
+      Call KQ_ReadOperationFence
+      ClearErrors
+      ExecWait '"$INSTDIR\Karaoke Queue.exe" --kq-install-admin change-role ${KQ_FENCE_ARGS} --role $KQMaintenanceTargetRole' $0
+      ${If} ${Errors}
+        MessageBox MB_OK|MB_ICONSTOP "Não foi possível iniciar a manutenção segura. A função anterior foi preservada." /SD IDOK
+        Abort
+      ${EndIf}
+      ${If} $0 != 0
+        MessageBox MB_OK|MB_ICONSTOP "A alteração não foi confirmada (código $0). A instalação exige recuperação antes de abrir o aplicativo." /SD IDOK
+        Abort
+      ${EndIf}
+    ${EndIf}
+
+  ${EndIf}
+  WriteRegDWORD HKLM "${UNINSTALL_REGISTRY_KEY}" NoModify 0
+  WriteRegStr HKLM "${UNINSTALL_REGISTRY_KEY}" ModifyPath '$\"$KQInstallationDirectory\maintenance.exe$\"'
+  Call KQ_CloseMaintenanceMutexHandles
+!macroend
+
+!endif

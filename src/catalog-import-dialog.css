@@ -1,0 +1,41 @@
+/* Shared Settings catalog dialog; base buttons belong to each host stylesheet. */
+.catalog-dialog-overlay {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+  background: rgba(6, 6, 11, .78);
+  backdrop-filter: blur(7px);
+}
+.catalog-dialog-overlay[hidden] { display: none; }
+.catalog-dialog {
+  width: min(620px, 100%);
+  max-height: min(680px, 100%);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, .17);
+  border-radius: 15px;
+  background: #18181e;
+  box-shadow: 0 24px 76px rgba(0, 0, 0, .56), inset 0 1px 0 rgba(255, 255, 255, .04);
+}
+.catalog-dialog h2 { color: #f1f1f4; font-size: 20px; font-weight: 720; letter-spacing: -.025em; line-height: 1.25; }
+.catalog-dialog > p:not(.catalog-dialog-status) { margin-top: 9px; color: #b9b9c4; font-size: 14px; line-height: 1.5; }
+.catalog-confirmation-summary { margin-top: 12px; color: #dedee7; font-size: 13px; line-height: 1.5; }
+.catalog-confirmation-summary[hidden], .catalog-dialog-status[hidden], .catalog-issues-list-wrap[hidden] { display: none; }
+.catalog-dialog-status { margin-top: 9px; color: #e6c493; font-size: 12px; line-height: 1.4; }
+.catalog-issues-list-wrap { min-height: 0; margin-top: 14px; display: flex; flex-direction: column; }
+.catalog-issues-list { min-height: 0; max-height: min(390px, 48vh); margin: 0; padding: 0 9px 0 0; overflow: auto; list-style: none; overscroll-behavior: contain; }
+.catalog-issue-item { padding: 11px 0; border-bottom: 1px solid rgba(255, 255, 255, .1); color: #dedee7; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.catalog-issue-item:first-child { padding-top: 2px; }
+.catalog-issue-item strong { color: #f1f1f4; font-weight: 650; }
+.catalog-issues-pagination { margin-top: 10px; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #b9b9c4; font-size: 11px; }
+.catalog-issues-pagination .stop-confirmation-button { min-width: 90px; height: 34px; font-size: 11px; }
+.catalog-issues-pagination .stop-confirmation-button:disabled { opacity: .45; cursor: default; }
+.catalog-dialog-actions { margin-top: 20px; }
+.catalog-dialog-actions[hidden] { display: none; }
+.catalog-dialog-actions .stop-confirmation-button { min-width: 150px; }
+.catalog-dialog-actions .stop-confirmation-button.confirm { color: #f0f0f4; border-color: rgba(165, 166, 255, .55); background: rgba(99, 102, 241, .22); }
+.catalog-dialog-actions .stop-confirmation-button[hidden] { display: none; }

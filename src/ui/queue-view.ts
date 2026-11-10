@@ -1,4 +1,5 @@
-import type { KaraokeApplication, ReadonlyAppState } from '../application'
+import type { ReadonlyAppState } from '../application'
+import type { ManagementApplicationPort } from '../management-contracts'
 import { LONG_WAIT_ALERT_AFTER_POSITION, debutTurnIds, longWaitAlertEligibleIds, maxWaitMinutes } from '../queue-rules'
 import { completedTurnCountsByTable } from '../history-rules'
 import { escapeHtml, formatQueueDateTime, formatQueueWait, getElement, showToast } from './dom'
@@ -17,7 +18,7 @@ export interface QueueView {
 }
 
 export function createQueueView(
-  application: Pick<KaraokeApplication, 'getPlayOrder' | 'canMoveTurn'>,
+  application: Pick<ManagementApplicationPort, 'getPlayOrder' | 'canMoveTurn'>,
   getState: () => ReadonlyAppState,
   onPinNext: (id: string) => Promise<boolean | undefined>,
   afterRender: () => void = () => {}

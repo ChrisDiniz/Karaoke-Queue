@@ -6,7 +6,9 @@ import {
   removeTurnFromFixedPositions, type FixedTurnPositions
 } from './fixed-turn-rules'
 import { applyFrozenQueueOrder, normalizeFrozenTurnIds } from './frozen-queue-rules'
-import { PersistenceError, type StateRepository } from './state-repository'
+import { PersistenceError } from './persistence-contracts'
+import type { StateRepository } from './state-repository'
+import { canMoveManagementTurn, getManagementPlayOrder } from './management-projections'
 
 export interface ReadonlyAppState {
   readonly queue: readonly Readonly<QueueEntry>[]
@@ -198,7 +200,11 @@ export class KaraokeApplication {
         return result
       } catch (error) {
         this.generation++ // reject already queued dependents; never replay them blindly
-        this.failure = error instanceof Error ? error : new Error(String(error))
+        // A policy rejection is a confirmed non-operation, not an unresolved
+        // persistence failure. Keep any earlier storage failure intact.
+        if (!(error instanceof PersistenceError) || error.outcome !== 'rejected') {
+          this.failure = error instanceof Error ? error : new Error(String(error))
+        }
         if (error instanceof PersistenceError && error.outcome === 'uncertain') this.uncertain = draft
         this.log('PERSISTENCE_OPERATION_FAILED', operation)
         throw error
@@ -222,9 +228,9 @@ export class KaraokeApplication {
     } catch { /* diagnostics must never affect durability */ }
   }
 
-  async load(readOnly = false): Promise<void> {
+  async load(readOnly = false): Promise<boolean> {
     await this.enqueue('load', draft => draft.loadDraft(readOnly), !readOnly)
-    if (!readOnly) this.repository.finishMigration()
+    return !readOnly && this.repository.finishMigration()
   }
 
   persist(): Promise<boolean> { return this.enqueue('persist', () => true) }
@@ -409,7 +415,7 @@ export class KaraokeApplication {
 
   /** Check whether the exact manual move would change queue order, without mutating state. */
   canMoveTurn(id: string, targetPosition: number): boolean {
-    return this.previewTurnMove(id, targetPosition) !== null
+    return canMoveManagementTurn(this.current, id, targetPosition)
   }
 
   private previewTurnMove(id: string, targetPosition: number) {
@@ -461,11 +467,7 @@ export class KaraokeApplication {
   }
 
   getPlayOrder(): readonly Readonly<QueueEntry>[] {
-    const currentId = this.current.currentTurnId &&
-      this.current.queue.some(entry => entry.id === this.current.currentTurnId)
-      ? this.current.currentTurnId : null
-    return applyFrozenQueueOrder([...this.current.queue], this.current.currentTurnId, this.current.frozenTurnIds,
-      this.current.fixedTurnPositions)
+    return getManagementPlayOrder(this.current)
   }
 
   isTurnFrozen(id: string): boolean {

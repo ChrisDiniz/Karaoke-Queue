@@ -177,4 +177,5 @@ export class SettingsView {
       status.textContent = 'Não foi possível carregar o nome salvo.'
     })
   }
+
 }

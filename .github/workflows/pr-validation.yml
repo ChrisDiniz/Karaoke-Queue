@@ -8,6 +8,7 @@ on:
       - opened
       - synchronize
       - reopened
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -68,6 +69,12 @@ jobs:
       - name: Verify package contents and metadata
         run: npm run verify:windows-build
 
+      - name: Verify native operation tree and NSIS section ownership with isolated fixtures
+        run: node scripts/windows-runtime-mutex-electron.cjs
+
+      - name: Verify role onboarding and media setup with real Electron and SQLite
+        run: node build/tests/operating-modes-electron.js
+
       - name: Read package version
         id: product
         shell: pwsh
@@ -93,10 +100,57 @@ jobs:
       - name: Launch packaged app and verify trial, IPC, SQLite and restart
         run: node tests/packaged-windows-smoke.cjs "dist/win-unpacked/Karaoke Queue.exe"
 
+      - name: Install and uninstall NSIS candidate on disposable hosted runner
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          ./tests/windows-nsis-install-smoke.ps1 -InstallerPath "dist/Karaoke-Queue-Setup-$version-x64.exe"
+
+      - name: Generate checksums and validation manifest
+        id: artifact
+        shell: pwsh
+        env:
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_EVENT: ${{ github.event_name }}
+          SOURCE_RUN_ID: ${{ github.run_id }}
+          SOURCE_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          $installer = Get-Item "dist/Karaoke-Queue-Setup-$version-x64.exe"
+          $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Out-File dist/SHA256SUMS.txt -Encoding ascii
+          $manifest = [ordered]@{
+            format = 1
+            event = $env:SOURCE_EVENT
+            ref = $env:SOURCE_REF
+            sourceSha = $env:SOURCE_SHA
+            runId = $env:SOURCE_RUN_ID
+            packageVersion = $version
+            architecture = 'x64'
+            installer = $installer.Name
+            installerSha256 = $hash
+            packageVerification = 'PASS'
+            packagedElectronSmoke = 'PASS'
+            nsisInstallUninstallSmoke = 'PASS'
+            releasePublished = $false
+          }
+          $encoding = [System.Text.UTF8Encoding]::new($false)
+          [IO.File]::WriteAllText((Join-Path $PWD 'dist/artifact-manifest.json'), ($manifest | ConvertTo-Json -Depth 4), $encoding)
+          if ($env:SOURCE_EVENT -eq 'pull_request') {
+            $artifactName = "Karaoke-Queue-PR-$($env:SOURCE_PR_NUMBER)-Windows-x64"
+          } else {
+            $artifactName = "Karaoke-Queue-Validation-$($env:SOURCE_RUN_ID)-$($env:SOURCE_SHA.Substring(0,12))-Windows-x64"
+          }
+          "name=$artifactName" >> $env:GITHUB_OUTPUT
+
       - name: Upload pull request installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Karaoke-Queue-PR-${{ github.event.pull_request.number }}-Windows-x64
-          path: dist/Karaoke-Queue-Setup-${{ steps.product.outputs.version }}-x64.exe
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            dist/Karaoke-Queue-Setup-${{ steps.product.outputs.version }}-x64.exe
+            dist/SHA256SUMS.txt
+            dist/artifact-manifest.json
           if-no-files-found: error
           retention-days: 30

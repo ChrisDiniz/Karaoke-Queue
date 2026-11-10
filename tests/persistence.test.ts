@@ -58,6 +58,30 @@ test('publish only after confirmation; snapshots and inputs captured; duplicate 
   assert.equal(f.app.state.history.length, 1)
 })
 
+test('explicit operational rejection stays rejected and does not run persistence reconciliation', async () => {
+  let reads = 0
+  const repository = createStateRepository({
+    async load() {
+      reads++
+      return {
+        queue: [], history: [], sessions: [{ id: 'licensed-session', startedAt: 1, endedAt: null }],
+        currentSessionId: 'licensed-session', priorityIds: [], fixedTurnPositions: {}, frozenTurnIds: [],
+        queueOrderPolicyVersion: 2, regularsSinceDebut: 0, currentTurnAutomatic: false,
+        nextTurnId: null, currentTurnId: null, lastReset: null
+      }
+    },
+    async save() { throw new PersistenceError('rejected', 'LICENSE_EXPIRED') }
+  })
+  const app = new KaraokeApplication(repository)
+  await app.load(true)
+  const readsBeforeWrite = reads
+  await assert.rejects(app.addEntry(input()), (error: unknown) =>
+    error instanceof PersistenceError && error.outcome === 'rejected' && error.message === 'LICENSE_EXPIRED')
+  assert.equal(reads, readsBeforeWrite, 'a policy rejection is not misclassified as an uncertain SQLite write')
+  assert.equal(app.state.queue.length, 0)
+  await app.flush()
+})
+
 for (const operation of ['add', 'batch', 'edit', 'done', 'cancel', 'pin', 'freeze', 'release', 'unpin', 'current', 'promote', 'end', 'new-session'] as const) {
   test(`rejected ${operation}: no published state, no partial changes, safe recovery`, async () => {
     const f = await fixture()

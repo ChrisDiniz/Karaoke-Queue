@@ -52,13 +52,12 @@ interface HistoryFilter {
   sessionId?: string | null
 }
 
-interface KaraokeDatabaseBridge {
-  load: () => Promise<StoredAppState>
-  save: (state: AppState) => Promise<boolean>
-}
+type KaraokeManagementBridge = import('./src/management-contracts').ManagementRendererBridge
 
 type UiScalePreference = import('./src/ui/ui-scale').UiScalePreference
 type UiScaleState = import('./src/ui/ui-scale').UiScaleState
+type KaraokePlayerBridge = import('./src/player-ui-contracts').KaraokePlayerBridge
+type StandalonePlayerRendererBridge = import('./src/standalone-player-ipc-contracts').StandalonePlayerRendererApi
 
 interface KaraokeUiScaleBridge {
   getState: () => Promise<UiScaleState>
@@ -85,18 +84,17 @@ interface KaraokeLicenseBridge {
 }
 
 interface Window {
-  karaokeDatabase?: KaraokeDatabaseBridge
+  karaokeManagement?: KaraokeManagementBridge
   karaokeUiScale?: KaraokeUiScaleBridge
   karaokePreferences?: KaraokePreferencesBridge
   karaokeDiagnostics?: KaraokeDiagnosticsBridge
   karaokeLicense?: KaraokeLicenseBridge
+  karaokePlayer?: KaraokePlayerBridge
+  standalonePlayer?: StandalonePlayerRendererBridge
   __kqueue?: {
-    prepareToClose: () => Promise<void>
-    cancelClose: () => void
     queueLength: () => number
     sessionEnded: () => boolean
     closeSummary: () => { sessionActive: boolean; uncompletedCount: number; sessionId: string | null }
     flushState: () => Promise<boolean>
-    endSessionAndArchive: () => Promise<boolean>
   }
 }

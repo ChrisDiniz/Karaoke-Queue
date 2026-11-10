@@ -1,7 +1,8 @@
 'use strict'
 
-import { KaraokeApplication } from './application'
-import { createRendererStateRepository } from './state-repository'
+import { ManagementClient } from './management-client'
+import { LEGACY_STATE_STORAGE_KEYS } from './persistence-contracts'
+import type { LegacyStateStorageDto } from './persistence-contracts'
 import { AppShell } from './ui/app-shell'
 import { Navigation } from './ui/navigation'
 import { HistoryView } from './ui/history-view'
@@ -25,7 +26,17 @@ window.addEventListener('unhandledrejection', event => {
   reportRendererError('RENDERER_UNHANDLED_REJECTION', reason instanceof Error ? reason.message : String(reason), reason)
 })
 
-const application = new KaraokeApplication(createRendererStateRepository())
+if (!window.karaokeManagement) throw new Error('The Main-process Management host is unavailable.')
+const application = new ManagementClient(window.karaokeManagement, {
+  read: () => Object.fromEntries(Object.values(LEGACY_STATE_STORAGE_KEYS).map(key =>
+    [key, window.localStorage.getItem(key)])) as LegacyStateStorageDto,
+  clearImported: imported => {
+    for (const key of Object.values(LEGACY_STATE_STORAGE_KEYS)) {
+      const value = imported[key as keyof LegacyStateStorageDto]
+      if (value !== null && window.localStorage.getItem(key) === value) window.localStorage.removeItem(key)
+    }
+  }
+})
 const modals = new ModalManager()
 let tableDialog!: TableDialog
 const historyView = new HistoryView(() => application.state,
@@ -125,25 +136,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (error) { reportPersistenceFailure(error) }
     finally { retry.disabled = false }
   }
-  let licenseStatus: LicenseStatus
-  try { licenseStatus = await appShell.initializeLicense() } catch (error) {
+  try { await appShell.initializeLicense() } catch (error) {
     reportRendererError('RENDERER_IPC_FAILED', 'Não foi possível consultar a licença local.', error)
     return
   }
-  try { await application.load(licenseStatus.expired) } catch (error) {
+  let startupSnapshot
+  try { startupSnapshot = await application.connect() } catch (error) {
     reportPersistenceFailure(error)
     retry.onclick = () => location.reload()
     retry.textContent = 'Tentar carregar novamente'
     return
   }
-  if (application.didStartFreshSessionOnLoad) {
-    window.karaokeDiagnostics?.logSessionEvent('SESSION_STARTED', application.state.currentSessionId,
-      application.didRecoverEndedSession ? 'after-previous-session-ended' : 'initial-session')
-  }
   settingsView.bind()
-  if (!appShell.isLicenseExpired) {
-    try { await application.ensureCurrentTurn() } catch (error) { reportPersistenceFailure(error) }
-  }
   queueView.render()
   appShell.updateSessionStartInfo()
 
@@ -159,36 +163,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   setInterval(() => queueView.updateWaitTimes(), 30000)
   setInterval(() => queueView.render(), 60000)
   setInterval(() => historyView.updateStats(), 60000)
-  appShell.showStartupOrLicense(application.didRecoverEndedSession)
+  appShell.showStartupOrLicense(startupSnapshot.didRecoverEndedSession)
   if (getElement('startup-modal').classList.contains('hidden')) getInput('input-table').focus()
 
   window.__kqueue = {
     queueLength: () => application.state.queue.filter(entry => entry.status === 'pending').length,
-    prepareToClose: () => application.prepareToClose(),
-    cancelClose: () => application.cancelClose(),
-    closeSummary: () => {
-      const session = application.state.sessions.find(item => item.id === application.state.currentSessionId)
-      const pending = application.state.queue.filter(entry => entry.status === 'pending')
-      const ids = new Set(pending.map(entry => entry.id))
-      if (application.state.currentTurnId && application.state.queue.some(entry => entry.id === application.state.currentTurnId)) {
-        ids.add(application.state.currentTurnId)
-      }
-      return { sessionActive: !!session && session.endedAt == null, uncompletedCount: ids.size,
-        sessionId: session?.id ?? null }
-    },
-    sessionEnded: () => {
-      const current = application.state.sessions.find(session => session.id === application.state.currentSessionId)
-      return !current || !!current.endedAt
-    },
+    closeSummary: () => application.closeSummary(),
+    sessionEnded: () => application.closeSessionEnded,
     flushState: async () => {
       await application.flush()
       return true
-    },
-    endSessionAndArchive: async () => {
-      try { return await application.endCurrentSession() } catch (error) {
-        reportPersistenceFailure(error)
-        throw error
-      }
     }
   }
+
+  application.subscribe(() => {
+    queueView.render()
+    historyView.render()
+    previousSessionsView.render()
+    appShell.updateSessionStartInfo()
+  })
 })

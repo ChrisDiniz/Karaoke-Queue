@@ -8,6 +8,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
+const { prepareControllerModeProfile } = require('./electron-test-profile')
 
 const projectRoot = path.resolve(__dirname, '../..')
 const electronPath = require('electron')
@@ -23,9 +24,11 @@ process.stdout.write('TEST_PROFILE_RUN ' + path.basename(tempRoot) + '\n')
 
 function makeProfile(name) {
   const root = path.join(tempRoot, name)
+  const userData = path.join(root, 'user-data')
+  prepareControllerModeProfile(userData)
   return {
     root,
-    userData: path.join(root, 'user-data'),
+    userData,
     env: {
       ...process.env,
       XDG_CONFIG_HOME: path.join(root, 'config'),

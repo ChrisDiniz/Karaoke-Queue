@@ -9,6 +9,7 @@ const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
 const { applyFrozenQueueOrder } = require('../src/frozen-queue-rules')
 const { createKaraokeDatabase } = require('../database')
+const { prepareControllerModeProfile } = require('./electron-test-profile')
 const projectRoot = path.resolve(__dirname, '../..')
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-rr-electron-'))
 const profile = path.join(root, 'profile')
@@ -19,6 +20,7 @@ async function run() {
   let page
   let databasePath
   const launch = async () => {
+    prepareControllerModeProfile(profile)
     app = await electron.launch({ executablePath: require('electron'),
       args: [projectRoot, `--user-data-dir=${profile}`],
       env: { ...process.env, XDG_CONFIG_HOME: path.join(root, 'config'), XDG_CACHE_HOME: path.join(root, 'cache'), XDG_DATA_HOME: path.join(root, 'data') }
@@ -30,7 +32,7 @@ async function run() {
     const actualProfile = await app.evaluate(({ app }) => app.getPath('userData'))
     assert.ok(path.resolve(actualProfile).startsWith(path.resolve(root)), 'isolated profile')
     databasePath = path.join(actualProfile, 'karaoke.sqlite')
-    assert.equal(await page.evaluate(() => !!window.karaokeDatabase), true, 'uses SQLite IPC bridge')
+    assert.equal(await page.evaluate(() => !!window.karaokeManagement), true, 'uses the Main-hosted Management application bridge')
   }
   const close = async () => {
     if (!app) return
