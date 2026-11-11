@@ -1,5 +1,9 @@
 # Fase E — Ativação no Reprodutor e abertura em tela cheia
 
+**Encerramento — 2026-11-09: Fase E CONCLUÍDA por decisão explícita do proprietário nesta sessão.** Este registro substitui os status anteriores de revisão/aceite pendente para o encerramento da fase e de E1–E5. E0 mantém sua aprovação de 2026-11-08. A solicitação de encerramento não é evidência de execução de testes adicionais: S1 permanece historicamente PARTIAL, e cenários registrados como NOT RUN não foram convertidos em PASS. Evidências, riscos e limitações anteriores ficam preservados. Fase F não iniciada nem autorizada por este encerramento.
+
+**Histórico de execução e validação anterior ao encerramento:**
+
 Solicitação adicional do proprietário em 2026-11-09, com autorização para implementar, testar, documentar, fazer commit/push e acompanhar o PR de validação até gerar artifact. Sem merge; E0 aprovada, E1–E5 sem homologação e S1 PARTIAL.
 
 ## Comportamento e contratos

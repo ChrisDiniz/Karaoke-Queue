@@ -525,6 +525,102 @@ test('ended without observed play or reliable duration is uncertain, never a com
   } finally { await context.cleanup() }
 })
 
+test('a media read error stays stopping until Stop is acknowledged, then retains failed evidence', async () => {
+  const context = await setup()
+  const stopAck = deferred<void>()
+  context.host.nextStopAcknowledgement = stopAck.promise
+  try {
+    await context.service.load('01001')
+    const attemptId = context.service.getState().attemptId!
+    context.host.media(attemptId, 1, { type: 'loadedmetadata', duration: 15 })
+    await settleEvents()
+    await context.service.play()
+    context.host.media(attemptId, 2, { type: 'playing', currentTime: 1, duration: 15 })
+    await settleEvents()
+
+    context.host.media(attemptId, 3, { type: 'error', mediaErrorCode: 2 })
+    await waitFor(() => context.service.getState().status === 'stopping')
+    assert.ok(context.host.commands.some(command => command.type === 'stop' && command.attemptId === attemptId))
+    assert.equal(context.events.some(event => event.type === 'error' && event.attemptId === attemptId), false,
+      'the failure is not published as recoverable before containment ACK')
+
+    stopAck.resolve()
+    await waitFor(() => context.service.getState().status === 'failed')
+    assert.equal(context.service.getState().containmentStatus, 'stop-acknowledged')
+    assert.equal(context.events.filter(event => event.type === 'error' && event.attemptId === attemptId).length, 1)
+    assert.equal(context.events.some(event => event.type === 'natural-end-candidate'), false)
+    assert.equal(await context.service.clearFailedMedia(attemptId), true,
+      'an explicit reset can clear the failed surface only after containment')
+    assert.equal(context.service.getState().status, 'idle')
+  } finally { await context.cleanup() }
+})
+
+test('a rejected media load is stopped before its known failure is published', async () => {
+  const context = await setup()
+  const loadAck = deferred<void>()
+  context.host.nextLoadAcknowledgement = loadAck.promise
+  try {
+    const pendingLoad = context.service.load('01001')
+    const loadCommand = await context.host.whenCommand('load')
+    loadAck.reject(new PlayerPlaybackError('PLAYBACK_FAILED', 'Controlled load rejection.'))
+    await assert.rejects(pendingLoad, (error: unknown) => error instanceof PlayerPlaybackError && error.code === 'PLAYBACK_FAILED')
+    const state = context.service.getState()
+    assert.equal(state.status, 'failed')
+    assert.equal(state.attemptId, loadCommand.attemptId)
+    assert.equal(state.containmentStatus, 'stop-acknowledged')
+    assert.ok(context.host.commands.some(command => command.type === 'stop' && command.attemptId === loadCommand.attemptId))
+    assert.equal(context.events.filter(event => event.type === 'error' && event.attemptId === loadCommand.attemptId).length, 1)
+  } finally { await context.cleanup() }
+})
+
+test('a failed Stop falls back to confirmed host termination before releasing known media failure', async () => {
+  const context = await setup()
+  const stopAck = deferred<void>()
+  context.host.nextStopAcknowledgement = stopAck.promise
+  try {
+    await context.service.load('01001')
+    const attemptId = context.service.getState().attemptId!
+    context.host.media(attemptId, 1, { type: 'loadedmetadata', duration: 15 })
+    await settleEvents()
+    await context.service.play()
+    context.host.media(attemptId, 2, { type: 'playing', currentTime: 1, duration: 15 })
+    await settleEvents()
+    context.host.media(attemptId, 3, { type: 'error', mediaErrorCode: 2 })
+    await waitFor(() => context.service.getState().status === 'stopping')
+    stopAck.reject(new PlayerPlaybackError('COMMAND_TIMEOUT', 'Controlled Stop acknowledgement timeout.'))
+    await waitFor(() => context.service.getState().status === 'failed')
+    assert.equal(context.host.terminateCalls, 1)
+    assert.equal(context.service.getState().containmentStatus, 'host-terminated')
+    assert.equal(context.events.filter(event => event.type === 'error' && event.attemptId === attemptId).length, 1)
+    assert.equal(await context.service.clearFailedMedia(attemptId), true)
+    assert.equal(context.service.getState().status, 'idle')
+  } finally { await context.cleanup() }
+})
+
+test('an uncontained media failure remains uncertain and cannot be reset', async () => {
+  const context = await setup()
+  const stopAck = deferred<void>()
+  context.host.nextStopAcknowledgement = stopAck.promise
+  context.host.terminationConfirmed = false
+  try {
+    await context.service.load('01001')
+    const attemptId = context.service.getState().attemptId!
+    context.host.media(attemptId, 1, { type: 'loadedmetadata', duration: 15 })
+    await settleEvents()
+    await context.service.play()
+    context.host.media(attemptId, 2, { type: 'playing', currentTime: 1, duration: 15 })
+    await settleEvents()
+    context.host.media(attemptId, 3, { type: 'error', mediaErrorCode: 2 })
+    await waitFor(() => context.service.getState().status === 'stopping')
+    stopAck.reject(new PlayerPlaybackError('COMMAND_TIMEOUT', 'Controlled Stop acknowledgement timeout.'))
+    await waitFor(() => context.service.getState().status === 'uncertain')
+    assert.equal(context.service.getState().containmentStatus, 'unconfirmed')
+    assert.equal(context.events.some(event => event.type === 'error' && event.attemptId === attemptId), false)
+    assert.equal(await context.service.clearFailedMedia(attemptId), false)
+    assert.equal(context.service.getState().status, 'uncertain')
+  } finally { await context.cleanup() }
+})
+
 test('host termination invalidates active playback and later EOF cannot complete it', async () => {
   const context = await setup()
   try {
@@ -749,4 +845,88 @@ test('a Pause timeout after observed playback becomes uncertain and ignores dela
     pauseAcknowledgement.resolve()
     await context.cleanup()
   }
+})
+
+class StorageClock {
+  time = 0
+  jobs: Array<{ at: number; fn: () => void; cancelled: boolean }> = []
+  now = () => this.time
+  schedule = (fn: () => void, ms: number) => { const job = { at: this.time + ms, fn, cancelled: false }; this.jobs.push(job); return job }
+  cancel = (handle: unknown) => { (handle as { cancelled: boolean }).cancelled = true }
+  async advance(ms: number) {
+    this.time += ms
+    for (const job of [...this.jobs]) if (!job.cancelled && job.at <= this.time) { job.cancelled = true; job.fn() }
+    await settleEvents()
+  }
+}
+for (const scenario of ['initial-waiting', 'buffer-advancing', 'stalled', 'paused', 'obsolete-timer', 'duplicate-playing'] as const) {
+  test(`F0-08 Standalone progress watchdog ${scenario}`, async () => {
+    const c = await setup()
+    const clock = new StorageClock()
+    c.service.enableStorageMonitoring(clock)
+    try {
+      await c.service.load('01001')
+      const id = c.service.getState().attemptId!
+      c.host.media(id, 1, { type: 'waiting', currentTime: 0 })
+      await settleEvents()
+      if (scenario === 'initial-waiting') {
+        await clock.advance(16000)
+        assert.equal(c.service.getState().status, 'loading')
+        return
+      }
+      c.host.media(id, 2, { type: 'loadedmetadata', duration: 60 })
+      await settleEvents()
+      await c.service.play()
+      c.host.media(id, 3, { type: 'playing' })
+      c.host.media(id, 4, { type: 'timeupdate', currentTime: 1, duration: 60 })
+      c.host.media(id, 5, { type: 'stalled', currentTime: 1 })
+      await settleEvents()
+      if (scenario === 'buffer-advancing') {
+        await clock.advance(10000)
+        c.host.media(id, 6, { type: 'timeupdate', currentTime: 2, duration: 60 })
+        await settleEvents()
+        await clock.advance(6000)
+        assert.equal(c.service.getState().status, 'playing')
+      } else if (scenario === 'paused') {
+        await c.service.pause()
+        c.host.media(id, 6, { type: 'pause' })
+        await settleEvents(); await clock.advance(60000)
+        assert.equal(c.service.getState().status, 'paused')
+      } else if (scenario === 'obsolete-timer') {
+        await c.service.stop()
+        await clock.advance(60000)
+        assert.equal(c.service.getState().status, 'stopped')
+      } else {
+        if (scenario === 'duplicate-playing') {
+          await clock.advance(10000)
+          c.host.media(id, 6, { type: 'playing' }); await settleEvents()
+          await clock.advance(5000)
+        } else await clock.advance(15000)
+        await waitFor(() => c.service.getState().status === 'failed')
+        assert.equal(c.service.getState().errorCode, 'MEDIA_STALLED')
+        assert.equal(c.service.getState().containmentStatus, 'stop-acknowledged')
+        assert.equal(c.events.some(e => e.type === 'natural-end-candidate'), false)
+        assert.equal(c.sources.grants.size, 0)
+      }
+    } finally { await c.cleanup() }
+  })
+}
+
+test('F0-08 revalidated identity rejects a replaced file even after a new inventory was published', async () => {
+  const c = await setup()
+  try {
+    const identity = await c.service.validatedMediaIdentity('01001')
+    const opened = await c.library.openForPlayback('01001')
+    assert.equal(opened.status, 'available')
+    if (opened.status !== 'available') return
+    const file = opened.filePath
+    await opened.handle.close()
+    fs.renameSync(file, file + '.old')
+    fs.writeFileSync(file, 'a replacement with different file identity')
+    await c.library.refresh()
+    await assert.rejects(c.service.playImmediately('01001', undefined, undefined, identity),
+      (e: unknown) => e instanceof PlayerPlaybackError && e.code === 'MEDIA_CHANGED')
+    assert.equal(c.sources.grants.size, 0)
+    assert.equal(c.host.commands.length, 0)
+  } finally { await c.cleanup() }
 })

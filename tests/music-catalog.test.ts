@@ -13,6 +13,7 @@ import {
 } from '../src/music-catalog'
 import { MusicCatalogService } from '../src/music-catalog-service'
 import { VideoLibraryService } from '../src/video-library-service'
+import { VideoLibraryIndexStore } from '../src/video-library-index-store'
 
 function temporaryDirectory(): { directory: string; cleanup: () => void } {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-music-catalog-'))
@@ -688,6 +689,43 @@ test('lookup returns unknown when the Player inventory revision changes during f
   } finally {
     releaseLookup.resolve()
     await service.close()
+    database.close()
+    library.close()
+    temp.cleanup()
+  }
+})
+
+test('catalog lookup can use and revalidate the last complete generation during background scan', async () => {
+  const temp = temporaryDirectory()
+  const mediaRoot = path.join(temp.directory, 'media')
+  fs.mkdirSync(mediaRoot)
+  const mediaPath = path.join(mediaRoot, '00123.mp4')
+  fs.writeFileSync(mediaPath, '')
+  const stats = fs.statSync(mediaPath, { bigint: true })
+  const store = new VideoLibraryIndexStore(path.join(temp.directory, 'profile'))
+  await store.writeComplete({ generation: 3, configuredRoots: [mediaRoot], roots: [{
+    configuredPath: mediaRoot, canonicalRoot: fs.realpathSync(mediaRoot), entries: [{ relativePath: '00123.mp4',
+      musicCode: '00123', size: Number(stats.size), mtimeMs: Number(stats.mtimeNs) / 1_000_000,
+      device: stats.dev.toString(), inode: stats.ino.toString() }]
+  }] })
+  const library = new VideoLibraryService([mediaRoot], { indexStore: store })
+  await library.restorePersistentIndex()
+  const csvFile = writeCsv(temp.directory, 'catalog.csv', catalogCsv([['Queen', '123', 'Song']]))
+  const { database, service: catalog } = await makeCatalog(temp.directory, library)
+  try {
+    await catalog.importFile(csvFile)
+    library.setPlaybackActive(true)
+    const reconciliation = library.refresh()
+    assert.equal(library.getSnapshot().scanStatus, 'scanning')
+    const result = await catalog.lookupByVideoCode('123')
+    assert.equal(result.videoAvailability, 'available',
+      'the lookup reopens the selected path and confirms it against the cached metadata')
+    assert.equal(result.inventoryStatus, 'ready')
+    library.setPlaybackActive(false)
+    await reconciliation
+  } finally {
+    library.setPlaybackActive(false)
+    await catalog.close()
     database.close()
     library.close()
     temp.cleanup()

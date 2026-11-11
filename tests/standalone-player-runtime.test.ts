@@ -86,6 +86,7 @@ interface FakeRecoveryOptions {
   initial?: PlayerRecoverySnapshot
   assertError?: Error
   initializeError?: Error
+  resolveStartup?: () => Promise<PlayerRecoverySnapshot>
 }
 
 function fakeRecovery(options: FakeRecoveryOptions = {}) {
@@ -93,9 +94,15 @@ function fakeRecovery(options: FakeRecoveryOptions = {}) {
   let attachedPlayback: PlayerPlaybackRecoveryTarget | undefined
   let disposeCount = 0
   let initializeCount = 0
+  let startupResolveCount = 0
   const recovery: StandaloneRecoveryPort = {
     initialize: () => { initializeCount++; if (options.initializeError) throw options.initializeError; return state },
     attachPlayback: playback => { attachedPlayback = playback },
+    resolveStandaloneStartup: async () => {
+      startupResolveCount++
+      state = options.resolveStartup ? await options.resolveStartup() : state
+      return state
+    },
     getState: () => state,
     assertPlaybackAllowed: () => { if (options.assertError) throw options.assertError },
     resolveInvalidRecovery: () => ({ state, preservedFileCount: 0 }),
@@ -109,6 +116,7 @@ function fakeRecovery(options: FakeRecoveryOptions = {}) {
   get attachedPlayback(): PlayerPlaybackRecoveryTarget | undefined { return attachedPlayback },
     get disposeCount() { return disposeCount },
     get initializeCount() { return initializeCount },
+    get startupResolveCount() { return startupResolveCount },
     setState(next: PlayerRecoverySnapshot) { state = next }
   }
 }
@@ -399,6 +407,25 @@ test('composition disposes recovery when initialization fails before playback co
   }), /recovery store unavailable/)
   assert.equal(playbackFactoryCalls, 0)
   assert.equal(recovery.disposeCount, 1)
+})
+
+test('Standalone composition resolves inherited recovery after attaching fresh playback and before use', async () => {
+  let recovery: ReturnType<typeof fakeRecovery>
+  const resolved = { status: 'resolved', outcome: 'dismissed', attemptId: 'previous-attempt', updatedAt: '2026-11-10T00:00:00.000Z' } as const
+  recovery = fakeRecovery({ initial: { status: 'pending', attemptId: 'previous-attempt', musicCode: '01001',
+    playbackStatus: 'paused', lastTransition: 'playback-paused', updatedAt: '2026-11-09T00:00:00.000Z' },
+    resolveStartup: async () => {
+      assert.ok(recovery.attachedPlayback, 'fresh playback must be attached before resolving inherited state')
+      assert.equal(recovery.attachedPlayback.getState().status, 'idle')
+      return resolved
+    }
+  })
+  const built = await buildComposition({ recovery: recovery.recovery })
+  assert.equal(recovery.initializeCount, 1)
+  assert.equal(recovery.startupResolveCount, 1)
+  assert.equal(built.composition.getRecoveryState().status, 'resolved')
+  assert.equal(built.playback.getState().status, 'idle')
+  await built.composition.dispose()
 })
 
 test('known typed failure stays rejected while an uncaught post-preparation failure is uncertain', async () => {

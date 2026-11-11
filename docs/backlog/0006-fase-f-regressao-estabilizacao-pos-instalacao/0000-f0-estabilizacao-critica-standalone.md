@@ -1,0 +1,207 @@
+# 0006/0000 — F0: Estabilização crítica do Standalone: biblioteca, inicialização, playback e recovery
+
+> **Correção estrutural vigente:** gate T2, revogação do protocolo e duas corridas de scan corrigidos e validados em fixtures Linux/Windows. Acervo real não acessado nesta correção; sua campanha anterior permanece histórica. F0 não homologada. Ver adendo final e evidências estruturais.
+
+Status da campanha real anterior: **T5 corrigido; playback real T4 passou tecnicamente, mas a campanha T4 é PARTIAL por risco não verificável de LastAccessTime; T2 PARTIAL pelo `readdir` de 9.311 nomes concluído antes da UI; F0 não homologada.** O FAIL histórico de F0-02 foi sucedido pela correção documentada. A medição T1 real foi recuperada do registro progressivo: 9.311 arquivos, scan único de 6,41 s, sem leitura de bytes de vídeo. Ver adendo final de 2026-11-10; históricos anteriores preservados.
+
+## Entrada e escopo
+
+Fase E declarada concluída pelo proprietário, conforme registro de 2026-11-09; sem novas homologações presumidas. Relatos reais: startup lento após USB reconectado, Player ocioso bloqueado, recovery paused preservado, disponibilidade estática; desejo de reduzir engasgos. Não tocar AppData original. Esta F0 antecede F1–F4 sem renumerá-las; ID 0000 livre e consistente com precedente E0.
+
+## Especificação normativa
+
+- [Diagnóstico e arquitetura](../../fase-f0-diagnostico-arquitetura.md): fatos, hipóteses, funções e decisões P1/P2/P3.
+- [Lotes F0-01–07](../../fase-f0-lotes.md): ownership, sequência, dependências, erros, testes, aceite e PASS/FAIL.
+- [Matriz de testes e baseline](../../fase-f0-testes.md).
+- [Handoff e prompts por lote](../../fase-f0-execucao.md).
+- [Roadmap](../../standalone-player-roadmap.md), V1 e procedimentos Windows continuam canônicos.
+
+## Subdivisões estáveis
+
+| Lote | Dependência | Estado |
+|---|---|---|
+| F0-01 — Instrumentação e baseline | Nenhuma | PASS da instrumentação e baseline de varredura real única; 9.311 arquivos e métricas registradas; sem repetição do scan inicial |
+| F0-02 — Startup e recovery | 01; P1 aprovada | PASS automatizado após correção estrutural; ver checkpoint posterior |
+| F0-03 — Convergência de tentativa | 02; P2 aprovada; Doop só elemento novo | PASS técnico |
+| F0-04 — Store do inventário | 01; P3 JSON aprovada; independente de 02/03 | PASS após corrigir identidade Windows de 64 bits; store e biblioteca passaram no snapshot validado |
+| F0-05 — Startup/incremental | 03/04; P3 aprovada | T2 real reutilizou índice e abriu UI antes da reconciliação completa; PARTIAL no critério estrito pois `readdir` já retornou 9.311 nomes antes da UI |
+| F0-06 — Disponibilidade | 05 | PASS fixture Windows integrado após exigir foco ativo no harness; USB físico NOT RUN |
+| F0-07 — Buffering/regressões | 02–06 | PARTIAL: assertions T4/MP4 real e liberação de handles PASS; preservação de LastAccessTime não comprovada; sem validação audiovisual humana, reconexão USB física ou smoke do pacote instalado; T2 estrito PARTIAL |
+
+## Saída
+
+Os sete lotes cobertos pela autorização global estão implementados. Os gates executados passaram, mas T2 permanece PARTIAL pela enumeração de nomes observada antes da UI e variantes físicas/instaladas permanecem NOT RUN. O proprietário deve revisar esse achado e as limitações antes de homologar F0. A aprovação explícita precede F1; F0 não conclui F nem antecipa G/H/H6.
+
+## Evidências desta auditoria
+
+Working tree inicial limpa; HEAD bc3d37de09462485caa9ff027341eeabdd4b88cb. Reindexação e bloqueio por paused antigo comprovados como caminhos de código, não causa exclusiva do incidente. Nenhum dado original examinado/modificado. Aplicação/Windows/Doop: NOT RUN nesta entrega documental. Revisão documental e diff-check registrados no relatório. Sem alteração de produção, commit ou push.
+
+## Regras futuras
+
+Um lote por vez ou grupo independente com ownership exclusivo; testes focados; atualizar esta seção por lote com arquivos/evidências/resultados/limites. Nunca apagar recovery real, remover guardas, enfraquecer testes, usar mocks como integração, sleeps para ocultar races, modificar UI/V1 sem aprovação, antecipar G/H ou declarar NOT RUN como PASS. Mudança compartilhada exige regressão Gestão. Não fazer commit/push sem autorização e não declarar F concluída sem aprovação do proprietário.
+
+## Consolidação executiva — decisões e aceite de testes
+
+P1 (idle seguro no restart), P2 (recuperação runtime com contenção confirmada) e P3 (JSON Main-only e consistência eventual com revalidação seletiva) foram aprovadas pelo proprietário. A autorização de 2026-11-10 cobre execução autônoma sequencial de F0-01–07 e avanço automático pelos gates técnicos; não perguntar novamente entre esses lotes. P2 não aprova novos elementos visuais; o elemento visual específico, se necessário, continua dependente de Doop.
+
+Ordem executiva autorizada 01→02→03→04→05→06→07; embora 04 dependa tecnicamente só de 01, manter a ordem solicitada nesta execução. F0-01 exige INS-01–03 e baseline, não índice/startup leve/recovery corrigido. F0-04 exige store isolado, sem integrar bootstrap. Os 31 grupos originais têm responsável e primeiro PASS na matriz; recortes prévios e três novos grupos INS estão explícitos.
+
+Ledger de validação futura por lote: ID/variante/classe, pré-requisito, ambiente, resultado, evidência, responsável e destino. Teste local obrigatório NOT RUN impede aceite técnico; variante Windows/HD/pacote/visual ausente pode aguardar 07 sem PASS desse ambiente. Na 07 as transferências vencem; limitação só pode ser aceita nominalmente pelo proprietário, preservando NOT RUN. Nenhum FAIL é mascarado. F1–F4 continuam dependentes de F0 concluída/aprovada.
+
+
+## Autorização de execução — F0-01 a F0-07
+
+Em 2026-11-10, o proprietário autorizou uma execução contínua e autônoma dos sete lotes F0-01→F0-07, com avanço automático após cada gate técnico satisfeito. Esta autorização substitui a autorização individual entre esses sete lotes; não autoriza F1–F4/G/H, commits, publicação, instalação operacional, mutação de AppData real, operações destrutivas ou alteração de contratos fora da F0. P1/P2/P3 permanecem aprovadas.
+
+Gates: implementação delimitada concluída; assertions aplicáveis passam; regressões relevantes sem falhas introduzidas; segurança/integridade confirmadas; evidências e checkpoint registrados; DEFERRED/NOT RUN/N/A fielmente classificados; dependências atendidas. Interromper somente trecho com falha obrigatória sem solução segura, risco de corrupção/segurança, decisão de produto nova, mudança arquitetural fora do contrato ou pré-requisito de ambiente sem alternativa segura; trabalho independente continua. HD pessoal somente leitura e sem escrita; sem desconexão. Nenhuma validação física ausente vira PASS. Aprovação final/homologação F0 permanece reservada ao proprietário e não inicia F1.
+
+## Checkpoints de execução
+
+O executor acrescentou abaixo evidências sequenciais de cada lote sem sobrescrever o histórico documental anterior. A autorização cobriu todos os lotes F0 e permitiu avançar automaticamente quando os gates técnicos passaram. A aprovação final F0 continua pendente do proprietário.
+
+### Checkpoints finais — 2026-11-10
+
+Fingerprint final de código/testes validado pelos runners Windows: `de3e33242ad4c63feb5fc0b4a574e89c19a43ffbbc50ed3bc5293f4e18b091cd`; branch `feature/remote-player-lan-integration-2`, HEAD `bc3d37de09462485caa9ff027341eeabdd4b88cb`. Os registros finais acrescentados após os runners são somente documentais. Build candidato conferido pelo fingerprint de entrada `0b97722b919743049cabe4e704c51d53dd1a20a46783e68a7f9ade954f5b5dda`.
+
+| Lote | Resultado e arquivos/decisões | Validação, evidência e avanço |
+|---|---|---|
+| F0-01 | Instrumentação opt-in, IDs de execução, fases/contadores agregados e scripts de baseline; sem alteração do comportamento funcional. Arquivos: `src/f0-diagnostics.ts`, `src/main-media-runtime.ts`, `src/video-library-service.ts`, `main-runtime.ts`, `scripts/f0-library-baseline.cjs`, `tests/f0-diagnostics.test.ts`, `tests/main-media-runtime.test.ts`. | `npm run compile`, `npm run baseline:f0:library`, E2E de startup de produção: PASS. Fixtures vazias 1k/5k/9k; custo completo e incremental registrado no relatório. `/mnt/d` não estava montado; HD real e Windows de 9k: NOT RUN. Gate técnico liberou 02. |
+| F0-02 | P1 aplicada somente ao Standalone: nova execução inicia em idle após confirmar host limpo, resolve estados transitórios antigos sem autoplay/fila inferida e preserva/quarentena evidência inválida; default compartilhado da Gestão preservado. Arquivos: `src/player-playback-contracts.ts`, `src/standalone-player-runtime.ts`, `src/player-playback-recovery.ts`, `src/player-playback-service.ts`, `src/player-playback-renderer.ts`. | Testes de recovery/runtime, processos Electron de crash/restart e E2E Main de produção: PASS; sem uso de AppData operacional. Gate liberou 03. |
+| F0-03 | P2 aplicada: erro conhecido e timeout só liberam estado depois de Stop/host containment confirmado; tentativa antiga e EOF atrasado são cercados por identidade/epoch; fila permanece preservada. Arquivos: `src/player-playback-service.ts`, `src/standalone-player-contracts.ts`, `src/standalone-player-sequence.ts` e testes de playback/sequence/host. | Playback/recovery/sequence/IPC/integração/produção Electron: PASS. Nenhuma UI nova foi necessária. Gate liberou 04. |
+| F0-04 | Store Main-only `video-library-index.json`, versionado, limite/validação estritos, generation monotônica, leitura sem mídia e escrita atômica; sem migração SQLite. Arquivo principal: `src/video-library-index-store.ts`; testes `tests/video-library-index-store.test.ts`. | Os primeiros testes Windows completos encontraram 2 FAIL em `writeComplete`: device/inode NTFS de 64 bits excediam a precisão segura de JSON number. Corrigido com `BigIntStats` e strings decimais limitadas a uint64; teste de roundtrip/overflow acrescentado. No snapshot validado passaram 9 testes do store e 23 da biblioteca no Linux e runner Windows. Gate liberou 05. |
+| F0-05 | Startup Standalone restaura índice completo antes da reconciliação assíncrona; varredura completa fica fora do caminho de criação da janela; reutiliza metadados inalterados, publica/persiste apenas geração completa, revalida candidato antes de abrir e cede a I/O quando playback está ativo. Arquivos: `src/video-library-service.ts`, `src/main-media-runtime.ts`, `src/music-catalog-service.ts`, `main-runtime.ts`. | `npm run baseline:f0:library`, `npm run baseline:f0:index`, Main-media/catalog/library unit e E2E Electron de biblioteca/produção: PASS. Gate liberou 06. |
+| F0-06 | Disponibilidade por sonda single-flight/revision/epoch; preserva cache em erro transitório, agenda reconciliação ao reconectar o mesmo dispositivo e rejeita remapeamento de volume. Snapshot existente atualizado sem alteração visual. Arquivos: `src/video-library-service.ts`, `src/standalone-player-options.ts`, IPC/Main/Renderer de opções e testes correspondentes. | Testes temporários de remoção/reconexão, permissão, resultado obsoleto e subscription; E2E Electron biblioteca/opções e runner Windows: PASS. Desconexão/reconexão do HD físico: NOT RUN; nenhuma escrita feita no acervo do proprietário. Gate liberou 07. |
+| F0-07 | Protocolo nativo de arquivo/ranges/streams validado; nenhuma pré-carga ou buffer personalizado foi adicionado. Teste novo `tests/player-media-protocol.test.ts`; harnesses de produção/integrations atualizados para estado inicial seguro e falha contida. | Full `npm run test:unit`: 499 testes em 43 relatórios, 0 falhas. `npm run test:e2e:video-library:headless`: PASS fora do sandbox; Electron não iniciava dentro do sandbox. E2Es de playback, recovery, options, integração e produção Linux: PASS. Runner Windows completo, produção Standalone Windows com MP4/SQLite e `npm run package:windows:candidate -- --approve-untracked` + `verify:windows-build`: PASS no fingerprint `de3e3324…`. SHA-256 do instalador candidato `2355437827c330035a6600cf35e6c4ec92818b13a04241f9ac0636c5b7144426`; não instalado. USB físico, áudio/engasgos no HD e smoke após instalação: NOT RUN. F0 aguarda homologação do proprietário. |
+
+#### Registro de pendências e integridade
+
+- A unidade `D:`/`/mnt/d` não estava acessível nesta sessão. Nenhuma enumeração, leitura ou escrita ocorreu no HD do proprietário; a amostra local MP4 usada no Electron é distinta do acervo de 286 GB e foi preservada.
+- Runner e build usaram checkout NTFS isolado e perfis/SQLite temporários. O runner validou os hashes da origem; não houve instalação/desinstalação operacional, alteração de AppData real, workflow, commit ou push.
+- `npm ci` nativo informou 6 vulnerabilidades moderadas; nenhuma atualização de dependências foi executada nesta F0.
+- Testes físicos, execução instalada do pacote e aceite final F0 permanecem pendentes. Nenhuma alteração visual nova foi feita, portanto não há aprovação Doop pendente nesta implementação. F1–F4 não foram iniciadas.
+- A última alteração de código após a campanha anterior foi cobertura em `tests/video-library.test.ts`; ela verifica rename e reabertura de substituição com mesmo caminho/tamanho/timestamp. O oráculo foi ajustado para a semântica real de contadores por scan. A versão final do teste passou nos 499 unitários, no E2E de biblioteca Linux e no runner Windows completo.
+
+### Validação Windows com HD externo — adendo de 2026-11-10
+
+Esta atualização é posterior aos checkpoints acima e prevalece para o status vigente. O proprietário confirmou acesso ao volume D: em Windows 11 nativo: NTFS, USB 3.0, capacidade reportada 500.107.862.016 bytes. A campanha usou runner oficial, checkout NTFS temporário e perfis em C:, sem iniciar/alterar a instalação operacional ou AppData real. O HD permaneceu somente leitura e conectado; não houve hashes integrais ou leituras completas de MP4.
+
+| Lote/caso | Resultado observado | Evidência, arquivos e limites |
+|---|---|---|
+| F0-01 / T1 | PARTIAL (assertions funcionais passaram) | UI utilizável antes do fim da reconciliação e índice populado/coerente com o scan foram confirmados. Métricas, contagem exata e contadores não foram preservados quando o caso composto falhou posteriormente. Não repetir scan completo nesta campanha. |
+| F0-02 / T5 | FAIL | `paused` em perfil temporário impediu janela Electron em 30 s. Causa localizada: Sequence aguarda resolução do recovery antes da janela anexar o host que a resolução exige. Nenhuma correção funcional foi aplicada. |
+| F0-03 | PASS anterior para fixtures; extensão real NOT RUN | Testes anteriores de convergência permanecem válidos nos respectivos ambientes. Playback no HD real não foi alcançado; não atribuir PASS de T4. |
+| F0-04 | PASS anterior | Store e suites Windows anteriores permanecem evidência do fingerprint então registrado; a campanha do HD não reabriu nem corrompeu índice real. |
+| F0-05 / T2 | NOT RUN no HD para restart limpo | Um harness sintético Windows sem recovery passou e reutilizou o índice sintético. A segunda inicialização real observada tinha recovery `paused`; não é T2 limpo nem prova de performance do D:. |
+| F0-06 / T6 | PASS em fixture após retry isolado; primeira execução integrada falhou por timeout | Runner focado Windows passou quatro E2Es de biblioteca e 23 testes unitários com fingerprint `48326107dc9d957148c0c3b7e9ed71bb80e0ce12855d9a64fe59a58d7619fc8`. Remoção/reconexão lógica atualizou snapshot/UI e preservou configuração/índice. A diferença da execução inicial não está explicada. USB físico NOT RUN. |
+| F0-07 / T3–T4 | PARTIAL / NOT RUN | Reconexão física não ocorreu; playback de MP4 do D: não foi alcançado; pacote não instalado. Nenhum dado foi copiado para fora do HD. |
+
+Nenhum tempo de startup ou reconciliação do acervo real foi retido. O baseline anterior de 9k (6,38 s scan completo; ~103 ms leitura/parse de JSON e ~1,38 s reconciliação) é de fixtures vazias no Linux/WSL2, não uma comparação Windows. T2 limpo real, T3, T4, pacote instalado e atividade de I/O do Windows permanecem NOT RUN. O comando do runner focado T6 foi `npm run test:e2e:multi-instance:windows -- --approve-untracked --video-library`; o teste composto que reproduziu T5 não emitiu fingerprint final verificável. Resultados detalhados, isolamento e sequência de bootstrap estão no [relatório](../../fase-f0-relatorio.md), [diagnóstico](../../fase-f0-diagnostico-arquitetura.md) e [ledger](../../fase-f0-testes.md).
+
+**Estado vigente:** F0-02 FAIL bloqueia a validação integrada e exige correção sob P1 antes de homologação. F0-01 e F0-05 não comprovam performance real; F0-06 só tem PASS de fixture; F0-07 permanece PARTIAL. Não instalar o produto nem tocar AppData operacional para reproduzir. Não iniciar F1–F4; aprovação final da F0 continua com o proprietário. Sem commit/push.
+
+### Checkpoint corretivo F0-02/F0-03/F0-07 — 2026-11-10
+
+- **Autorização:** proprietário autorizou correção do ciclo T5, investigação T6 e regressões; sem novo scan real, instalação, AppData operacional ou avanço F1–F4.
+- **F0-02:** ciclo removido; Sequence fica bloqueada enquanto Main prepara janela/host. Após host ready, resolução durável confirma superfície vazia e só então libera comandos. Shutdown/falha durante a confirmação não publica idle. Default Gestão preservado. Arquivos: `main-runtime.ts`, `src/main-media-runtime.ts`, `src/standalone-player-runtime.ts`, `src/standalone-player-sequence.ts`. PASS na regressão paused anteriormente falha; playing/pending/uncertain/inválido passaram no Main Linux.
+- **F0-03:** guardas e correlação preservadas. Main Windows confirmou nova tentativa com MP4 real local, refresh idle permitido/ativo bloqueado e Stop confirmado. Nenhuma liberação de uncertain por timeout ou remoção de guarda.
+- **F0-07:** compile PASS; 215/215 unitários focados; produção completo Linux/Windows PASS; runner integrado Windows/T6/SQLite/Gestão PASS; sem processo residual. Quatro casos unitários novos e ramo focado de Main real; limites por nível na [matriz](../../fase-f0-testes.md). Expectativa incorreta do harness `stopped` foi corrigida para o contrato existente `dismissed`; falha no teste de ready tardio passou a exigir a rejeição segura observada. Nenhum teste enfraquecido.
+- **Windows:** produção completo fingerprint `6b91396ef8cddc683dbe0c79c489dd46c10ba4e4e5f678e3ef72799bcb2c1dbe`; integrado/T6 `183aca5110ce92535b78572471319f72e5f31bf803607d8af0fc2ff8213ab368`; snapshot final focado `3f73dc0119ba191c7fc4028895cc0d5c06649acb19fa61b194bce5c171a7d98e`. Todos exit 0, HEAD `bc3d37de09462485caa9ff027341eeabdd4b88cb`, branch preservada. Entre snapshots só testes mudaram; após final apenas documentação.
+- **T6:** contrato ativo requer foco; harness anterior não o exigia e esperava 20 s onde inativo pode sondar em 30 s. Agora foco é assertion prévia e dado diagnóstico, prazos originais mantidos. PASS integrado Windows; causa exata da execução antiga não comprovada por falta do dado de foco.
+- **T1:** exportação parcial antecipada adicionada ao harness; sem repetir campanha pesada. Métricas perdidas continuam não comprovadas.
+- **Evidências:** [relatório](../../fase-f0-relatorio.md#correção-autorizada-do-bootstraprecovery--2026-11-10) e matriz preservam resultados anteriores e este supersedente. Testes em perfis/MP4 locais, D: não acessado. Falhas de persistência, host sem ready e shutdown na confirmação cobertos por testes determinísticos; fechamento nativo no instante exato do bootstrap não foi E2E.
+- **Próximo gate:** GO para repetir campanha local F0 isolada/somente leitura; T2 limpo separado de T5. USB físico, buffering audível e pacote instalado NOT RUN. F0 não homologada; F1–F4 bloqueadas por aprovação final. Sem commit/push.
+
+## Campanha Windows real — T2 e T4 — 2026-11-10
+
+Este checkpoint é posterior aos registros históricos acima e define a evidência vigente para T1/T2/T4. O proprietário autorizou especificamente T2 e T4; T3 físico ficou fora do escopo. Foi usado o runner Windows oficial, checkout NTFS isolado e perfil temporário em C: que persistiu entre cenários. O volume D: permaneceu conectado e somente leitura. Electron/Main/Preload/IPC/SQLite de perfil temporário reais; não era a instalação operacional nem um pacote instalado.
+
+**Snapshot validado:** branch `feature/remote-player-lan-integration-2`, HEAD `bc3d37de09462485caa9ff027341eeabdd4b88cb`, fingerprint `1dce01339cba6f139b7c729a6727ec705b8d5a406ddafd1f9d6ddc670faabe4d`. Depois do runner, apenas os três documentos do adendo foram alterados. Evidência progressiva: `%LOCALAPPDATA%\Temp\KQ-F0-T2T4-reports-e45a8eb110d342da8e773b95b3de956c\scenarios.jsonl`; o perfil temporário foi removido após shutdown confirmado e inspeção de processos. Os relatórios permanecem preservados e não contêm nomes/códigos de músicas.
+
+| Caso | Resultado atual | Evidência verificável | Limites |
+|---|---|---|---|
+| T1 — preparação inicial única | PASS para scan medido | 9.311 entradas; 6.409,6 ms scan; UI utilizável 1.233 ms; lstat 18.622, stat 9.312, realpath 9.312, 9.311 opens/closes, `bytesRead=0`; índice 1.266.655 bytes. | Uma amostra; não repetida. Não comprova cache frio/Windows filesystem nem instalação. |
+| T2 — segunda abertura com índice | **PARTIAL executivo**; oráculos de reutilização e startup do runner PASS | Índice restaurado 105,75 ms; janela 1.315 ms; UI utilizável 1.317 ms; snapshot idle 1.414 ms. No marco de UI: 510 candidatos/cache hits, 511 lstat, 1 stat, 1 realpath, zero MP4 opens e scan ainda `scanning`. Reconciliação concluiu 770 ms depois da UI (867,2 ms total), com 9.311 cache hits/lstat, zero opens e bytes. | `entriesEnumerated=9311` na UI: `readdir` já retornou a listagem completa, embora validação por arquivo continuasse em background. Critério estrito “sem enumeração pesada antes da UI” fica aberto para revisão; não declarar T2 PASS integral. Nenhuma comparação cache frio. |
+| T3 — desconexão/reconexão física | NOT RUN | Não houve intervenção no USB. | Permanece teste físico manual assistido, separado do CI. |
+| T4 — playback de MP4 real do D: | **PARTIAL geral**; assertions técnicas PASS | Um código único do índice, sem registrar valor/nome, foi revalidado e tocado. Main `playing` 6.059 ms e HTML `playing` 5.249 ms após Enter (inclui countdown); currentTime avançou. Pause/resume conservou attemptId; refresh ativo bloqueado; Stop confirmou idle. canplay=1, playing=2, waiting=1 (~84 ms até canplay), stalled/error/ended=0. | Política LastAccessTime habilitada e sem baseline; preservação de metadado não pode ser certificada. Aproximadamente 0,6 s de mídia; não comprova percepção audiovisual. O scan terminou antes do `playing`; não demonstra contenção sob I/O concorrente. |
+| Recursos T4 | PASS técnico | 2 requests Range; handles 2/2 e streams 2/2 fechados; 0 ativos após shutdown; 4.057.641 bytes lidos; shutdown 301 ms. | CPU/RAM amostrados somente no PID principal, não na árvore Chromium; I/O agregado do SO não medido. LastAccessTime não foi verificado antes/depois. |
+
+### Tentativas e resultado final
+
+Os registros `FAIL` intermediários continuam no JSONL. A primeira assertion T2 comparava a contagem do `readdir` em lote com progresso por candidato e falhava mesmo com scan ativo; o oráculo foi corrigido para scanInProgress/candidatos/cache hits/opens. As tentativas seguintes identificaram e corrigiram somente o harness: o vídeo é criado ao carregar e não existe em idle; o timestamp de início de playback precisa ser evento real após countdown, não o Enter; ao retomar o perfil, `stopped/stop-confirmed` é terminal esperado após T4 anterior. Nenhum desses resultados demonstrou defeito de produção. A execução final registrou `T2+T4-final-summary=PASS`, e todas as métricas do T2/T4 foram persistidas antes do cleanup.
+
+O custo foi preservado explicitamente: além do T1 inicial único, a primeira tentativa T2 completou uma varredura de metadados de 9.311 candidatos (6.409,6 ms, 9.311 opens/closes, zero bytes) e então falhou no oráculo. Os retries do harness causaram novas reconciliações; duas não registraram conclusão antes do cleanup, duas terminaram em 853,7/867,2 ms com 9.311 cache hits e zero opens/bytes. Não foram campanhas repetidas para estatística, mas passaram novamente por enumeração/lstat. Nenhum scan foi iniciado depois do resultado final PASS.
+
+Build/validação: `npm run compile` PASS no WSL e no Windows nativo; `node scripts/windows-native-runner.test.cjs` 37/37 PASS; `npm run test:e2e:multi-instance:windows -- --approve-untracked --standalone-production` PASS com fingerprint acima. O runner limpou processos temporários. As suítes Combined/Gestão não foram executadas novamente nesta campanha focalizada. `git diff --check` PASS. Nenhuma fonte funcional de produção, AppData, instalação ou conteúdo da biblioteca foi alterado intencionalmente; contudo, LastAccessTime pode ter sido atualizado automaticamente pelo Windows, conforme a cautela abaixo. Sem commit/push/PR/Release.
+
+**Próximo gate:** GO para revisão independente read-only dos resultados, com atenção à listagem de 9.311 nomes antes da UI e ao risco de LastAccessTime. T2 e a campanha T4 permanecem PARTIAL até revisão do proprietário; as assertions técnicas de playback/handles passaram. T3 USB físico, percepção A/V e pacote instalado NOT RUN. F0 não homologada; F1–F4 não iniciadas.
+
+**Cautela de metadados do volume:** a consulta read-only `fsutil behavior query disablelastaccess` informou `DisableLastAccess = 2` com atualização LastAccessTime habilitada pelo sistema. Listar diretórios e ler 4.057.641 bytes de um MP4 pode agendar atualizações NTFS de último acesso, que podem ser adiadas. Não havia baseline por arquivo para verificar. O harness não solicitou escrita de conteúdo/metadado e nenhum timestamp foi restaurado; após constatar a política, não houve novo acesso ao D:. A campanha não pode certificar LastAccessTime inalterado. Eu deveria ter consultado a política antes do teste. [Microsoft GetFileTime](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletime) e [fsutil behavior](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/fsutil-behavior).
+
+## Checkpoint corretivo estrutural T2/T4 — posterior à revisão independente
+
+- **Autorização:** implementação direcionada, testes e revisão; P1/P2/P3 já aprovadas. Sem acesso ao D:, AppData operacional ou instalação.
+- **F0-02/05:** Main prepara documento/IPC/host e resolve recovery antes de admitir scan; runtime admite uma vez, bloqueia sondas pré-gate e respeita shutdown. Main real cobre índice ausente/válido, host retido/falho, close-before-ready, persistência falha e paused/playing/pending/uncertain/inválido.
+- **F0-03/07:** protocolo revalida capability após open, fecha handles tardios e streams revogados/abortados. Stop é verificado antes de shutdown, com nova tentativa e eventos antigos rejeitados após drenar filas. Métricas diretas Main separadas de pré-despacho Renderer e keydown NOT_MEASURED.
+- **Segunda revisão F0-05:** dois FAIL determinísticos confirmaram admissão após idle breve e publicação durante playback. Permit em loop e guardas na ordenação/publicação corrigiram ambos, preservando revisão e epochs.
+- **Testes/exit codes:** compile e focados Linux PASS; biblioteca 25/25, runtime 14/14, protocolo 10/10, runner unitário 37/37; E2E Standalone completo Linux PASS após último ajuste. Runner Windows final exit 0: **313 unitários/13 suítes + 11 cenários Main + quatro E2Es de biblioteca**, incluindo Combined/SQLite/Controller legado. Cleanup/processos PASS. Foram adicionados 17 casos unitários. FAILs anteriores e causas preservados no relatório/ledger.
+- **Snapshot:** `e8b7410e8a9602e67cf6700e68155df08c90947f713bb1f400e71401d30f4e8e`; branch `feature/remote-player-lan-integration-2`, HEAD `bc3d37de09462485caa9ff027341eeabdd4b88cb`. Após o runner somente documentação/evidência foi atualizada. [Hashes, timings e logs](../../fase-f0-evidencias-estruturais.json), [relatório](../../fase-f0-relatorio.md#correção-estrutural-t2t4--implementação-e-revisão-final), [interleavings](../../fase-f0-diagnostico-arquitetura.md#interleavings-revisados).
+- **Arquivos:** produção `main-runtime.ts`, `src/main-media-runtime.ts`, `src/player-media-protocol.ts`, `src/video-library-service.ts`; testes/runner e três helpers novos relacionados no relatório. Não houve alteração visual/V1/schema/Gestão nem exclusão de dados reais.
+- **Próximo gate:** GO para **preparar** T3 manual assistido; executar física/USB, A/V humano, novas métricas reais e pacote instalado continuam NOT RUN. Candidato antigo não contém o código corrigido. Homologação F0 permanece com o proprietário; F1–F4 não iniciadas. Sem commit/push/PR/release/suspensão.
+
+
+## Checkpoint F0-06/07 — infraestrutura T3 manual e regressão sintética
+
+- **Escopo autorizado:** criar/testar runner físico interativo e regressão CI; não executar T3 físico nem acessar/consultar D:. Concluído tecnicamente o escopo de infraestrutura, sem homologação F0.
+- **Arquivos desta entrega:** `scripts/manual-usb-reconnect.cjs`, `usb-reconnect-core.cjs`, `usb-reconnect-native.cjs`, `usb-reconnect-electron.cjs`, `usb-reconnect.test.cjs`; `tests/usb-reconnect-main-entry.ts`, `usb-reconnect-synthetic-electron.ts`; package/scripts dos runners e expectativa de seleção. Produção prioritária conserva hashes da correção estrutural anterior. Não alterar/atribuir a esta tarefa o restante preexistente do working tree.
+- **Implementado:** A aberto/quiescência e B entre execuções, confirmação humana sem ejeção, observação nativa identidade/ausência/retorno, preflight estrito de preservação, perfil privado e retomada, evidência JSONL/resumos progressivos. Físico recusado em CI/non-TTY; entry Main protegida por nonce/perfil. Sintético renomeia somente fixtures, exercita monitor Main/UI, índice/cache/restart, playback real WebM, ciclos repetidos e resposta velha por barreira.
+- **Testes e exit codes:** compile Linux/Windows exit 0; 52 casos novos (Linux 51 PASS/1 SKIP parser Windows; Windows 52 PASS); runner unitário 37/37; biblioteca Windows 25/25 + quatro cenários Electron existentes PASS; E2E sintético Linux/Windows exit 0. Cleanup Windows sem processo residual. Falha inicial de observação de seleção/Stop foi corrigida no harness com Main playing/progresso/bytes/recursos explícitos; nenhum timeout ampliado ou mudança de produção. EPERM do executor exigiu execução autorizada fora de seu sandbox; Chromium sandbox permaneceu ativo.
+- **Snapshot Windows:** `164fabb87e9c03b3ff15914a5917438463530b5859697457d0f8ff221f987e7e`, HEAD `bc3d37de09462485caa9ff027341eeabdd4b88cb`, mesma branch. Após validação, somente documentação/evidência mudou. [Ledger de hashes/logs/resumos](../../fase-f0-t3-evidencias.json), [relatório](../../fase-f0-relatorio.md#t3--infraestrutura-física-interativa-e-regressão-sintética), [matriz](../../fase-f0-testes.md#t3--matriz-da-infraestrutura-manual-e-da-regressão-sintética).
+- **Limites/gates:** T3 físico/console humano completo NOT RUN. Proteção de escrita efetiva externamente validada + IsReadOnly exigidas antes de tocar a pasta; LastAccess desativado não basta. Mudança de letra BLOCKED, volume incorreto FAIL. A quiescência A é instrumentação, Windows pode bloquear remoção por razões externas. Sintético WebM não prova USB/NTFS/MP4/percepção A/V ou acervo 9k.
+- **Próximo passo:** revisão independente e futura solicitação específica para B prioritário; [procedimento e prompt do executor](../../fase-f0-t3-operacao.md). GO condicionado aos preflights; sem proteção verificável, NO-GO para acesso físico. F0 não homologada; F1–F4 não iniciadas. Sem commit/push/PR/release/suspensão.
+
+Verificação final do checkpoint: `git diff --check` PASS; JSON/links novos PASS; hashes de código/testes conferidos contra o ledger Windows. Mudanças preexistentes preservadas; arquivos novos continuam untracked, sem commit/push.
+
+
+## F0-08 — Resiliência à indisponibilidade da biblioteca durante uma sessão
+
+**Autorização específica:** implementação integral, testes/revisão Linux/Windows e modal criado no código sem Doop, concedida pelo proprietário. Não autoriza T3 físico, acesso ao D:, F1–F4 ou homologação F0. [Contrato técnico](../../fase-f0-08-resiliencia.md), [lote e critérios](../../fase-f0-lotes.md#f0-08--resiliência-do-standalone-player-à-indisponibilidade-da-biblioteca-durante-uma-sessão). Preservar checkpoints anteriores. Evidências finais de implementação e validação serão registradas abaixo; P1/P2/P3 continuam aprovadas.
+
+### Checkpoint final F0-08
+
+- **Status:** implementação e validação automatizada concluídas, PASS técnico no escopo disponível; homologação F0 permanece do proprietário. Nenhum acesso/consulta D: ou T3 físico.
+- **Implementação:** estado técnico storageRecovery no Main, filas/target preservados, countdown congelado, loading/Next cancelados com geração, watchdog Standalone opt-in, recuperação/descarte explícitos, identidade física de ocorrência validada novamente, modal autorizado e Preload/IPC restritos. Reconexão não dispara playback; sem restauro de posição prometido/seek. Stop All continua distinto e confirmado.
+- **Arquivos de produção desta subfase:** `src/standalone-player-{sequence,runtime,contracts,ipc,renderer}.ts`, `src/player-playback-{service,contracts}.ts`, `src/main-media-runtime.ts`, `standalone-player-preload.ts`, HTML/CSS Standalone. Compartilhados: default de watchdog desativado na Gestão e contratos/durabilidade preservados. Nenhuma alteração em SQLite/schema, V1, Doop ou instalação.
+- **Testes/infra:** três suítes estendidas e `tests/storage-resilience-electron.ts`; adapter T3 suporta duração parametrizada da mídia gerada; seletores de runners e package scripts integram só sintéticos. 32 unitários adicionados. Suite Sequence 100, playback 35, protocolo 11 PASS Linux/Windows; outras 12 suítes Linux e runner 37/37 PASS; dez cenários Main P1 Linux PASS; T3 sintético final Linux/Windows PASS.
+- **Windows oficial exit 0:** 360 unitários/10 suítes + quatro E2Es biblioteca, T3S e E2E F0-08; perfis/cleanup/processos PASS. Fingerprint `f457a17b41aa84b2c2e6e58c730a4b1a7a87483be509301934e103ab2c29621d`, mesma branch/HEAD dos checkpoints anteriores. Após teste, só docs/evidências mudaram. [Ledger atual](../../fase-f0-08-evidencias.json), [relatório](../../fase-f0-relatorio.md#f0-08--resiliência-a-falhas-de-armazenamento-durante-a-sessão), [matriz 25 cenários](../../fase-f0-testes.md#f0-08--matriz-de-resiliência-da-sessão).
+- **Revisão/autocorreções:** callback de validação após shutdown ganhou fence; recuperação simultânea/Stop protegidos; persistência é verificada novamente antes de publicar sucesso. Corrigidos oráculos e schema/foco/stacking/ID/CSS do modal, sem enfraquecer assertions ou aumentar prazos. EIO de stream nunca é aceito como EOF bem-sucedido. Falhas intermediárias e logs preservados no ledger.
+- **Limites:** geração WebM e erro real de recurso Chromium não comprovam MP4/USB; EIO de leitura em stream é teste separado com FS real. Sem seek; reinício do início exige operador. Fila garantida só na sessão viva. Watchdog não comprova diagnóstico físico; containment/persistence incertos continuam protegidos. Não repetida campanha MP4 histórica completa, nem instalação/percepção A/V/performance9k.
+- **Próximo gate:** GO condicionado para futura solicitação T3 supervisionada e seu preflight de proteção contra escrita; sem proteção verificável, bloquear antes de tocar o acervo. F0 não homologada; não iniciar F1–F4. Working tree anterior preservada; sem commit/push/PR/release/suspensão.
+
+## Checkpoint — campanha física interativa unificada T3 + F0-08
+
+- **Autorização/escopo:** criar e testar infraestrutura; NÃO executar campanha física, consultar/acessar F: ou D:, ejetar, reparar ou alterar instalação/AppData operacional. Tudo executado em mocks/fixtures internas. F0 não homologada.
+- **Arquitetura:** mesmo entry point `manual-usb-reconnect.cjs`, sincronizador oficial, Base T3 e Main real. Novos módulos `usb-campaign.cjs` (orquestração/políticas/history) e `usb-campaign-electron.cjs` (adapter/observações/oráculos); oito IDs B/A/playing/paused/countdown/loading/transition/celebration. Novo B é startup-only; B legado mantém seleção de mídia adicional. Perfis independentes por cenário/tentativa, baseline/cache do B preservado só dentro dele.
+- **Segurança:** inicial F:\musicas, USB saudável/nome testekaraoke e identidade forte; consultas target-only. Modo protegido preservado, descartável exige duas confirmações por sessão e uma por remoção abrupta ativa, sem alegar write protection. Sem autorização por silêncio. Mudança de letra só após mesmo ID + confirmação, encerra cenário corrente PARTIAL e reinicia perfil/baseline. D:/C:/UNC/raiz arbitrária recusadas; sem automação de ejeção/configuração global.
+- **Execução:** iniciar, cancelar, pular, repetir, retomar com código/mode iguais, sem adotar estado operacional antigo. JSONL com fsync e resumos por tentativa sem sobrescrita. FAIL nunca avança automaticamente; identidade/saúde/cleanup inválidos encerram. Buffer sem falha e janelas curtas não viram falso PASS nem são alongados em produção.
+- **Arquivos:** scripts manual/core/native/electron T3, três módulos/testes novos de campanha, `tests/usb-campaign-electron.ts`, seletores Linux/Windows, teste do runner e package. `tests/storage-resilience-electron.ts` recebeu correção só de harness. Nenhuma fonte de produção F0-08 alterada: 11 hashes comparados com o ledger anterior permanecem iguais.
+- **Testes finais:** compile Linux/Windows exit 0; novos 62 unitários (Linux 61 PASS/1 SKIP parser Windows, Windows 62 PASS); legados T3 51 PASS/1 SKIP Linux e 52 PASS Windows; runner oficial 37/37 Linux; seis suítes domínio Linux PASS. CAM-E novo Main/IPC/Renderer Linux/Windows PASS. T3/F0-08 sintéticos Linux/Windows PASS após corrigir foco do harness F0-08, sem sleep/aumento de timeout/assertion removida.
+- **Falha encontrada/revisão:** regressão Linux F0-08 falhou DISCARD_NOT_CONFIRMED. Controle determinístico de frame reproduziu Enter chegando a Retry; Main recebeu recover-storage. O teste corrigido espera ciclo de autofocus, aciona botão específico e exige discard-interrupted no Main. Produção não mudou. Originais/controle/resultados preservados. Cleanup reconhece exit já confirmado, não espera evento de saída perdido.
+- **Windows oficial final:** 422 unitários/11 suítes, quatro E2Es de biblioteca + T3S + F0-08 + CAM-E PASS. Cleanup/perfis/processos PASS. Fingerprint `7fec73f066441684457b5b9dcd261baeb5de93ccbcce1fb7a59fcffebcfe8d44`, HEAD `bc3d37de09462485caa9ff027341eeabdd4b88cb`, branch `feature/remote-player-lan-integration-2`. Após validação só docs/evidências mudaram. [Ledger com 13 hashes e logs](../../fase-f0-usb-campanha-evidencias.json), [relatório](../../fase-f0-relatorio.md#campanha-física-t3--f0-08--infraestrutura-unificada), [procedimento e prompt](../../fase-f0-t3-operacao.md#campanha-unificada-t3--f0-08--testekaraoke).
+- **Limites/próximo gate:** GO condicionado a solicitação posterior de execução no testekaraoke, supervisão e preflight real. Hardware/identidade F:, console humano completo, MP4/USB/A/V físicos NOT RUN. Janela temporal perdida pode ser PARTIAL/NOT REPRODUCED; isso não homologa estado físico com prova sintética. Perfis físicos ficam retidos para auditoria, processos/handles fecham entre cenários. F1–F4 não iniciadas; sem commit/push/PR/release/dispatch/suspensão.
+
+
+## Integração F0 no CI existente — 2026-11-11
+
+Inventário, seletores, exclusões manuais, correções de expectativas antigas e evidências locais no [registro de cobertura CI](../../fase-f0-ci.md). Workflows PR/release preservados; GitHub remoto NOT RUN, sem dispatch/commit/push. F0 continua sem homologação.
+
+## Auditoria e consolidação pré-commit
+
+O proprietário autorizou auditar o working tree F0/CI e fazer commit local se não houver bloqueador. [Registro de auditoria](../../fase-f0-ci.md) e [evidência física posterior B](../../fase-f0-relatorio.md#evidência-física-posterior-e-auditoria-pré-commit): B verificado PASS em sessão isolada com 37 arquivos; wrapper PARTIAL por resposta final inválida. Campanha física posterior/countdown aguardam auditoria dos logs, sem inferir causa ou homologação. Gates automatizados e ajuste de sincronização do E2E Round Robin registrados no documento CI. Não iniciar F1–F4; GitHub Actions remoto continua pendente do proprietário.
+
+## Correção CI do PR #5
+
+Autorizado corrigir, commitar e enviar ajustes até checks verdes, sem merge/homologação. Run inicial `42973574081`: Linux PASS; Windows FAIL no CSV do bootstrap F0 (identidade de caminho temporário). Adaptador passa TEMP/TMP canônicos aos filhos, sem alterar proteção de produção. Teste focado e diff check PASS; resultado remoto será acompanhado no PR. [Registro técnico](../../fase-f0-ci.md#correção-do-pr-5--caminhos-temporários-windows).
+
+Run `42974852457`: Linux PASS, mesma falha Windows. Complemento no harness: caminho do CSV resolvido antes da importação. Compile/teste focado/bootstrap Linux 5+5 PASS; próxima validação Windows remota pendente. Proteção de produção preservada.
+
+Run `42976013438`: Linux/bootstrap Windows PASS, biblioteca FAIL por alias 8.3 explícito nos logs. Adaptador corrigido para `realpathSync.native`; regressão da chamada nativa adicionada, 5/5 testes PASS. Demais gates remotos aguardam próxima revisão.

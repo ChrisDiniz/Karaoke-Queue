@@ -891,11 +891,37 @@ function requiresWindowFocus(playbackMode) {
     '--standalone-integration',
     '--player-recovery',
     '--standalone-options',
-    '--standalone-production', '--installation-coordination'
+    '--standalone-production', '--installation-coordination', '--video-library'
   ].includes(playbackMode)
 }
 
+function requiresStandaloneProductionMedia(f0StartupOnly, f0RealLibrary = false) {
+  return f0StartupOnly !== true && f0RealLibrary !== true
+}
+
 function selectWindowsTestSuites(playbackMode) {
+  if (playbackMode === '--video-library') return [
+    { name: 'video-library-index', script: 'build/tests/video-library-index-store.test.js' },
+    { name: 'chromium-host', script: 'build/tests/chromium-playback-host.test.js' },
+    { name: 'standalone-runtime', script: 'build/tests/standalone-player-runtime.test.js' },
+    { name: 'f0-bootstrap', script: 'build/tests/f0-bootstrap-electron.js' },
+    { name: 'f0-ci-configuration', script: 'scripts/f0-ci.test.cjs' },
+    { name: 'video-library-unit', script: 'build/tests/video-library.test.js' },
+    { name: 'video-library', script: 'build/tests/video-library-electron.js' },
+    { name: 'usb-reconnect-runner-unit', script: 'scripts/usb-reconnect.test.cjs' },
+    { name: 'usb-reconnect-synthetic', script: 'build/tests/usb-reconnect-synthetic-electron.js' },
+    { name: 'standalone-player-sequence.test', script: 'build/tests/standalone-player-sequence.test.js' },
+    { name: 'player-playback.test', script: 'build/tests/player-playback.test.js' },
+    { name: 'player-playback-recovery.test', script: 'build/tests/player-playback-recovery.test.js' },
+    { name: 'player-media-protocol.test', script: 'build/tests/player-media-protocol.test.js' },
+    { name: 'main-media-runtime.test', script: 'build/tests/main-media-runtime.test.js' },
+    { name: 'standalone-player-ipc.test', script: 'build/tests/standalone-player-ipc.test.js' },
+    { name: 'manual-playback.test', script: 'build/tests/manual-playback.test.js' },
+    { name: 'main-management-host.test', script: 'build/tests/main-management-host.test.js' },
+    { name: 'storage-resilience-electron', script: 'build/tests/storage-resilience-electron.js' },
+    { name: 'usb-campaign-unit', script: 'scripts/usb-campaign.test.cjs' },
+    { name: 'usb-campaign-electron', script: 'build/tests/usb-campaign-electron.js' }
+  ]
   if (playbackMode === '--installation-coordination') return [
     { name: 'installation-admin-unit', script: 'build/tests/installation-admin.test.js' },
     { name: 'installation-control-unit', script: 'build/tests/installation-control.test.js' },
@@ -950,7 +976,16 @@ function selectWindowsTestSuites(playbackMode) {
     { name: 'standalone-player-ipc-unit', script: 'build/tests/standalone-player-ipc.test.js' },
     { name: 'player-playback-unit', script: 'build/tests/player-playback.test.js' },
     { name: 'player-recovery-unit', script: 'build/tests/player-playback-recovery.test.js' },
-    { name: 'standalone-player-production-electron', script: 'build/tests/standalone-player-production-electron.js' }
+    { name: 'main-media-runtime-unit', script: 'build/tests/main-media-runtime.test.js' },
+    { name: 'video-library-unit', script: 'build/tests/video-library.test.js' },
+    { name: 'video-library-index-unit', script: 'build/tests/video-library-index-store.test.js' },
+    { name: 'player-media-protocol-unit', script: 'build/tests/player-media-protocol.test.js' },
+    { name: 'chromium-playback-host-unit', script: 'build/tests/chromium-playback-host.test.js' },
+    { name: 'video-library-electron', script: 'build/tests/video-library-electron.js' },
+    { name: 'standalone-player-production-electron', script: 'build/tests/standalone-player-production-electron.js' },
+    { name: 'f0-bootstrap-electron', script: 'build/tests/f0-bootstrap-electron.js' },
+    { name: 'main-management-host-unit', script: 'build/tests/main-management-host.test.js' },
+    { name: 'manual-playback-unit', script: 'build/tests/manual-playback.test.js' }
   ]
   if (focusedChromium) return [{ name: 'playback-harness-unit', script: 'scripts/playback-engine-evaluation.test.cjs' }]
   return [
@@ -963,7 +998,20 @@ function selectWindowsTestSuites(playbackMode) {
     { name: 'multi-instance', script: 'build/tests/multi-instance-electron.js' },
     { name: 'operating-modes', script: 'build/tests/operating-modes-electron.js' },
     { name: 'video-library', script: 'build/tests/video-library-electron.js' },
-    { name: 'music-catalog', script: 'build/tests/music-catalog-electron.js' }
+    { name: 'music-catalog', script: 'build/tests/music-catalog-electron.js' },
+    { name: 'usb-reconnect-runner-unit', script: 'scripts/usb-reconnect.test.cjs' },
+    { name: 'usb-reconnect-synthetic', script: 'build/tests/usb-reconnect-synthetic-electron.js' },
+    { name: 'standalone-player-sequence.test', script: 'build/tests/standalone-player-sequence.test.js' },
+    { name: 'player-playback.test', script: 'build/tests/player-playback.test.js' },
+    { name: 'player-playback-recovery.test', script: 'build/tests/player-playback-recovery.test.js' },
+    { name: 'player-media-protocol.test', script: 'build/tests/player-media-protocol.test.js' },
+    { name: 'main-media-runtime.test', script: 'build/tests/main-media-runtime.test.js' },
+    { name: 'standalone-player-ipc.test', script: 'build/tests/standalone-player-ipc.test.js' },
+    { name: 'manual-playback.test', script: 'build/tests/manual-playback.test.js' },
+    { name: 'main-management-host.test', script: 'build/tests/main-management-host.test.js' },
+    { name: 'storage-resilience-electron', script: 'build/tests/storage-resilience-electron.js' },
+    { name: 'usb-campaign-unit', script: 'scripts/usb-campaign.test.cjs' },
+    { name: 'usb-campaign-electron', script: 'build/tests/usb-campaign-electron.js' }
   ]
 }
 
@@ -1506,7 +1554,36 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
     if (focusedPlayerRecovery && !process.env.KQ_PLAYER_RECOVERY_TEST_MEDIA_DIR) {
       fail('O modo player-recovery requer KQ_PLAYER_RECOVERY_TEST_MEDIA_DIR com os vídeos de teste de leitura.')
     }
-    if (focusedStandaloneProduction) {
+    const f0RealLibraryCampaign = focusedStandaloneProduction && process.env.KQ_F0_REAL_LIBRARY === '1'
+    if (f0RealLibraryCampaign) {
+      if (process.env.KQ_F0_T2T4 !== '1') fail('A biblioteca real só pode ser usada pela campanha autorizada T2/T4.')
+      const libraryRoot = process.env.KQ_F0_LIBRARY_ROOT
+      const profileRoot = process.env.KQ_STANDALONE_PRODUCTION_PROFILE
+      const reportRoot = process.env.KQ_F0_REPORT_DIR
+      const resumeIndex = process.env.KQ_F0_RESUME_INDEX === '1'
+      if (!libraryRoot || !path.isAbsolute(libraryRoot) || !fs.existsSync(libraryRoot) || !fs.statSync(libraryRoot).isDirectory()) {
+        fail('A campanha T2/T4 requer KQ_F0_LIBRARY_ROOT como diretório absoluto Windows acessível.')
+      }
+      if (!profileRoot || !path.isAbsolute(profileRoot) || !reportRoot || !path.isAbsolute(reportRoot)) {
+        fail('T2/T4 requer caminhos absolutos e isolados para perfil e relatórios.')
+      }
+      if (resumeIndex) {
+        if (!fs.existsSync(profileRoot) || !fs.statSync(profileRoot).isDirectory() ||
+            !fs.existsSync(path.join(profileRoot, 'user-data', 'video-library-index.json')) ||
+            !fs.existsSync(reportRoot) || !fs.existsSync(path.join(reportRoot, 'scenarios.jsonl'))) {
+          fail('A retomada T2/T4 exige o perfil com índice persistente e o relatório progressivo anterior.')
+        }
+      } else if (fs.existsSync(profileRoot) || fs.existsSync(reportRoot)) {
+        fail('T2/T4 exige caminhos novos para perfil e relatórios; ambos devem ainda não existir.')
+      }
+      if (path.parse(profileRoot).root.toLowerCase() === path.parse(libraryRoot).root.toLowerCase() ||
+          path.parse(reportRoot).root.toLowerCase() === path.parse(libraryRoot).root.toLowerCase()) {
+        fail('Perfil e relatórios da campanha T2/T4 precisam ficar fora da unidade da biblioteca.')
+      }
+      process.stdout.write('T2/T4 PREFLIGHT: diretório real acessível; perfil e relatórios novos em unidade interna distinta.\n')
+    }
+    if (focusedStandaloneProduction && requiresStandaloneProductionMedia(
+      process.env.KQ_F0_STARTUP_ONLY === '1', f0RealLibraryCampaign)) {
       const mediaPath = process.env.KQ_PLAYER_TEST_MEDIA_DIR
       if (!mediaPath || !path.isAbsolute(mediaPath) || !fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isDirectory() ||
           !fs.existsSync(path.join(mediaPath, '01001.mp4')) || !fs.statSync(path.join(mediaPath, '01001.mp4')).isFile()) {
@@ -1534,6 +1611,10 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       : focusedStandaloneProduction ? 'TEST START C9 production Standalone Main/Preload/IPC/shutdown with real Electron, MP4 and isolated SQLite\n'
       : 'TEST START Electron real + Playwright + SQLite temporário; sessão gráfica Windows\n')
     if (focusedStandaloneOptions) env.KQ_STANDALONE_C8_ONLY = '1'
+    if (f0RealLibraryCampaign) {
+      env.KQ_F0_SNAPSHOT_HEAD = manifest.head
+      env.KQ_F0_SNAPSHOT_FINGERPRINT = manifest.fingerprint
+    }
     const suiteResults = []
     let suites = selectWindowsTestSuites(playbackMode)
     if (playbackEvaluation || focusedChromium) {
@@ -1709,7 +1790,7 @@ function powershellManualLauncher(stagePath, runId, profileKind, profileName) {
 
 function powershellLauncher(stagePath, runId, playbackEvaluation = false, playbackMode = null, manualOptions = null, screenshotRoot = null, packageCandidate = false) {
   if (manualOptions) return powershellManualLauncher(stagePath, runId, manualOptions.profileKind, manualOptions.profileName)
-  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination'].includes(playbackMode)) {
+  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library'].includes(playbackMode)) {
     fail('Modo de playback não permitido para o worker Windows.')
   }
   if (screenshotRoot !== null && (typeof screenshotRoot !== 'string' || !/^[A-Za-z]:\\/.test(screenshotRoot) || screenshotRoot.startsWith('\\\\'))) {
@@ -1763,6 +1844,7 @@ function powershellLauncher(stagePath, runId, playbackEvaluation = false, playba
     '    elseif ($payload.playbackMode -eq "--standalone-options") { $workerArgs += "--standalone-options" }',
     '    elseif ($payload.playbackMode -eq "--standalone-production") { $workerArgs += "--standalone-production" }',
     '    elseif ($payload.playbackMode -eq "--installation-coordination") { $workerArgs += "--installation-coordination" }',
+    '    elseif ($payload.playbackMode -eq "--video-library") { $workerArgs += "--video-library" }',
     '    & node.exe $worker @workerArgs',
     '    $workerExit = $LASTEXITCODE',
     '  } finally { Pop-Location }',
@@ -2088,12 +2170,12 @@ async function runOrchestrator() {
     fail('O build candidato não combina com launcher manual, testes ou harnesses.')
   }
   const unexpectedArguments = process.argv.slice(2).filter(argument =>
-    !['--approve-untracked', '--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--manual-launch', '--manual-profile-kind', '--manual-profile-name'].includes(argument) &&
+    !['--approve-untracked', '--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--manual-launch', '--manual-profile-kind', '--manual-profile-name'].includes(argument) &&
     argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName
   )
   if (unexpectedArguments.length) fail('Argumento não permitido: ' + unexpectedArguments.join(' '))
   const playbackModes = process.argv.slice(2).filter(argument =>
-    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination'].includes(argument)
+    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library'].includes(argument)
   )
   if (playbackModes.length > 1) fail('Escolha apenas um modo de avaliação de playback.')
   const playbackEvaluation = process.argv.includes('--playback-evaluation')
@@ -2270,13 +2352,13 @@ async function main() {
       fail('O worker manual requer uma seleção de perfil válida.')
     }
     if (!manualLaunch && (profileKindIndex >= 0 || profileNameIndex >= 0)) fail('Perfil manual sem --manual-launch.')
-    const allowedWorkerArguments = ['--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--manual-launch', '--manual-profile-kind', '--manual-profile-name']
+    const allowedWorkerArguments = ['--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--manual-launch', '--manual-profile-kind', '--manual-profile-name']
     if (workerArguments.some(argument => !allowedWorkerArguments.includes(argument) &&
         argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName)) {
       fail('O worker recebeu argumentos não permitidos.')
     }
     const playbackModes = workerArguments.filter(argument =>
-      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination'].includes(argument)
+      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library'].includes(argument)
     )
     if (playbackModes.length > 1) fail('O worker recebeu modos de playback conflitantes.')
     if (workerArguments.includes('--package-candidate') && (playbackModes.length || workerArguments.includes('--playback-evaluation'))) fail('O worker recebeu build candidato combinado com testes.')
@@ -2296,6 +2378,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  acquireLock,
   approveUntracked,
   isExpectedManualElectronProcess,
   observeWorkerInputErrors,
@@ -2311,6 +2394,7 @@ module.exports = {
   recoverNoopInterruptedSync,
   readSourceSnapshot,
   requiresWindowFocus,
+  requiresStandaloneProductionMedia,
   selectWindowsTestSuites,
   restorePreviousBuild,
   stageSnapshot,

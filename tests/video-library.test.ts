@@ -15,10 +15,17 @@ import {
   writeVideoLibraryConfiguration
 } from '../src/video-library-configuration'
 import { VideoLibraryService } from '../src/video-library-service'
+import { VideoLibraryIndexStore } from '../src/video-library-index-store'
 
 function temporaryDirectory(): { directory: string; cleanup: () => void } {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-video-library-'))
   return { directory, cleanup: () => fs.rmSync(directory, { recursive: true, force: true }) }
+}
+
+function indexedFileMetadata(filePath: string): { size: number; mtimeMs: number; device: string; inode: string } {
+  const stats = fs.statSync(filePath, { bigint: true })
+  return { size: Number(stats.size), mtimeMs: Number(stats.mtimeNs) / 1_000_000,
+    device: stats.dev.toString(), inode: stats.ino.toString() }
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -125,7 +132,7 @@ test('video library scan indexes recursive candidates and keeps paths out of pub
   fs.writeFileSync(path.join(root, '00003.txt'), '')
   fs.writeFileSync(path.join(root, 'without-code.mkv'), '')
 
-  const library = new VideoLibraryService([root])
+  const library = new VideoLibraryService([root], { collectScanMetrics: true })
   try {
     const snapshot = await library.refresh()
     assert.equal(snapshot.scanStatus, 'ready')
@@ -136,6 +143,18 @@ test('video library scan indexes recursive candidates and keeps paths out of pub
     ])
     assert.equal(snapshot.counts.availableCodes, 2)
     assert.equal(snapshot.counts.invalidFilenames, 1)
+    const metrics = library.getScanMetrics()
+    assert.equal(metrics.directoriesEnumerated, 2)
+    assert.equal(metrics.entriesEnumerated, 5)
+    assert.equal(metrics.lstatCalls, 7)
+    assert.equal(metrics.statCalls, 3)
+    assert.equal(metrics.realpathCalls, 4)
+    assert.equal(metrics.candidateFiles, 3)
+    assert.equal(metrics.fileOpens, 2)
+    assert.equal(metrics.fileCloses, 2)
+    assert.equal(metrics.bytesRead, 0, 'indexing inspects metadata without reading video contents')
+    assert.ok(metrics.durationMs >= 0)
+    assert.equal(JSON.stringify(metrics).includes(root), false, 'diagnostics must not reveal local paths')
     assert.deepEqual(await library.lookup('00002'), {
       status: 'available', musicCode: '00002', filePath: path.join(root, 'nested', '00002 - descrição.webm')
     })
@@ -145,6 +164,28 @@ test('video library scan indexes recursive candidates and keeps paths out of pub
     assert.equal(JSON.stringify(library.getDiagnostics()).includes(root), false,
       'diagnostics may contain relative filenames but must not expose absolute paths')
     assert.equal(library.getDiagnostics().some(item => item.code === 'INVALID_FILENAME'), true)
+  } finally {
+    library.close()
+    temp.cleanup()
+  }
+})
+
+test('video library scan counters stay disabled unless explicitly requested', async () => {
+  const temp = temporaryDirectory()
+  const root = path.join(temp.directory, 'media')
+  fs.mkdirSync(root)
+  fs.writeFileSync(path.join(root, '01001.mp4'), '')
+  const library = new VideoLibraryService([root])
+  try {
+    const snapshot = await library.refresh()
+    assert.equal(snapshot.counts.indexedFiles, 1)
+    assert.deepEqual(library.getScanMetrics(), {
+      durationMs: 0, directoriesEnumerated: 0, entriesEnumerated: 0, lstatCalls: 0,
+      statCalls: 0, realpathCalls: 0, candidateFiles: 0, cacheHits: 0,
+      fileOpens: 0, fileCloses: 0, bytesRead: 0, playbackYieldCount: 0, playbackYieldDurationMs: 0
+    })
+    assert.equal(library.getScanDiagnosticSnapshot().scanInProgress, false)
+    assert.equal(library.getScanDiagnosticSnapshot().scanStatus, 'ready')
   } finally {
     library.close()
     temp.cleanup()
@@ -204,6 +245,45 @@ test('refresh adds new files, reports removed codes, and uses a stable pathless 
       'equivalent inventories must have a deterministic revision independent of scan timestamp')
     assert.ok(Number.isFinite(Date.parse(repeated.scannedAt ?? '')),
       'each completed scan records a valid completion time')
+  } finally {
+    library.close()
+    temp.cleanup()
+  }
+})
+
+test('reconciliation detects renamed candidates and reopens same-size replacements with preserved timestamps', async () => {
+  const temp = temporaryDirectory()
+  const root = path.join(temp.directory, 'media')
+  fs.mkdirSync(root)
+  const firstPath = path.join(root, '00001.mp4')
+  const renamedPath = path.join(root, '00002.mp4')
+  fs.writeFileSync(firstPath, 'original')
+  const stableTime = new Date('2026-11-10T12:00:00.000Z')
+  fs.utimesSync(firstPath, stableTime, stableTime)
+  const library = new VideoLibraryService([root], { collectScanMetrics: true })
+  try {
+    assert.deepEqual((await library.refresh()).items.map(item => item.musicCode), ['00001'])
+    fs.renameSync(firstPath, renamedPath)
+    assert.deepEqual((await library.refresh()).items, [
+      { musicCode: '00001', availability: 'missing', candidateCount: 0 },
+      { musicCode: '00002', availability: 'available', candidateCount: 1 }
+    ], 'the prior code remains visible as missing after a complete scan confirms the rename')
+
+    const previousPath = path.join(root, '00002.previous')
+    fs.renameSync(renamedPath, previousPath)
+    fs.writeFileSync(renamedPath, 'replaced')
+    fs.utimesSync(renamedPath, stableTime, stableTime)
+    const oldStats = fs.statSync(previousPath, { bigint: true })
+    const newStats = fs.statSync(renamedPath, { bigint: true })
+    assert.equal(newStats.size, oldStats.size)
+    assert.equal(newStats.mtimeNs, oldStats.mtimeNs)
+    assert.notEqual(newStats.ino, oldStats.ino, 'the retained old file prevents inode reuse during this fixture')
+
+    const replacement = await library.refresh()
+    assert.equal(replacement.items.find(item => item.musicCode === '00002')?.availability, 'available')
+    assert.equal(library.getScanMetrics().fileOpens, 1,
+      'a replacement with the same relative path, size, and timestamp must be reopened when file identity changes')
+    assert.equal((await library.lookup('00002')).status, 'available')
   } finally {
     library.close()
     temp.cleanup()
@@ -343,6 +423,204 @@ test('a refresh requested during an active scan runs after it and publishes the 
   }
 })
 
+test('a persisted inventory is usable while reconciliation waits for playback and publishes only a complete generation', async () => {
+  const temp = temporaryDirectory()
+  const root = path.join(temp.directory, 'media')
+  fs.mkdirSync(root)
+  const firstPath = path.join(root, '00001.mp4')
+  fs.writeFileSync(firstPath, '')
+  const firstStats = indexedFileMetadata(firstPath)
+  const store = new VideoLibraryIndexStore(path.join(temp.directory, 'profile'))
+  await store.writeComplete({ generation: 1, configuredRoots: [root], roots: [{
+    configuredPath: root, canonicalRoot: fs.realpathSync(root), entries: [{ relativePath: '00001.mp4',
+      musicCode: '00001', size: firstStats.size, mtimeMs: firstStats.mtimeMs,
+      device: firstStats.device, inode: firstStats.inode }]
+  }] })
+  const library = new VideoLibraryService([root], { indexStore: store, collectScanMetrics: true })
+  try {
+    assert.equal(await library.restorePersistentIndex(), 'restored')
+    assert.equal(library.getSnapshot().scanStatus, 'ready')
+    assert.equal(library.getSnapshot().counts.availableCodes, 1)
+
+    library.setPlaybackActive(true)
+    const reconcile = library.refresh()
+    assert.equal(library.getSnapshot().scanStatus, 'scanning')
+    assert.equal((await library.lookup('00001')).status, 'available',
+      'the complete published generation stays playable while filesystem reconciliation yields')
+    fs.writeFileSync(path.join(root, '00002.mp4'), '')
+    assert.equal(library.getSnapshot().counts.availableCodes, 1,
+      'a pending scan must not publish a partially observed directory')
+
+    library.setPlaybackActive(false)
+    const complete = await reconcile
+    assert.equal(complete.scanStatus, 'ready')
+    assert.deepEqual(complete.items.map(item => item.musicCode), ['00001', '00002'])
+    const persisted = await store.read([root])
+    assert.equal(persisted.status, 'valid')
+    if (persisted.status === 'valid') assert.equal(persisted.index.generation, 2)
+    assert.equal(library.getScanMetrics().cacheHits, 1)
+    assert.equal(library.getScanMetrics().fileOpens, 1,
+      'only the newly discovered candidate is opened during reconciliation')
+    assert.ok(library.getScanMetrics().playbackYieldCount > 0,
+      'opt-in metrics should prove the scan yielded while playback was active')
+    assert.ok(library.getScanMetrics().playbackYieldDurationMs >= 0)
+  } finally {
+    library.close()
+    temp.cleanup()
+  }
+})
+
+test('availability probe preserves cached inventory on removal and reconciles after the same configured root returns', async () => {
+  const temp = temporaryDirectory()
+  const root = path.join(temp.directory, 'media')
+  const profile = path.join(temp.directory, 'profile')
+  fs.mkdirSync(root)
+  const mediaPath = path.join(root, '00031.mp4')
+  fs.writeFileSync(mediaPath, '')
+  const stats = indexedFileMetadata(mediaPath)
+  const store = new VideoLibraryIndexStore(profile)
+  await store.writeComplete({ generation: 2, configuredRoots: [root], roots: [{
+    configuredPath: root, canonicalRoot: fs.realpathSync(root), entries: [{ relativePath: '00031.mp4',
+      musicCode: '00031', size: stats.size, mtimeMs: stats.mtimeMs, device: stats.device, inode: stats.inode }]
+  }] })
+  const library = new VideoLibraryService([root], { indexStore: store })
+  try {
+    assert.equal(await library.restorePersistentIndex(), 'restored')
+    assert.equal((await library.probeAvailability()).scanStatus, 'ready')
+    assert.equal(library.getAvailabilitySummary().availableRoots, 1)
+
+    fs.rmSync(root, { recursive: true, force: true })
+    const removed = await library.probeAvailability()
+    assert.equal(removed.scanStatus, 'degraded')
+    assert.equal(removed.items[0]?.availability, 'unknown')
+    assert.equal(library.getAvailabilitySummary().unavailableRoots, 1)
+    assert.equal((await store.read([root])).status, 'valid', 'temporary removal must not delete the persisted index')
+
+    fs.mkdirSync(root)
+    fs.writeFileSync(path.join(root, '00031.mp4'), 'restored')
+    const reconnected = await library.probeAvailability()
+    assert.ok(reconnected.scanStatus === 'ready' || reconnected.scanStatus === 'scanning')
+    assert.equal(library.getAvailabilitySummary().availableRoots, 1)
+    await library.refresh()
+    assert.equal(library.getSnapshot().scanStatus, 'ready')
+    assert.equal(library.getAvailabilitySummary().availableRoots, 1)
+  } finally {
+    library.close()
+    temp.cleanup()
+  }
+})
+
+test('availability probe coalesces work and refuses automatic remapping to a different device identity', async () => {
+  const temp = temporaryDirectory()
+  const root = path.join(temp.directory, 'media')
+  fs.mkdirSync(root)
+  const mediaPath = path.join(root, '00041.mp4')
+  fs.writeFileSync(mediaPath, '')
+  const stats = fs.statSync(mediaPath, { bigint: true })
+  const store = new VideoLibraryIndexStore(path.join(temp.directory, 'profile'))
+  await store.writeComplete({ generation: 1, configuredRoots: [root], roots: [{
+    configuredPath: root, canonicalRoot: fs.realpathSync(root), entries: [{ relativePath: '00041.mp4',
+      musicCode: '00041', size: Number(stats.size), mtimeMs: Number(stats.mtimeNs) / 1_000_000,
+      device: (stats.dev + 1n).toString(), inode: stats.ino.toString() }]
+  }] })
+  const library = new VideoLibraryService([root], { indexStore: store })
+  try {
+    assert.equal(await library.restorePersistentIndex(), 'restored')
+    const probe = library.probeAvailability()
+    assert.equal(library.probeAvailability(), probe, 'simultaneous callers share one in-flight root probe')
+    const snapshot = await probe
+    assert.equal(snapshot.scanStatus, 'degraded')
+    assert.equal(library.getAvailabilitySummary().volumeMismatchRoots, 1)
+    const refresh = await library.refresh()
+    assert.equal(refresh.scanStatus, 'degraded', 'refresh does not index a changed device by reusing the same path')
+    assert.equal((await library.lookup('00041')).status, 'unknown')
+  } finally {
+    library.close()
+    temp.cleanup()
+  }
+})
+
+test('a root probe completing after configuration changes cannot publish the old root state', async () => {
+  const temp = temporaryDirectory()
+  const oldRoot = path.join(temp.directory, 'old')
+  const newRoot = path.join(temp.directory, 'new')
+  fs.mkdirSync(oldRoot)
+  fs.mkdirSync(newRoot)
+  fs.writeFileSync(path.join(oldRoot, '00051.mp4'), '')
+  fs.writeFileSync(path.join(newRoot, '00052.mp4'), '')
+  const library = new VideoLibraryService([oldRoot])
+  await library.refresh()
+  const entered = deferred()
+  const release = deferred()
+  const originalRealpath = fs.promises.realpath
+  let blockOldRoot = true
+  fs.promises.realpath = (async (value: fs.PathLike, ...args: unknown[]) => {
+    if (blockOldRoot && String(value) === oldRoot) {
+      blockOldRoot = false
+      entered.resolve()
+      await release.promise
+    }
+    return originalRealpath.call(fs.promises, value as never, ...(args as never[]))
+  }) as typeof fs.promises.realpath
+  try {
+    const oldProbe = library.probeAvailability()
+    await entered.promise
+    const newRootScan = library.configureRoots([newRoot])
+    release.resolve()
+    await oldProbe
+    const current = await newRootScan
+    assert.deepEqual(library.roots, [newRoot])
+    assert.deepEqual(current.items.map(item => item.musicCode), ['00052'])
+    assert.equal(library.getAvailabilitySummary().availableRoots, 1)
+  } finally {
+    fs.promises.realpath = originalRealpath
+    release.resolve()
+    library.close()
+    temp.cleanup()
+  }
+})
+
+test('changing roots cancels obsolete scan publication and reconciles only the new root', async () => {
+  const temp = temporaryDirectory()
+  const oldRoot = path.join(temp.directory, 'old')
+  const newRoot = path.join(temp.directory, 'new')
+  fs.mkdirSync(oldRoot)
+  fs.mkdirSync(newRoot)
+  fs.writeFileSync(path.join(oldRoot, '00011.mp4'), '')
+  fs.writeFileSync(path.join(newRoot, '00022.mp4'), '')
+  const library = new VideoLibraryService([oldRoot])
+  const entered = deferred()
+  const release = deferred()
+  const internals = library as unknown as { scanRoot: (...args: any[]) => Promise<any> }
+  const originalScanRoot = internals.scanRoot.bind(library)
+  let delayed = true
+  internals.scanRoot = async (...args: any[]) => {
+    if (delayed) {
+      delayed = false
+      entered.resolve()
+      await release.promise
+    }
+    return originalScanRoot(...args)
+  }
+  try {
+    const obsoleteScan = library.refresh()
+    await entered.promise
+    const configured = library.configureRoots([newRoot])
+    assert.equal(library.getSnapshot().configuredRootCount, 1)
+    assert.deepEqual(library.getSnapshot().items, [], 'old-root inventory is cleared after the user changes the root')
+    release.resolve()
+    const snapshot = await configured
+    await obsoleteScan
+    assert.equal(snapshot.scanStatus, 'ready')
+    assert.deepEqual(snapshot.items.map(item => item.musicCode), ['00022'])
+    assert.deepEqual(library.roots, [newRoot])
+  } finally {
+    release.resolve()
+    library.close()
+    temp.cleanup()
+  }
+})
+
 test('closing during an active scan prevents a partially built snapshot from being published', async () => {
   const temp = temporaryDirectory()
   let library: VideoLibraryService | undefined
@@ -413,6 +691,62 @@ test('recursive scan does not follow symbolic links or Windows junctions', async
     assert.equal(library.getDiagnostics().filter(item => item.code === 'UNSAFE_ENTRY').length,
       process.platform === 'win32' ? 2 : 3)
   } finally {
+    library.close()
+    temp.cleanup()
+  }
+})
+
+test('a background permit rechecks playback when idle is followed synchronously by another active attempt', async () => {
+  const temp = temporaryDirectory()
+  fs.writeFileSync(path.join(temp.directory, '00001.mp4'), '')
+  const library = new VideoLibraryService([temp.directory], { collectScanMetrics: true })
+  try {
+    library.setPlaybackActive(true)
+    const scanning = library.refresh()
+    library.setPlaybackActive(false)
+    library.setPlaybackActive(true)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(library.getScanMetrics().realpathCalls, 0, 'a resolved waiter is not a permit if playback became active again')
+    assert.equal(library.getScanMetrics().statCalls, 0)
+    library.setPlaybackActive(false)
+    assert.equal((await scanning).scanStatus, 'ready')
+  } finally {
+    library.close()
+    temp.cleanup()
+  }
+})
+
+test('a completed private scan waits for playback before publishing its new generation', async () => {
+  const temp = temporaryDirectory()
+  fs.writeFileSync(path.join(temp.directory, '00001.mp4'), '')
+  const library = new VideoLibraryService([temp.directory], { collectScanMetrics: true })
+  let entered!: () => void
+  let release!: () => void
+  const readyToPublish = new Promise<void>(resolve => { entered = resolve })
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  try {
+    await library.refresh()
+    const prior = library.getSnapshot()
+    fs.writeFileSync(path.join(temp.directory, '00002.mp4'), '')
+    const internals = library as unknown as { scanRoot(...args: unknown[]): Promise<unknown> }
+    const scanRoot = internals.scanRoot.bind(library)
+    internals.scanRoot = async (...args) => {
+      const candidate = await scanRoot(...args)
+      entered()
+      await barrier
+      return candidate
+    }
+    const scanning = library.refresh()
+    await readyToPublish
+    library.setPlaybackActive(true)
+    release()
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(library.getSnapshot().revision, prior.revision, 'playback must retain the published capability revision')
+    assert.equal(library.getSnapshot().counts.availableCodes, 1, 'a candidate completed during playback stays private')
+    library.setPlaybackActive(false)
+    assert.equal((await scanning).counts.availableCodes, 2)
+  } finally {
+    release()
     library.close()
     temp.cleanup()
   }

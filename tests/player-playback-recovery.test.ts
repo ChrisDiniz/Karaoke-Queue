@@ -297,6 +297,62 @@ test('active recovery is exposed as pending on startup and never autoplays', asy
   } finally { await context.cleanup() }
 })
 
+test('Standalone fresh startup durably marks an inherited paused attempt stopped without replay', async () => {
+  const context = await makeRecovery(record({ status: 'paused', playbackStatus: 'paused',
+    lastTransition: 'playback-paused', startedAt: NOW }))
+  try {
+    assert.equal(context.coordinator.getState().status, 'pending')
+    const result = await context.coordinator.resolveStandaloneStartup()
+    assert.deepEqual(result, { status: 'resolved', outcome: 'dismissed', attemptId: ATTEMPT_ID,
+      musicCode: '01001', updatedAt: NOW })
+    assert.equal(context.store.read()?.status, 'dismissed')
+    assert.equal(context.store.read()?.reason, 'startup-prior:paused:playback-paused',
+      'the terminal record retains the interrupted state as diagnostic evidence')
+    assert.equal(context.store.read()?.startedAt, NOW)
+    assert.equal(context.playback.getState().status, 'idle')
+    assert.equal(context.host.commands.some(command => command.type === 'load' || command.type === 'play'), false,
+      'startup recovery must not load or play prior media')
+    assert.equal(context.host.commands.some(command => command.type === 'clear' && command.attemptId === ATTEMPT_ID), true,
+      'startup recovery confirms the new media surface contains no old attempt before becoming idle')
+    assert.doesNotThrow(() => context.coordinator.assertPlaybackAllowed())
+  } finally { await context.cleanup() }
+})
+
+test('Standalone startup resolves inherited playing, loading, and uncertain records without restoring playback', async () => {
+  const previousStates: Array<Partial<PlayerPlaybackRecoveryRecord>> = [
+    { status: 'playing', playbackStatus: 'playing', lastTransition: 'playback-started' },
+    { status: 'pending', playbackStatus: 'loading', lastTransition: 'load-intent' },
+    { status: 'uncertain', playbackStatus: 'uncertain', lastTransition: 'playback-uncertain' }
+  ]
+  for (const prior of previousStates) {
+    const context = await makeRecovery(record(prior))
+    try {
+      const result = await context.coordinator.resolveStandaloneStartup()
+      assert.equal(result.status, 'resolved')
+      if (result.status === 'resolved') assert.equal(result.outcome, 'dismissed')
+      assert.equal(context.store.read()?.status, 'dismissed')
+      assert.equal(context.store.read()?.reason, `startup-prior:${prior.playbackStatus}:${prior.lastTransition}`)
+      assert.equal(context.playback.getState().status, 'idle')
+      assert.equal(context.host.commands.some(command => command.type === 'load' || command.type === 'play'), false)
+      assert.deepEqual(context.host.commands.filter(command => command.type === 'clear').map(command => command.attemptId), [ATTEMPT_ID])
+    } finally { await context.cleanup() }
+  }
+})
+
+test('Standalone startup keeps recovery pending when the fresh media host does not confirm its idle surface', async () => {
+  const context = await makeRecovery(record({ status: 'paused', playbackStatus: 'paused',
+    lastTransition: 'playback-paused', startedAt: NOW }))
+  try {
+    context.playback.clearFreshStartupRecovery = async () => false
+    await assert.rejects(context.coordinator.resolveStandaloneStartup(), { code: 'RECOVERY_UNAVAILABLE' })
+    assert.equal(context.store.read()?.status, 'paused', 'failed containment must not publish a terminal recovery record')
+    assert.equal(context.coordinator.getState().status, 'pending')
+    assert.equal(context.playback.getState().status, 'idle')
+    assert.throws(() => context.coordinator.assertPlaybackAllowed(), { code: 'RECOVERY_PENDING' })
+    assert.deepEqual(context.host.commands, [])
+  } finally { await context.cleanup() }
+})
+
 test('startup recovery pending blocks new manual playback until an explicit recovery action', async () => {
   const context = await makeRecovery(record({ status: 'playing', playbackStatus: 'playing', lastTransition: 'playback-started' }))
   try {

@@ -25,6 +25,8 @@ export interface PlayerPlaybackState {
 export interface PlayerPlaybackRecoveryTarget {
   getState(): PlayerPlaybackState
   resolveRecoveryAsStopped(expectedAttemptId: string, musicCode: string): Promise<PlayerPlaybackState>
+  clearStoppedMedia?(expectedAttemptId: string): Promise<boolean>
+  clearFreshStartupRecovery?(expectedAttemptId: string): Promise<boolean>
   dispose(): Promise<void>
 }
 
@@ -43,6 +45,8 @@ export type PlayerPlaybackErrorCode =
   | 'MEDIA_AMBIGUOUS'
   | 'MEDIA_UNKNOWN'
   | 'MEDIA_LOAD_FAILED'
+  | 'MEDIA_STALLED'
+  | 'MEDIA_CHANGED'
   | 'INVALID_STATE'
   | 'COMMAND_TIMEOUT'
   | 'SUPERSEDED'

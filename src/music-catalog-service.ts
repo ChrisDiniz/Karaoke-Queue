@@ -32,6 +32,7 @@ const MAX_PAGE_OFFSET = 1_000_000
 export interface VideoInventoryProvider {
   getSnapshot(): VideoLibrarySnapshot
   lookup(musicCode: unknown): Promise<VideoLookupResult>
+  isInventoryRevisionPlayable?(revision: string): boolean
 }
 
 export interface MusicCatalogSearchOptions {
@@ -190,17 +191,19 @@ function validatePage(options: MusicCatalogSearchOptions): { limit: number; offs
 
 function availabilityForCode(
   code: string,
-  snapshot: VideoLibrarySnapshot | undefined
+  snapshot: VideoLibrarySnapshot | undefined,
+  cachedGenerationPlayable = false
 ): { revision: string | null; status: VideoLibraryScanStatus | 'unavailable'; availability: VideoAvailability } {
   if (!snapshot) return { revision: null, status: 'unavailable', availability: 'unknown' }
 
-  if (snapshot.scanStatus === 'scanning' || snapshot.scanStatus === 'not-scanned' || snapshot.scanStatus === 'closed') {
+  if ((snapshot.scanStatus === 'scanning' && !cachedGenerationPlayable) ||
+      snapshot.scanStatus === 'not-scanned' || snapshot.scanStatus === 'closed') {
     return { revision: snapshot.revision, status: snapshot.scanStatus, availability: 'unknown' }
   }
   const item = snapshot.items.find(candidate => candidate.musicCode === code)
-  if (item) return { revision: snapshot.revision, status: snapshot.scanStatus, availability: item.availability }
-  if (snapshot.scanStatus === 'ready') {
-    return { revision: snapshot.revision, status: snapshot.scanStatus, availability: 'missing' }
+  if (item) return { revision: snapshot.revision, status: cachedGenerationPlayable ? 'ready' : snapshot.scanStatus, availability: item.availability }
+  if (snapshot.scanStatus === 'ready' || cachedGenerationPlayable) {
+    return { revision: snapshot.revision, status: 'ready', availability: 'missing' }
   }
   return { revision: snapshot.revision, status: snapshot.scanStatus, availability: 'unknown' }
 }
@@ -466,12 +469,14 @@ export class MusicCatalogService {
     const videoCode = videoCodeForLookup(value)
     const result = this.repository.getMusicCatalogRecordByVideoCode(videoCode)
     const snapshot = this.inventoryProvider?.getSnapshot()
-    let inventory = availabilityForCode(videoCode, snapshot)
-    if (snapshot?.scanStatus === 'ready' && this.inventoryProvider) {
+    const cachedGenerationPlayable = !!snapshot && !!this.inventoryProvider?.isInventoryRevisionPlayable?.(snapshot.revision)
+    let inventory = availabilityForCode(videoCode, snapshot, cachedGenerationPlayable)
+    if ((snapshot?.scanStatus === 'ready' || cachedGenerationPlayable) && this.inventoryProvider) {
       const lookup = await this.inventoryProvider.lookup(videoCode)
       const currentSnapshot = this.inventoryProvider.getSnapshot()
-      inventory = currentSnapshot.revision === snapshot.revision && currentSnapshot.scanStatus === 'ready'
-        ? { revision: snapshot.revision, status: snapshot.scanStatus, availability: lookup.status === 'invalid-code' ? 'unknown' : lookup.status }
+      const currentGenerationPlayable = this.inventoryProvider.isInventoryRevisionPlayable?.(snapshot.revision) ?? currentSnapshot.scanStatus === 'ready'
+      inventory = currentSnapshot.revision === snapshot.revision && currentGenerationPlayable
+        ? { revision: snapshot.revision, status: 'ready', availability: lookup.status === 'invalid-code' ? 'unknown' : lookup.status }
         : { revision: currentSnapshot.revision, status: currentSnapshot.scanStatus, availability: 'unknown' }
     }
     return {

@@ -216,10 +216,15 @@ class ChromiumPlaybackRenderer {
   }
 
   private clear(attemptId: string): void {
+    if (!this.stage || !this.mediaLayer) throw new Error('Playback stage is unavailable.')
     const active = this.active
-    if (!active || active.attemptId !== attemptId) throw new Error('Playback attempt is no longer active.')
+    if (!active) {
+      this.mediaLayer.replaceChildren()
+      return
+    }
+    if (active.attemptId !== attemptId) throw new Error('Playback attempt is no longer active.')
     this.releaseActive()
-    this.mediaLayer?.replaceChildren()
+    this.mediaLayer.replaceChildren()
   }
 
   private requireActive(attemptId: string): ActiveMedia {

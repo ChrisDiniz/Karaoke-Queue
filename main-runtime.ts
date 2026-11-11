@@ -2,6 +2,7 @@ import { WelcomeMediaSetup } from './src/welcome-media-setup'
 import { app, BrowserWindow, clipboard, crashReporter, dialog, ipcMain, protocol, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { pathToFileURL } from 'node:url'
 import { createKaraokeDatabase, createPlayerMusicCatalogDatabase } from './database'
 import { KaraokeApplication } from './src/application'
@@ -32,6 +33,7 @@ import {
   createWelcomeWindow as createWelcomeWindowSurface
 } from './src/main-window-factories'
 import { MainMediaRuntime } from './src/main-media-runtime'
+import { f0DiagnosticMetrics } from './src/f0-diagnostics'
 import { MainStandaloneShutdownCoordinator } from './src/main-standalone-shutdown'
 import { MainManagementCloseCoordinator } from './src/main-management-close'
 import { MainManagementHost } from './src/main-management-host'
@@ -303,6 +305,7 @@ let mainStandaloneShutdownCoordinator: MainStandaloneShutdownCoordinator | undef
 let uiScalePreference: UiScalePreference = 'auto'
 let sidebarDisplayName = DEFAULT_SIDEBAR_DISPLAY_NAME
 let uiScaleFilePath = ''
+let mainReadyAt: number | undefined
 const userDataDirectory = app.getPath('userData')
 const logger = createFileLogger({
   logsDirectory: path.join(userDataDirectory, 'logs'),
@@ -593,10 +596,29 @@ async function createStandalonePlayerWindow(): Promise<BrowserWindow> {
     BrowserWindow, preloadPath: path.join(__dirname, 'standalone-player-preload.bundle.js'),
     identity: functionIdentity!, iconPath: functionIdentityAssetPaths!.windowIconPath
   })
+  if (process.env.KQ_F0_DIAGNOSTICS === '1' && mainReadyAt !== undefined) {
+    let windowReadyMetricsRecorded = false
+    const recordWindowReady = (milestone: 'ready-to-show' | 'did-finish-load') => {
+      if (windowReadyMetricsRecorded) return
+      windowReadyMetricsRecorded = true
+      logger.info('player', 'F0_WINDOW_READY_METRICS',
+        'Tempo desde Electron ready até documento/janela Standalone prontos; visibilidade registrada separadamente.',
+        f0DiagnosticMetrics({ phase: 'window-ready', milestone, windowVisible: win.isVisible(),
+          elapsedSinceMainReadyMs: Math.max(0, performance.now() - mainReadyAt!),
+          ...(mainMediaRuntime?.library?.getScanDiagnosticSnapshot() ?? {}) }))
+    }
+    win.once('ready-to-show', () => recordWindowReady('ready-to-show'))
+    // Some Windows fullscreen/window-manager paths do not emit ready-to-show.
+    // did-finish-load provides a deterministic fallback while preserving an
+    // explicit visibility assertion in the diagnostic record.
+    win.webContents.once('did-finish-load', () => recordWindowReady('did-finish-load'))
+  }
   applyFunctionWindowIdentity(win)
   mainWindow = win
+  win.on('focus', () => { void mainMediaRuntime?.probeLibraryAvailability() })
+  win.on('show', () => { void mainMediaRuntime?.probeLibraryAvailability() })
   win.on('close', event => {
-    if (standaloneQuitAuthorized) return
+    if (standaloneQuitAuthorized || !startupInitializationComplete) return
     event.preventDefault()
     if (startupInitializationComplete) requestStandaloneExitConfirmation()
   })
@@ -645,6 +667,16 @@ async function createStandalonePlayerWindow(): Promise<BrowserWindow> {
   standaloneIpcBridge.onExitAuthorized(() => { void beginStandaloneShutdown() })
   await win.loadFile(documentPath)
   await playbackHostReady
+  if (win.isDestroyed()) throw new Error('STANDALONE_STARTUP_CANCELLED')
+  await standaloneSequence.resolveStartupRecovery()
+  if (win.isDestroyed()) throw new Error('STANDALONE_STARTUP_CANCELLED')
+  if (process.env.KQ_F0_DIAGNOSTICS === '1' && mainReadyAt !== undefined) {
+    logger.info('player', 'F0_STARTUP_USABLE_METRICS',
+      'Tempo desde Electron ready até documento e host de playback prontos.',
+      f0DiagnosticMetrics({ phase: 'startup-usable', elapsedSinceMainReadyMs:
+        Math.max(0, performance.now() - mainReadyAt),
+      ...(mainMediaRuntime?.library?.getScanDiagnosticSnapshot() ?? {}) }))
+  }
   return win
 }
 
@@ -815,6 +847,10 @@ let disposeStandaloneFullscreenHandler: (() => void) | undefined
 
 
 if (hasSingleInstanceLock) app.whenReady().then(async () => {
+  mainReadyAt = performance.now()
+  const readyMetrics = f0DiagnosticMetrics({ phase: 'main-ready', elapsedSinceMainReadyMs: 0 })
+  if (readyMetrics) logger.info('player', 'F0_MAIN_READY_METRICS',
+    'A inicialização Main alcançou app.whenReady na campanha F0.', readyMetrics)
   try {
     const packagedRole = getPackagedInstalledRole()
     if (app.isPackaged && packagedRole === null) {
@@ -880,7 +916,9 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 
     mainMediaRuntime = new MainMediaRuntime({
       operatingMode: operatingMode!, userDataDirectory, protocol, logger,
-      isShutdownStarted: () => shutdownStarted
+      isShutdownStarted: () => shutdownStarted,
+      onLibraryChanged: () => publishPlayerSnapshot(),
+      isWindowActive: () => Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused())
     })
     if (modeCapabilities!.player) {
       const inventory = await mainMediaRuntime.initializePlayerInfrastructure()
@@ -1075,6 +1113,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
     })
     mainCompositionReady = true
     markMainAppReadyIfPossible()
+    if (operatingMode === 'player') mainMediaRuntime?.admitStandaloneReconciliation()
   } catch (error: unknown) {
     synchronizeMainMediaRuntimeReferences()
     fatalMainFailure = true
@@ -1210,6 +1249,10 @@ if (hasSingleInstanceLock) app.on('will-quit', () => {
   unsubscribeStandalonePlaybackDisplayEvents = undefined
   playerVideoWindow?.dispose()
   playerVideoWindow = undefined
+  const mediaMetrics = playerMediaProtocol?.getDiagnosticMetrics()
+  if (mediaMetrics) logger.info('player', 'F0_MEDIA_PROTOCOL_METRICS',
+    'Contadores agregados do protocolo de mídia F0; nenhum caminho ou código foi registrado.',
+    f0DiagnosticMetrics({ phase: 'media-protocol', ...mediaMetrics }))
   playerMediaProtocol?.dispose(protocol);
   (videoLibrary ?? mainMediaRuntime?.library)?.close()
   try { playerCatalogDatabase?.close() } catch (error) {

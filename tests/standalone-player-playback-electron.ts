@@ -31,6 +31,9 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
   const { VideoLibraryService } = require(path.join(projectRoot, 'build/src/video-library-service.js'))
   const { createStandalonePlayerWithSharedPlayback } = require(path.join(projectRoot, 'build/src/standalone-player-playback-adapter.js'))
 
+  let resolveTestHookReady
+  app.__kqStandalonePlaybackReady = new Promise(resolve => { resolveTestHookReady = resolve })
+
   registerPlayerMediaScheme(protocol)
   app.setPath('userData', profileRoot)
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
@@ -81,6 +84,9 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
     } else if (scenario === 'recovery-invalid') {
       fs.writeFileSync(recoveryStore.filePath, '{"version":1,"status":"playing"}')
     }
+    // Startup recovery must observe the fresh media surface before resolving
+    // an inherited attempt as stopped.
+    await Promise.all([window.loadFile(playbackDocument), host.ready])
     const recovery = new PlayerPlaybackRecoveryCoordinator(recoveryStore)
     const sequence = await createStandalonePlayerWithSharedPlayback({
       library,
@@ -213,6 +219,7 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
       crashRenderer: () => window.webContents.forcefullyCrashRenderer(),
       waitForRendererCrash,
       getSnapshot: () => sequence.getSnapshot(),
+      getPlaybackState: () => playback.getState(),
       getRecoveryState: () => recovery.getState(),
       getRecoveryDiagnostic: () => recovery.getDiagnosticSummary(),
       resolveRecoveryAsStopped: async attemptId => {
@@ -233,7 +240,7 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
       }
     }
     globalThis.__kqStandalonePlaybackTest = app.__kqStandalonePlaybackTest
-    await Promise.all([window.loadFile(playbackDocument), host.ready])
+    resolveTestHookReady()
   }).catch(error => {
     console.error(error)
     app.exit(1)
@@ -310,11 +317,12 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
     try {
       const page = await app.firstWindow()
       await page.waitForLoadState('domcontentloaded')
+      await app.evaluate(async ({ app }) => await app.__kqStandalonePlaybackReady)
       return {
       app,
       page,
       profileRoot,
-      releaseDeferredStop: () => app.evaluate(({ app }) => app.__kqStandalonePlaybackTest.releaseDeferredStop()),
+      releaseDeferredStop: () => app.evaluate(({ app }) => app.__kqStandalonePlaybackTest?.releaseDeferredStop?.()),
       call: (method, ...args) => app.evaluate(async ({ app }, [name, parameters]) =>
         await app.__kqStandalonePlaybackTest[name](...parameters), [method, args]),
       snapshot: () => app.evaluate(({ app }) => app.__kqStandalonePlaybackTest.getSnapshot()),
@@ -369,7 +377,7 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
         assert.ok(ended.currentTime >= target, 'the real media element must play through the sought final segment')
         return ended
       },
-      shutdown: () => app.evaluate(async ({ app }) => await app.__kqStandalonePlaybackTest.shutdown())
+      shutdown: () => app.evaluate(async ({ app }) => await app.__kqStandalonePlaybackTest?.shutdown?.())
       }
     } catch (error) {
       await app.close()
@@ -528,16 +536,32 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
       const initial = await context.snapshot()
       assert.equal(initial.playbackCondition, 'ready')
       assert.equal(initial.state.operationalState, 'idle')
+      await context.page.evaluate(() => {
+        window.__kqInvalidMediaError = null
+        document.addEventListener('error', event => {
+          const media = event.target
+          if (media instanceof HTMLMediaElement && media.error) {
+            window.__kqInvalidMediaError = { code: media.error.code, message: media.error.message }
+          }
+        }, { once: true, capture: true })
+      })
       const result = await context.execute({ type: 'submit-code', enteredCode: '9998', priority: 'normal' },
         'standalone-known-invalid-media')
       assert.equal(result.outcome, 'confirmed',
         'a readable library candidate is admitted before Chromium validates its media payload')
       const blocked = await context.waitForSnapshot({ playbackCondition: 'blocked', pendingCodes: ['09998'] })
       assert.equal(blocked.lastConfirmedState.operationalState, 'idle')
-      await context.page.waitForFunction(() => {
-        const video = document.querySelector('video')
-        return Boolean(video && video.error !== null)
-      }, undefined, { timeout: 15000 })
+      const invalidMediaError = await context.page.evaluate(() => window.__kqInvalidMediaError)
+      assert.ok(invalidMediaError && Number.isInteger(invalidMediaError.code) && invalidMediaError.code > 0,
+        'Chromium must report a native media error before confirmed containment clears the media source')
+      const failedPlayback = await context.call('getPlaybackState')
+      assert.equal(failedPlayback.status, 'failed')
+      assert.ok(['stop-acknowledged', 'host-terminated'].includes(failedPlayback.containmentStatus),
+        'the blocked Standalone snapshot requires confirmed media containment')
+      const stopAll = await context.execute({ type: 'stop-all' }, 'standalone-recover-known-failure')
+      assert.equal(stopAll.outcome, 'confirmed', 'an explicit Stop All resolves the known contained media failure')
+      const recovered = await context.waitForSnapshot({ playbackCondition: 'ready', operationalState: 'idle' })
+      assert.deepEqual(recovered.state.pending, [], 'only the explicit Stop All may clear the failed entry')
       assert.equal(fs.existsSync(path.join(context.profileRoot, 'karaoke.sqlite')), false)
     } finally {
       await closeScenario(context)
@@ -547,25 +571,23 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
   async function runPendingRecoveryScenario() {
     const context = await launchScenario('recovery-pending')
     try {
-      const blocked = await context.snapshot()
-      assert.equal(blocked.playbackCondition, 'blocked')
+      const startup = await context.snapshot()
+      assert.equal(startup.playbackCondition, 'ready', 'Standalone resolves old playback only after the fresh host confirms idle')
+      assert.equal(startup.state.operationalState, 'idle')
       const recovery = await context.call('getRecoveryState')
-      assert.equal(recovery.status, 'pending')
+      assert.equal(recovery.status, 'resolved')
+      assert.equal(recovery.outcome, 'dismissed')
       assert.equal(recovery.attemptId, '9b2f5d7a-3861-4a83-86d2-0ce1d6d1903a')
       assert.equal((await context.video()), null)
-      const rejected = await context.execute({ type: 'submit-code', enteredCode: '1001', priority: 'normal' },
-        'standalone-recovery-must-block-autoplay')
-      assert.equal(rejected.outcome, 'rejected')
-      const wrongAttempt = await context.call('resolveRecoveryAsStopped', '2a5a5a5a-3861-4a83-86d2-0ce1d6d1903a')
-      assert.deepEqual(wrongAttempt, { ok: false, code: 'SUPERSEDED' }, 'recovery must reject a stale attempt identity')
-      assert.equal((await context.call('getRecoveryState')).status, 'pending')
-      const matchingAttempt = await context.call('resolveRecoveryAsStopped', '9b2f5d7a-3861-4a83-86d2-0ce1d6d1903a')
-      assert.equal(matchingAttempt.ok, true, 'the existing recovery coordinator correlates explicit stopped resolution')
-      assert.equal(matchingAttempt.state.status, 'resolved')
-      assert.equal(matchingAttempt.state.outcome, 'dismissed')
-      assert.equal((await context.snapshot()).playbackCondition, 'blocked',
-        'the sequence stays safely blocked until a future approved recovery UI/runtime transition')
-      assert.equal((await context.video()), null, 'resolving as stopped never autoplays the recovered code')
+      const accepted = await context.execute({ type: 'submit-code', enteredCode: '1001', priority: 'normal' },
+        'standalone-after-old-recovery')
+      assert.equal(accepted.outcome, 'confirmed', 'an old attempt must not block a new Standalone execution')
+      const playing = await context.waitForSnapshot({ playbackCondition: 'ready', operationalState: 'playing', musicCode: '01001' })
+      assert.notEqual(playing.state.current.attemptId, recovery.attemptId,
+        'the new run uses a new attempt and never resumes the old media')
+      const stopped = await context.execute({ type: 'stop-all' }, 'standalone-after-old-recovery-stop')
+      assert.equal(stopped.outcome, 'confirmed')
+      await context.waitForSnapshot({ playbackCondition: 'ready', operationalState: 'idle' })
       assert.equal(fs.existsSync(path.join(context.profileRoot, 'karaoke.sqlite')), false)
     } finally {
       await closeScenario(context)
@@ -575,15 +597,27 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
   async function runInvalidRecoveryScenario() {
     const context = await launchScenario('recovery-invalid')
     try {
-      const blocked = await context.snapshot()
-      assert.equal(blocked.playbackCondition, 'blocked')
+      const startup = await context.snapshot()
+      assert.equal(startup.playbackCondition, 'ready')
+      assert.equal(startup.state.operationalState, 'idle')
       const diagnostic = await context.call('getRecoveryDiagnostic')
-      assert.equal(diagnostic.code, 'INVALID_RECORD')
-      assert.equal(fs.readFileSync(path.join(context.profileRoot, 'player-playback-recovery.json'), 'utf8'),
-        '{"version":1,"status":"playing"}', 'invalid recovery bytes are preserved without an approved resolution decision')
+      assert.equal(diagnostic, null, 'confirmed quarantine resolves the invalid startup record')
+      const archives = fs.readdirSync(context.profileRoot)
+        .filter(name => /^player-playback-recovery-quarantine-[0-9a-f-]{36}\.bin$/.test(name))
+      assert.equal(archives.length, 1)
+      assert.equal(fs.readFileSync(path.join(context.profileRoot, archives[0]), 'utf8'),
+        '{"version":1,"status":"playing"}', 'invalid recovery evidence is preserved byte-for-byte in quarantine')
+      const safeRecord = JSON.parse(fs.readFileSync(path.join(context.profileRoot, 'player-playback-recovery.json'), 'utf8'))
+      assert.equal(safeRecord.status, 'idle')
+      assert.equal(safeRecord.lastTransition, 'invalid-recovery-resolved')
       const result = await context.execute({ type: 'submit-code', enteredCode: '1001', priority: 'normal' },
-        'standalone-invalid-recovery-blocks-playback')
-      assert.equal(result.outcome, 'rejected')
+        'standalone-after-invalid-recovery')
+      assert.equal(result.outcome, 'confirmed', 'a preserved invalid record must not block a safe new run')
+      const playing = await context.waitForSnapshot({ playbackCondition: 'ready', operationalState: 'playing', musicCode: '01001' })
+      assert.equal(playing.state.current.musicCode, '01001')
+      const stopped = await context.execute({ type: 'stop-all' }, 'standalone-after-invalid-recovery-stop')
+      assert.equal(stopped.outcome, 'confirmed')
+      await context.waitForSnapshot({ playbackCondition: 'ready', operationalState: 'idle' })
       assert.equal((await context.video()), null)
     } finally {
       await closeScenario(context)
@@ -634,12 +668,20 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
     const hashesBefore = await hashSamples()
     const csvFiles = fs.readdirSync(mediaRoot, { recursive: true })
       .filter(filename => typeof filename === 'string' && path.extname(filename).toLowerCase() === '.csv')
+    const scenarios = new Map([
+      ['playback', runPlaybackScenario],
+      ['media-failure', runMediaFailureScenario],
+      ['recovery-pending', runPendingRecoveryScenario],
+      ['recovery-invalid', runInvalidRecoveryScenario],
+      ['host-uncertain', runHostUncertainScenario]
+    ])
+    const selected = process.env.KQ_STANDALONE_PLAYBACK_E2E_SCENARIO
+    if (selected && !scenarios.has(selected)) throw new Error(`Unknown Standalone playback scenario: ${selected}`)
     try {
-      await runPlaybackScenario()
-      await runMediaFailureScenario()
-      await runPendingRecoveryScenario()
-      await runInvalidRecoveryScenario()
-      await runHostUncertainScenario()
+      for (const [name, runScenario] of scenarios) {
+        if (selected && selected !== name) continue
+        await runScenario()
+      }
       const hashesAfter = await hashSamples()
       assert.deepEqual(hashesAfter, hashesBefore, 'the original MP4 samples must remain byte-for-byte unchanged')
       process.stdout.write(`PASS Standalone Electron/Chromium integration; real MP4 codes 01001, 01002, 01003, 01004, 01005, 01008; natural EOF observed; CSV discovered=${JSON.stringify(csvFiles)} and intentionally not opened; original sample hashes unchanged.\n`)

@@ -171,6 +171,15 @@ function isStableState(value: unknown): boolean {
 
 function isSnapshot(value: unknown): value is StandalonePlayerSnapshot {
   if (!isPlainRecord(value)) return false
+  if (Object.hasOwn(value, 'storageRecovery')) {
+    const r = value.storageRecovery
+    if (!isPlainRecord(r) || !hasExactKeys(r, ['available', 'contained', 'target', 'phase', 'wasPaused', 'positionRestorable']) ||
+        typeof r.available !== 'boolean' || typeof r.contained !== 'boolean' || typeof r.wasPaused !== 'boolean' ||
+        r.positionRestorable !== false || !['countdown', 'media', 'transition'].includes(String(r.phase)) ||
+        !(r.target === null || isQueueEntry(r.target)) || !['blocked', 'uncertain'].includes(String(value.playbackCondition))) return false
+    const { storageRecovery: _storage, ...base } = value
+    return isSnapshot(base)
+  }
   if (value.playbackCondition === 'ready') {
     return hasExactKeys(value, ['playbackCondition', 'state']) && isStableState(value.state)
   }
@@ -225,6 +234,10 @@ function cloneEnvelope(envelope: StandalonePlayerSnapshotEnvelope): StandalonePl
 }
 
 function cloneSnapshot(snapshot: StandalonePlayerSnapshot): StandalonePlayerSnapshot {
+  if (snapshot.storageRecovery) {
+    const { storageRecovery: r, ...base } = snapshot
+    return { ...cloneSnapshot(base), storageRecovery: { ...r, target: r.target ? { ...r.target } : null } }
+  }
   if (snapshot.playbackCondition === 'ready') return { playbackCondition: 'ready', state: cloneStableState(snapshot.state) }
   if (snapshot.playbackCondition === 'transitioning') {
     const base = {

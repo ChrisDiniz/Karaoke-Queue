@@ -26,6 +26,8 @@ interface ActiveAttempt {
   sawPlaying: boolean
   pauseRequested: boolean
   terminal: boolean
+  failurePending?: boolean
+  failureResolution?: Promise<void>
 }
 
 interface ReservedAttempt {
@@ -72,6 +74,32 @@ export class PlayerPlaybackService {
   private stopOperationAttemptId: string | undefined
   private uncertainContainment: { attemptId: string; musicCode: string; host: PlayerPlaybackHost } | undefined
   private progress: PlayerPlaybackProgress | undefined
+  private storageClock: { now(): number; schedule(fn: () => void, ms: number): unknown; cancel(handle: unknown): void } | undefined
+  private storageWatch: unknown
+  private storageProgressTime = 0
+  private storageProgressPosition = -1
+  enableStorageMonitoring(clock = { now: () => performance.now(),
+    schedule: (fn: () => void, ms: number): unknown => setTimeout(fn, ms),
+    cancel: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>) }): void {
+    this.storageClock = clock
+  }
+  private cancelStorageWatch(): void {
+    if (this.storageWatch !== undefined) this.storageClock?.cancel(this.storageWatch)
+    this.storageWatch = undefined
+  }
+  private armStorageWatch(attempt: ActiveAttempt): void {
+    this.cancelStorageWatch()
+    const clock = this.storageClock
+    if (!clock) return
+    this.storageWatch = clock.schedule(() => {
+      this.storageWatch = undefined
+      if (this.disposeRequested || this.disposed || this.active !== attempt || attempt.terminal || attempt.failurePending || this.state.status !== 'playing') return
+      if (clock.now() - this.storageProgressTime < 15000) { this.armStorageWatch(attempt); return }
+      void this.failAttempt({ attempt, host: this.host! }, new PlayerPlaybackError('MEDIA_STALLED', 'A mídia deixou de avançar por 15 segundos.'))
+        .catch(() => undefined)
+    }, Math.max(1, 15000 - (clock.now() - this.storageProgressTime)))
+  }
+
 
   constructor(
     private readonly library: VideoLibraryService,
@@ -153,20 +181,54 @@ export class PlayerPlaybackService {
     })
   }
 
+  /** Clears a known failed attempt only after Stop ACK or confirmed host termination. */
+  async clearFailedMedia(expectedAttemptId: string): Promise<boolean> {
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(expectedAttemptId)) return false
+    return this.enqueue(async () => {
+      this.ensureNotDisposed()
+      if (this.active || this.state.status !== 'failed' || this.state.attemptId !== expectedAttemptId ||
+          !['stop-acknowledged', 'host-terminated'].includes(this.state.containmentStatus ?? '')) return false
+      const host = this.host
+      if (host) {
+        try {
+          await host.send({ type: 'clear', commandId: crypto.randomUUID(), attemptId: expectedAttemptId })
+        } catch {
+          if (this.host === host) {
+            if (!await this.terminateHost(host)) return false
+            this.detachHost('host-terminated')
+          }
+        }
+      } else if (!['stop-acknowledged', 'host-terminated'].includes(this.state.containmentStatus ?? '')) {
+        return false
+      }
+      if (this.active || this.state.status !== 'failed' || this.state.attemptId !== expectedAttemptId) return false
+      this.progress = undefined
+      this.latestRequestedCode = undefined
+      this.lastSelectedCode = undefined
+      // Keep the durable failed record as diagnostic evidence. This only resets
+      // the in-memory surface after explicit Stop All and confirmed containment.
+      this.setState({ status: 'idle' })
+      return true
+    })
+  }
+
   /** Revalidates indexed local availability without selecting or starting media. */
-  async validateMusicCode(value: unknown): Promise<void> {
+  async validateMusicCode(value: unknown): Promise<void> { await this.validatedMediaIdentity(value) }
+
+  async validatedMediaIdentity(value: unknown): Promise<string> {
     if (!isCanonicalVideoCode(value)) {
       throw new PlayerPlaybackError('INVALID_MUSIC_CODE', 'O código de vídeo precisa conter exatamente cinco dígitos.')
     }
     const snapshot = this.library.getSnapshot()
-    if (snapshot.scanStatus !== 'ready') throw unavailableError('unknown')
+    if (!this.library.isInventoryRevisionPlayable(snapshot.revision)) throw unavailableError('unknown')
     const opened = await this.library.openForPlayback(value, snapshot.revision)
     if (opened.status !== 'available') throw unavailableError(opened.status)
     try {
       const current = this.library.getSnapshot()
-      if (current.scanStatus !== 'ready' || current.revision !== snapshot.revision || opened.revision !== snapshot.revision) {
+      if (!this.library.isInventoryRevisionPlayable(snapshot.revision) || current.revision !== snapshot.revision || opened.revision !== snapshot.revision) {
         throw unavailableError('unknown')
       }
+      return await this.mediaIdentity(opened)
     } finally {
       await opened.handle.close().catch(() => undefined)
     }
@@ -242,7 +304,8 @@ export class PlayerPlaybackService {
   async playImmediately(
     value: unknown,
     validateBeforeCommit?: () => void,
-    recoveryAttemptId?: string
+    recoveryAttemptId?: string,
+    expectedIdentity?: string
   ): Promise<PlayerPlaybackState> {
     if (!isCanonicalVideoCode(value)) {
       throw new PlayerPlaybackError('INVALID_MUSIC_CODE', 'O código de vídeo precisa conter exatamente cinco dígitos.')
@@ -258,6 +321,13 @@ export class PlayerPlaybackService {
     try { prepared = await this.prepareMedia(value) } catch (error) {
       this.clearFailedSelectionIntent(value, generation)
       throw error
+    }
+    if (expectedIdentity) {
+      try {
+        if (await this.mediaIdentity(prepared.opened) !== expectedIdentity) {
+          throw new PlayerPlaybackError('MEDIA_CHANGED', 'O arquivo foi substituído; a tentativa anterior não pode ser retomada.')
+        }
+      } catch (error) { await prepared.opened.handle.close(); throw error }
     }
     let reservation: ReservedAttempt | undefined
     let attemptId: string | undefined
@@ -282,16 +352,6 @@ export class PlayerPlaybackService {
             : undefined
         })
         if (containment) await this.containUncertainAttempt(containment.attempt, containment.host, true)
-      } else if (attemptId && error instanceof PlayerPlaybackError && error.code === 'MEDIA_LOAD_FAILED') {
-        await this.enqueue(() => {
-          const active = this.active
-          if (!active || active.attemptId !== attemptId) return
-          active.terminal = true
-          active.mediaGrant?.revoke()
-          this.active = undefined
-          this.setState({ status: 'failed', attemptId, musicCode: active.musicCode, errorCode: 'MEDIA_LOAD_FAILED' })
-          this.emit({ type: 'error', attemptId, musicCode: active.musicCode, errorCode: 'MEDIA_LOAD_FAILED' })
-        })
       } else if (reservation) {
         await this.failAttempt(reservation, error)
       }
@@ -457,6 +517,23 @@ export class PlayerPlaybackService {
     })
   }
 
+  /** Confirms the fresh startup host has no inherited media before recovery is durably dismissed. */
+  async clearFreshStartupRecovery(expectedAttemptId: string): Promise<boolean> {
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(expectedAttemptId)) return false
+    return this.enqueue(async () => {
+      this.ensureNotDisposed()
+      if (this.active || this.state.status !== 'idle' || this.state.attemptId !== undefined) return false
+      const host = this.host
+      if (!host) return false
+      try {
+        await host.send({ type: 'clear', commandId: crypto.randomUUID(), attemptId: expectedAttemptId })
+      } catch {
+        return false
+      }
+      return !this.active && this.state.status === 'idle' && this.state.attemptId === undefined
+    })
+  }
+
   /** Resolves an explicitly dismissed prior attempt without treating it as completion. */
   resolveRecoveryAsStopped(expectedAttemptId: string, musicCode: string): Promise<PlayerPlaybackState> {
     return this.enqueue(() => {
@@ -482,6 +559,9 @@ export class PlayerPlaybackService {
     const command = await this.enqueue(() => {
       this.ensureNotDisposed()
       const attempt = this.active
+      if (!attempt && this.state.status === 'stopping') {
+        throw new PlayerPlaybackError('RECOVERY_PENDING', 'A falha de mídia ainda está sendo contida.')
+      }
       if (expectedAttemptId && (!attempt || attempt.attemptId !== expectedAttemptId ||
           this.state.attemptId !== expectedAttemptId ||
           !['loading', 'ready', 'starting', 'playing', 'paused'].includes(this.state.status))) {
@@ -542,6 +622,7 @@ export class PlayerPlaybackService {
   dispose(): Promise<void> {
     if (this.disposePromise) return this.disposePromise
     this.disposeRequested = true
+    this.cancelStorageWatch()
     this.commandGeneration++
     this.disposePromise = this.finishDispose()
     return this.disposePromise
@@ -729,13 +810,19 @@ export class PlayerPlaybackService {
     })
   }
 
+  private async mediaIdentity(opened: PreparedMedia['opened']): Promise<string> {
+    const stat = await opened.handle.stat({ bigint: true })
+    return crypto.createHash('sha256').update(JSON.stringify([opened.filePath, stat.dev.toString(),
+      stat.ino.toString(), stat.size.toString(), stat.mtimeNs.toString(), stat.birthtimeNs.toString()])).digest('hex')
+  }
+
   private async prepareMedia(value: string): Promise<PreparedMedia> {
     const snapshot = this.library.getSnapshot()
-    if (snapshot.scanStatus !== 'ready') throw unavailableError('unknown')
+    if (!this.library.isInventoryRevisionPlayable(snapshot.revision)) throw unavailableError('unknown')
     const opened = await this.library.openForPlayback(value, snapshot.revision)
     if (opened.status !== 'available') throw unavailableError(opened.status)
     const current = this.library.getSnapshot()
-    if (opened.revision !== snapshot.revision || current.scanStatus !== 'ready' || current.revision !== snapshot.revision) {
+    if (opened.revision !== snapshot.revision || !this.library.isInventoryRevisionPlayable(snapshot.revision) || current.revision !== snapshot.revision) {
       await opened.handle.close().catch(() => undefined)
       throw unavailableError('unknown')
     }
@@ -778,8 +865,11 @@ export class PlayerPlaybackService {
         ? requestedMusicCode ?? this.latestRequestedCode ?? this.active?.musicCode ?? this.lastSelectedCode
         : requestedMusicCode
       if (!musicCode) throw new PlayerPlaybackError('INVALID_STATE', 'Não há uma música selecionada para reiniciar.')
+      if (this.state.status === 'stopping' || this.active?.failurePending) {
+        throw new PlayerPlaybackError('RECOVERY_PENDING', 'A tentativa anterior ainda está sendo contida.')
+      }
       const snapshot = this.library.getSnapshot()
-      if (intent?.inventoryRevision && (snapshot.scanStatus !== 'ready' || snapshot.revision !== intent.inventoryRevision)) {
+      if (intent?.inventoryRevision && (!this.library.isInventoryRevisionPlayable(intent.inventoryRevision) || snapshot.revision !== intent.inventoryRevision)) {
         throw unavailableError('unknown')
       }
       intent?.validateBeforeCommit?.()
@@ -835,38 +925,98 @@ export class PlayerPlaybackService {
     return result.reservation
   }
 
-  private async failAttempt(reservation: ReservedAttempt, error: unknown): Promise<void> {
+  private failAttempt(reservation: ReservedAttempt, error: unknown): Promise<void> {
+    const existing = reservation.attempt.failureResolution
+    if (existing) return existing
+    const resolution = this.resolveFailedAttempt(reservation, error)
+    reservation.attempt.failureResolution = resolution
+    return resolution
+  }
+
+  private async resolveFailedAttempt(reservation: ReservedAttempt, error: unknown): Promise<void> {
     const code = error instanceof PlayerPlaybackError ? error.code : 'MEDIA_LOAD_FAILED'
     const containment = await this.enqueue(() => {
-      reservation.attempt.mediaGrant?.revoke()
       if (this.active !== reservation.attempt) return undefined
       if (this.isUncertainCommandFailure(error)) {
-        return this.markUncertain(reservation.attempt, 'command-outcome-unknown', true,
+        const result = this.markUncertain(reservation.attempt, 'command-outcome-unknown', true,
           error instanceof PlayerPlaybackError ? error.code : 'COMMAND_TIMEOUT')
+        return result ? { kind: 'uncertain' as const, ...result } : undefined
       }
+      reservation.attempt.failurePending = true
+      const host = this.host?.hostEpoch === reservation.attempt.hostEpoch ? this.host : undefined
       let persistenceFailed = false
       try {
-        this.setDurableState({ status: 'failed', attemptId: reservation.attempt.attemptId,
-          musicCode: reservation.attempt.musicCode, errorCode: code }, 'playback-failed')
+        this.setDurableState({ status: 'stopping', attemptId: reservation.attempt.attemptId,
+          musicCode: reservation.attempt.musicCode }, 'stop-intent')
       } catch {
         persistenceFailed = true
         this.setState({ status: 'uncertain', attemptId: reservation.attempt.attemptId,
           musicCode: reservation.attempt.musicCode, errorCode: 'RECOVERY_PERSISTENCE_FAILED', containmentStatus: 'pending' })
       }
-      reservation.attempt.terminal = true
-      this.active = undefined
-      if (persistenceFailed) {
-        this.emit({ type: 'uncertain', attemptId: reservation.attempt.attemptId,
-          musicCode: reservation.attempt.musicCode, reason: 'command-outcome-unknown' })
-        return { attempt: reservation.attempt, host: this.host }
-      }
-      this.emit({ type: 'error', attemptId: reservation.attempt.attemptId, musicCode: reservation.attempt.musicCode, errorCode: code })
-      return undefined
+      return { kind: 'known-failure' as const, attempt: reservation.attempt, host, persistenceFailed,
+        stop: host ? host.send({ type: 'stop', commandId: crypto.randomUUID(), attemptId: reservation.attempt.attemptId }) : undefined }
     })
-    if (containment) await this.containUncertainAttempt(containment.attempt, containment.host, true)
+    if (!containment) return
+    if (containment.kind === 'uncertain') {
+      await this.containUncertainAttempt(containment.attempt, containment.host, true)
+      return
+    }
+
+    let containmentStatus: NonNullable<PlayerPlaybackState['containmentStatus']> = 'unavailable'
+    if (containment.stop) {
+      try { await containment.stop; containmentStatus = 'stop-acknowledged' }
+      catch { containmentStatus = await this.terminateHost(containment.host!) }
+    }
+
+    await this.enqueue(() => {
+      const attempt = containment.attempt
+      if (this.state.attemptId !== attempt.attemptId || !['stopping', 'uncertain'].includes(this.state.status)) return
+      attempt.mediaGrant?.revoke()
+      attempt.terminal = true
+      this.active = undefined
+      if (!containment.persistenceFailed && ['stop-acknowledged', 'host-terminated'].includes(containmentStatus)) {
+        try {
+          this.setDurableState({ status: 'failed', attemptId: attempt.attemptId, musicCode: attempt.musicCode,
+            errorCode: code, containmentStatus }, 'playback-failed')
+          this.emit({ type: 'error', attemptId: attempt.attemptId, musicCode: attempt.musicCode, errorCode: code })
+          return
+        } catch {
+          const uncertain = { status: 'uncertain' as const, attemptId: attempt.attemptId, musicCode: attempt.musicCode,
+            errorCode: 'RECOVERY_PERSISTENCE_FAILED' as const, containmentStatus }
+          this.setState(uncertain)
+          this.emit({ type: 'uncertain', attemptId: attempt.attemptId, musicCode: attempt.musicCode,
+            reason: 'command-outcome-unknown' })
+          return
+        }
+      }
+      const uncertain = { status: 'uncertain' as const, attemptId: attempt.attemptId, musicCode: attempt.musicCode,
+        errorCode: containment.persistenceFailed ? 'RECOVERY_PERSISTENCE_FAILED' as const :
+          containmentStatus === 'unavailable' ? 'HOST_UNAVAILABLE' as const : 'HOST_CONTAINMENT_FAILED' as const,
+        containmentStatus }
+      try { this.setDurableState(uncertain, 'playback-uncertain') }
+      catch { this.setState({ ...uncertain, errorCode: 'RECOVERY_PERSISTENCE_FAILED' }) }
+      this.emit({ type: 'uncertain', attemptId: attempt.attemptId, musicCode: attempt.musicCode,
+        reason: 'command-outcome-unknown' })
+    })
   }
 
   private handleHostEvent(event: PlayerPlaybackHostEvent): void {
+    if (event.type === 'media' && event.observation.type === 'error') {
+      void this.enqueue(() => {
+        const attempt = this.active
+        if (!attempt || event.hostEpoch !== attempt.hostEpoch || event.attemptId !== attempt.attemptId ||
+            event.sequenceNumber <= attempt.lastSequence || attempt.terminal || attempt.failurePending) return undefined
+        attempt.lastSequence = event.sequenceNumber
+        attempt.failurePending = true
+        return attempt
+      }).then(attempt => {
+        if (attempt) return this.failAttempt({ attempt, host: this.host! },
+          new PlayerPlaybackError('MEDIA_LOAD_FAILED', 'O elemento de mídia informou erro de leitura.'))
+      }).catch(error => {
+        this.handleTransitionPersistenceFailure(event, error)
+      })
+      return
+    }
     void this.enqueue(() => this.applyHostEvent(event)).catch(error => {
       this.handleTransitionPersistenceFailure(event, error)
     })
@@ -880,7 +1030,7 @@ export class PlayerPlaybackService {
     }
     const attempt = this.active
     if (!attempt || event.hostEpoch !== attempt.hostEpoch || event.attemptId !== attempt.attemptId ||
-        event.sequenceNumber <= attempt.lastSequence || attempt.terminal) return
+        event.sequenceNumber <= attempt.lastSequence || attempt.terminal || attempt.failurePending) return
     attempt.lastSequence = event.sequenceNumber
     const observation = event.observation
     switch (observation.type) {
@@ -891,6 +1041,11 @@ export class PlayerPlaybackService {
       case 'playing':
         if (attempt.pauseRequested) break
         attempt.sawPlaying = true
+        if (this.state.status !== 'playing') {
+          this.storageProgressTime = this.storageClock?.now() ?? 0
+          this.storageProgressPosition = -1
+          this.armStorageWatch(attempt)
+        }
         this.setDurableState({ status: 'playing', attemptId: attempt.attemptId, musicCode: attempt.musicCode }, 'playback-started')
         break
       case 'timeupdate':
@@ -899,6 +1054,10 @@ export class PlayerPlaybackService {
           const duration = Number.isFinite(observation.duration) && (observation.duration as number) > 0
             ? observation.duration as number
             : null
+          if ((observation.currentTime as number) > this.storageProgressPosition) {
+            this.storageProgressPosition = observation.currentTime as number
+            this.storageProgressTime = this.storageClock?.now() ?? 0
+          }
           this.progress = { attemptId: attempt.attemptId, currentTime: observation.currentTime as number, duration }
           this.emit({ type: 'progress', ...this.progress })
         }
@@ -909,7 +1068,6 @@ export class PlayerPlaybackService {
         }
         break
       case 'ended': this.handleEnded(attempt, observation.currentTime, observation.duration); break
-      case 'error': this.handleMediaFailure(attempt); break
       default: break
     }
   }
@@ -942,16 +1100,6 @@ export class PlayerPlaybackService {
       duration: duration as number, endedAt: new Date().toISOString() })
   }
 
-  private handleMediaFailure(attempt: ActiveAttempt): void {
-    if (this.active !== attempt || attempt.terminal) return
-    this.setDurableState({ status: 'failed', attemptId: attempt.attemptId, musicCode: attempt.musicCode,
-      errorCode: 'PLAYBACK_FAILED' }, 'playback-failed')
-    attempt.terminal = true
-    attempt.mediaGrant?.revoke()
-    this.active = undefined
-    this.emit({ type: 'error', attemptId: attempt.attemptId, musicCode: attempt.musicCode, errorCode: 'PLAYBACK_FAILED' })
-  }
-
   private detachHost(reason: 'host-terminated'): void {
     const host = this.host
     if (!host) return
@@ -960,6 +1108,10 @@ export class PlayerPlaybackService {
     this.host = undefined
     const attempt = this.active
     if (attempt && attempt.hostEpoch === host.hostEpoch) {
+      if (attempt.failurePending) {
+        host.dispose()
+        return
+      }
       try {
         this.setDurableState({ status: 'uncertain', attemptId: attempt.attemptId, musicCode: attempt.musicCode,
           errorCode: 'HOST_TERMINATED', containmentStatus: 'host-terminated' }, 'host-terminated')
@@ -1062,6 +1214,7 @@ export class PlayerPlaybackService {
   }
 
   private setState(state: PlayerPlaybackState): void {
+    if (state.status !== 'playing') this.cancelStorageWatch()
     this.state = { ...state }
     this.emit({ type: 'state-changed', state: this.getState() })
   }

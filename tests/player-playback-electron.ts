@@ -295,13 +295,27 @@ if (process.env.KQ_PLAYER_PLAYBACK_E2E_MAIN === '1') {
       'replacing a playing video must interrupt it, not complete it')
       await manualCall('stop')
 
+      await page.evaluate(() => {
+        window.__kqInvalidMediaError = null
+        document.addEventListener('error', event => {
+          const media = event.target
+          if (media instanceof HTMLMediaElement && media.error) {
+            window.__kqInvalidMediaError = { code: media.error.code, message: media.error.message }
+          }
+        }, { once: true, capture: true })
+      })
       const invalidInputMedia = await manualCall('playByMusicCode', invalidCode.replace(/^0+/, ''))
       assert.equal(invalidInputMedia.outcome, 'failed', 'invalid media must not be reported as successful playback')
 
-      // A zero-byte file is indexed but Chromium must report a real media failure.
+      // A zero-byte file is indexed; observe the native error before confirmed
+      // containment clears the media element and its error state.
       const invalidAttempt = (await state()).attemptId
       await waitState('failed', invalidAttempt, 15000)
-      assert.equal((await video())?.error === null, false, 'invalid media should surface an HTMLMediaElement error')
+      const invalidMediaError = await page.evaluate(() => window.__kqInvalidMediaError)
+      assert.ok(invalidMediaError && Number.isInteger(invalidMediaError.code) && invalidMediaError.code > 0,
+        'invalid media must produce a native HTMLMediaElement error before containment')
+      assert.ok(['stop-acknowledged', 'host-terminated'].includes((await state()).containmentStatus),
+        'a failed media attempt can reach failed only after confirmed containment')
 
       // Natural EOF is measured at normal speed; no synthetic ended event or timeout is used as evidence.
       await manualCall('clearSequence')

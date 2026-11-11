@@ -31,10 +31,12 @@ export function isStandalonePlayerLibraryChangeAllowed(snapshot: StandalonePlaye
 export class StandalonePlayerOptionsService {
   private readonly listeners = new Set<(snapshot: StandalonePlayerOptionsData) => void>()
   private readonly unsubscribeCatalog: () => void
+  private readonly unsubscribeLibrary: () => void
   private disposed = false
 
   constructor(private readonly options: StandalonePlayerOptionsServiceOptions) {
     this.unsubscribeCatalog = options.catalog.subscribeToMetadataRevision(() => this.publish())
+    this.unsubscribeLibrary = options.library.subscribe(() => this.publish())
   }
 
   getSnapshot(): StandalonePlayerOptionsData {
@@ -130,6 +132,7 @@ export class StandalonePlayerOptionsService {
     if (this.disposed) return
     this.disposed = true
     this.unsubscribeCatalog()
+    this.unsubscribeLibrary()
     this.listeners.clear()
   }
 

@@ -431,6 +431,20 @@
       <svg class="feedback-icon" viewBox="0 0 16 16" aria-hidden="true"><circle class="feedback-icon-ring" cx="8" cy="8" r="6.5"></circle><path class="feedback-icon-error" d="M8 4.5v4"></path><circle class="feedback-icon-error-dot" cx="8" cy="11.2" r=".45"></circle><path class="feedback-icon-success" d="M4.8 8.2 7 10.3l4.3-4.6"></path></svg>
       <span></span>
     </div>
+  <section id="storage-recovery-modal" class="stop-confirmation-overlay" role="dialog" tabindex="-1" aria-modal="true"
+    aria-labelledby="storage-recovery-title" aria-describedby="storage-recovery-copy" hidden>
+    <div class="stop-confirmation-dialog storage-recovery-dialog">
+      <h2 id="storage-recovery-title">Biblioteca indisponível</h2>
+      <p id="storage-recovery-copy" role="status" aria-live="polite"></p>
+      <p id="storage-recovery-status" role="status" aria-live="polite"></p>
+      <div class="stop-confirmation-actions">
+        <button id="storage-recovery-retry" class="stop-confirmation-button confirm" type="button">Reiniciar música do início</button>
+        <button id="storage-recovery-discard" class="stop-confirmation-button cancel" type="button">Encerrar somente esta música</button>
+        <button id="storage-recovery-dismiss" class="stop-confirmation-button cancel" type="button">Entendi</button>
+      </div>
+      <p>Ctrl+Espaço: Parar tudo, com confirmação.</p>
+    </div>
+  </section>
   </main>
   <script src="player-playback.js"></script>
   <script src="standalone-player-renderer.bundle.js"></script>

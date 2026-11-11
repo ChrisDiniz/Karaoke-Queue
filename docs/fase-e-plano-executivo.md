@@ -1,5 +1,9 @@
 # Fase E — Plano executivo técnico E0–E5
 
+**Encerramento — 2026-11-09: Fase E CONCLUÍDA por decisão explícita do proprietário nesta sessão.** Este registro substitui os status anteriores de revisão/aceite pendente para o encerramento da fase e de E1–E5. E0 mantém sua aprovação de 2026-11-08. A solicitação de encerramento não é evidência de execução de testes adicionais: S1 permanece historicamente PARTIAL, e cenários registrados como NOT RUN não foram convertidos em PASS. Evidências, riscos e limitações anteriores ficam preservados. Fase F não iniciada nem autorizada por este encerramento.
+
+**Histórico de execução e validação anterior ao encerramento:**
+
 **Adição autorizada em 2026-11-09:** ativação no topo ocioso do Reprodutor, licença persistida comum às duas funções e startup Player em fullscreen. [Implementação, regressões e limites](fase-e-player-licenca-fullscreen.md). Testes locais e runner Windows PASS; commit `79f4040` com CI Linux/Windows e artifact PASS na run `42737844704`. [Fechamento e teste manual em andamento](fase-e-player-licenca-fullscreen.md#fechamento-do-ci-e-retomada-após-reinício--2026-11-09). Não muda S1 PARTIAL nem a homologação pendente E1–E5.
 
 **CI de validação — 2026-11-09:** ambos os jobs PASS e primeiro artifact NSIS baixado/verificado no SHA b92e950. [Evidência, fingerprint, hash e limites](fase-e-revisao-independente.md#24-primeiro-ci-integral-pass-e-artifact--2026-11-09). GO somente para validação do candidato; S1 PARTIAL e E1–E5 sem homologação.

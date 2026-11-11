@@ -74,6 +74,9 @@ class StandalonePlayerRenderer {
   private feedbackTimer: number | undefined
   private feedbackTimerGeneration = 0
   private feedbackStatus: StandaloneCodeSubmissionStatus | undefined
+  private storageDismissed = false
+  private storageActionPending = false
+  private storageStatus = ''
   private stopConfirmationOpen = false
   private stopConfirmationStatus = ''
   private catalogDialogMode: CatalogDialogMode = 'closed'
@@ -183,6 +186,11 @@ class StandalonePlayerRenderer {
     this.unsubscribeOptions = this.api.onOptionsChanged(snapshot => {
       this.applyOptionsSnapshot(snapshot)
     })
+    document.getElementById('storage-recovery-retry')?.addEventListener('click', () => void this.storageAction('recover-storage'))
+    document.getElementById('storage-recovery-discard')?.addEventListener('click', () => void this.storageAction('discard-interrupted'))
+    document.getElementById('storage-recovery-dismiss')?.addEventListener('click', () => {
+      this.storageDismissed = true; this.renderStorageRecovery(); document.body.focus()
+    })
     window.addEventListener('keydown', this.onKeyDown, true)
     window.addEventListener('resize', this.onResize)
     window.addEventListener('pagehide', this.dispose, { once: true })
@@ -228,6 +236,22 @@ class StandalonePlayerRenderer {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
       event.preventDefault()
       event.stopImmediatePropagation()
+      return
+    }
+    const storageModal = document.getElementById('storage-recovery-modal')
+    if (storageModal && !storageModal.hidden && !this.stopConfirmationOpen && this.interaction.getSnapshot().menuScreen !== 'exit-confirmation') {
+      if (event.ctrlKey && event.code === 'Space') {
+        event.preventDefault(); event.stopImmediatePropagation(); this.dispatch({ type: 'open-stop-confirmation' }); return
+      }
+      if (event.key === 'Tab') {
+        event.preventDefault(); event.stopImmediatePropagation()
+        const buttons = [...storageModal.querySelectorAll<HTMLButtonElement>('button')].filter(b => !b.hidden && !b.disabled)
+        const current = buttons.indexOf(document.activeElement as HTMLButtonElement)
+        buttons[(current + (event.shiftKey ? -1 : 1) + buttons.length) % buttons.length]?.focus()
+        return
+      }
+      // Enter/Space retain native focused-button activation; all other app shortcuts stay fenced.
+      if (event.key !== 'Enter' && event.code !== 'Space') { event.preventDefault(); event.stopImmediatePropagation() }
       return
     }
     if (this.license.handleKeyDown(event)) return
@@ -334,6 +358,7 @@ class StandalonePlayerRenderer {
   }
 
   private renderStopConfirmation(): void {
+    this.renderStorageRecovery()
     this.syncLicenseVisibility()
     const modal = document.getElementById('standalone-stop-confirmation')
     if (modal) modal.hidden = !this.stopConfirmationOpen
@@ -355,6 +380,7 @@ class StandalonePlayerRenderer {
     const commands = document.getElementById('standalone-commands-screen')
     const options = document.getElementById('standalone-options-screen')
     const exitConfirmation = document.getElementById('standalone-exit-confirmation')
+    this.renderStorageRecovery()
     const showingExitConfirmation = menuScreen === 'exit-confirmation'
     if (mainMenu) {
       mainMenu.hidden = menuScreen !== 'main' && !showingExitConfirmation
@@ -528,6 +554,7 @@ class StandalonePlayerRenderer {
     if (!isNewerStandalonePlayerOptionsSnapshot(this.optionsSnapshot, snapshot)) return false
     this.optionsSnapshot = snapshot
     this.renderOptionsSnapshot(snapshot)
+    this.renderStorageRecovery()
     return true
   }
 
@@ -994,6 +1021,50 @@ class StandalonePlayerRenderer {
     element.classList.toggle('empty', !available)
   }
 
+  private async storageAction(type: 'recover-storage' | 'discard-interrupted'): Promise<void> {
+    if (!this.api || this.storageActionPending) return
+    this.storageActionPending = true; this.storageStatus = 'Verificando contenção e arquivo…'; this.renderStorageRecovery()
+    try {
+      const reply = await this.api.execute({ operationId: crypto.randomUUID(), command: { type } })
+      this.renderSnapshot(reply.envelope)
+      this.storageStatus = reply.outcome === 'confirmed' ? '' : 'Não foi possível recuperar. O arquivo pode estar ausente, inacessível ou ter sido substituído. A fila foi mantida.'
+    } catch { this.storageStatus = 'Não foi possível confirmar a operação. A recuperação permanece protegida.' }
+    finally { this.storageActionPending = false; this.renderStorageRecovery() }
+  }
+
+  private renderStorageRecovery(): void {
+    const modal = document.getElementById('storage-recovery-modal')
+    if (!modal) return
+    const snapshot = this.latestSnapshot?.snapshot
+    const recovery = snapshot?.storageRecovery
+    const degraded = this.optionsSnapshot?.library.scanStatus === 'degraded'
+    if (!degraded) this.storageDismissed = false
+    const informational = !recovery && degraded && snapshot?.playbackCondition === 'ready' && snapshot.state.operationalState === 'idle' && !this.storageDismissed
+    const show = Boolean(recovery || informational) && !this.stopConfirmationOpen && this.interaction.getSnapshot().menuScreen !== 'exit-confirmation'
+    const opening = modal.hidden && show
+    modal.hidden = !show
+    const title = document.getElementById('storage-recovery-title')!
+    title.textContent = recovery ? 'Reprodução interrompida — recuperação' : 'Biblioteca indisponível'
+    const copy = document.getElementById('storage-recovery-copy')!
+    const code = snapshot?.playbackCondition === 'blocked' || snapshot?.playbackCondition === 'uncertain' ? snapshot.error.code : ''
+    const reason = code === 'MEDIA_CHANGED' ? 'O arquivo foi substituído. ' : code === 'MEDIA_STALLED'
+      ? 'A mídia deixou de avançar por 15 segundos. ' : code === 'MEDIA_LOAD_FAILED'
+      ? 'Falha na leitura ou carregamento do vídeo. ' : 'O acesso seguro à mídia não pôde ser confirmado. '
+    copy.textContent = recovery ? `${reason}${recovery.available ? 'A biblioteca está acessível. ' : 'A biblioteca está indisponível. '}${recovery.wasPaused ? 'A música estava pausada por você. ' : ''}${recovery.contained ? '' : 'A contenção da mídia ainda não foi confirmada. '}${recovery.target ? 'A música foi preservada. ' : 'A tentativa atual foi encerrada. ' }As demais músicas e prioridades foram mantidas nesta sessão. A posição não pode ser restaurada com segurança; a recuperação reinicia do início. Nada será reproduzido automaticamente.`
+      : 'Não foi possível acessar a biblioteca. Configuração e índice foram preservados. Reconecte o armazenamento; nenhuma música será iniciada automaticamente.'
+    const retry = document.getElementById('storage-recovery-retry') as HTMLButtonElement
+    const discard = document.getElementById('storage-recovery-discard') as HTMLButtonElement
+    retry.hidden = discard.hidden = !recovery
+    retry.disabled = this.storageActionPending || !recovery?.contained || !recovery?.available
+    discard.disabled = this.storageActionPending || !recovery?.contained || !recovery?.target
+    retry.textContent = recovery?.target ? 'Reiniciar música do início' : 'Iniciar próxima música'
+    document.getElementById('storage-recovery-dismiss')!.hidden = !informational
+    document.getElementById('storage-recovery-status')!.textContent = this.storageStatus
+    if (opening) requestAnimationFrame(() => {
+      if (!modal.hidden) ((modal.querySelector('button:not([hidden]):not(:disabled)') as HTMLElement) ?? modal).focus()
+    })
+  }
+
   private renderSnapshot(envelope: StandalonePlayerSnapshotEnvelope): void {
     if (this.disposed) return
     if (this.latestSnapshot && envelope.revision < this.latestSnapshot.revision) return
@@ -1005,6 +1076,7 @@ class StandalonePlayerRenderer {
     const previousPhase = this.latestSnapshot?.snapshot.playbackCondition === 'transitioning'
       ? this.latestSnapshot.snapshot.phase : undefined
     this.latestSnapshot = envelope
+    this.renderStorageRecovery()
     const snapshot = envelope.snapshot
     this.currentTrackInfo.setCurrentTrack(currentTrackFromSnapshot(snapshot))
     const state = snapshot.playbackCondition === 'ready' ? snapshot.state : snapshot.lastConfirmedState
