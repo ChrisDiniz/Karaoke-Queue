@@ -442,7 +442,7 @@ test('uncertain host acknowledgement remains uncertain and does not duplicate pl
   } finally { await fixture.cleanup() }
 })
 
-test('startup recovery blocks playback without constructing the legacy manual sequence', async () => {
+test('P1 startup resolves inherited recovery without autoplay and permits a new attempt', async () => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'kq-standalone-pending-recovery-'))
   const store = new PlayerPlaybackRecoveryStore(profile)
   const timestamp = new Date(0).toISOString()
@@ -455,12 +455,22 @@ test('startup recovery blocks playback without constructing the legacy manual se
   const fixture = await createFixture({ recovery })
   try {
     const initial = fixture.sequence.getSnapshot()
-    assert.equal(initial.playbackCondition, 'blocked')
-    assert.equal(fixture.host.commands.length, 0, 'uncertain startup recovery never autoplays')
-    const result = await submit(fixture.sequence, 'blocked-by-recovery', '1001')
-    assert.equal(result.outcome, 'rejected')
-    assert.equal(fixture.host.commands.length, 0)
-    assert.equal(recovery.getState().status, 'pending')
+    assert.equal(initial.playbackCondition, 'ready')
+    if (initial.playbackCondition !== 'ready') assert.fail('P1 startup did not resolve safely')
+    assert.equal(initial.state.operationalState, 'idle')
+    assert.equal(fixture.host.commands.some(command => command.type === 'load' || command.type === 'play'), false,
+      'inherited playback must never autoplay')
+    assert.equal(recovery.getState().status, 'resolved')
+    assert.equal(store.read()?.status, 'dismissed', 'resolution must be persisted before admitting another attempt')
+    assert.equal(store.read()?.attemptId, oldAttemptId)
+    const result = await submit(fixture.sequence, 'new-after-recovery', '1001')
+    assert.equal(result.outcome, 'confirmed')
+    const playing = fixture.sequence.getSnapshot()
+    assert.equal(playing.playbackCondition, 'ready')
+    if (playing.playbackCondition !== 'ready') assert.fail('New attempt did not start')
+    assert.equal(playing.state.operationalState, 'playing')
+    assert.notEqual(playing.state.current?.attemptId, oldAttemptId)
+
   } finally {
     await fixture.cleanup()
     fs.rmSync(profile, { recursive: true, force: true })

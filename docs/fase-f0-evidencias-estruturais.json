@@ -1,0 +1,187 @@
+{
+  "scope": "F0 structural T2/T4 remediation; internal disposable fixtures only; D: NOT ACCESSED",
+  "branch": "feature/remote-player-lan-integration-2",
+  "head": "bc3d37de09462485caa9ff027341eeabdd4b88cb",
+  "windowsFingerprint": "e8b7410e8a9602e67cf6700e68155df08c90947f713bb1f400e71401d30f4e8e",
+  "codeSha256": {
+    "main-runtime.ts": "f813cf77f7cf7590f1d1215473a8071dde9381f66c481162d3608b27ed21f804",
+    "src/main-media-runtime.ts": "59f9dcf54be5e3ee8982db16fddc5b7b9745de280430febe127fb9f5980f07c8",
+    "src/player-media-protocol.ts": "b452d24f7d243bb10f528a036d7c65ce6ed8c95e2cbc04e8e2be016962b67904",
+    "tests/main-media-runtime.test.ts": "e6cb405f6658b1afae2078cbf9680acebe6352a61c0cad3e346f0e792e84e170",
+    "tests/player-media-protocol.test.ts": "74ca8558724fbef5f0030b217cb3037aa9b7ca200f343bdab70d91f6b4e7f567",
+    "tests/standalone-player-production-electron.ts": "85e5c5c7e98686bb3a7f2d6e9e3eda617459c6817d71b0c33afb4c8fc7c09b74",
+    "tests/f0-production-validation.ts": "72455198f6ae585c03b4700e40f8fb8a4a37f834ca359713b25c8b24fd759703",
+    "tests/f0-production-bootstrap-entry.ts": "3aa3ef34b6c669f799b2d4fdc519cf32c2c8600f5666a8a5972c306e954b0436",
+    "tests/f0-bootstrap-electron.ts": "e025fdee4e7fd61c64a88ee4b3a565759f4f4b246557e377bf42bca293829e49",
+    "scripts/run-windows-native-tests.cjs": "a480a9c86929c2a55b9c797bdb8464b9d8d7b2215f5c29debb2d2e4701575024",
+    "scripts/windows-native-runner.test.cjs": "fa3d3ff48a221b0ca562241483dfa6ac9d2ae4f81b70a3c973b661fbb6f1c126",
+    "package.json": "5edea8000f4f74c2428aaa607600d3a60a4fc7eccd9303d00d48255bc7a36b55",
+    "src/video-library-service.ts": "a07c733384613c2e363192f05d9c66ec8d2e056cac2a15193647e132b4f33a48",
+    "tests/video-library.test.ts": "781bb7f78dd7becd780a0380b4fd89cd3f0f414104fbc7d4a51d7aed2febf5a6"
+  },
+  "windowsUnitTests": 313,
+  "windowsUnitSuites": 13,
+  "productionBootstrapCases": [
+    "ready",
+    "cached-ready",
+    "host-failed",
+    "close-before-ready",
+    "persistence-failure"
+  ],
+  "bootstrapOracles": {
+    "directoryEnumerationsBeforeOperationalGate": 0,
+    "restrictedIpcBeforeGate": "blocked",
+    "realChromiumHostBoundary": true
+  },
+  "structuralPlayback": "PASS",
+  "minimumRealCurrentTimeSeconds": 2,
+  "scanDuringPlayback": {
+    "durationMs": 0,
+    "directoriesEnumerated": 1,
+    "entriesEnumerated": 1,
+    "lstatCalls": 0,
+    "statCalls": 1,
+    "realpathCalls": 1,
+    "candidateFiles": 0,
+    "cacheHits": 0,
+    "fileOpens": 0,
+    "fileCloses": 0,
+    "bytesRead": 0,
+    "playbackYieldCount": 1,
+    "playbackYieldDurationMs": 0,
+    "scanInProgress": true,
+    "scanStatus": "scanning"
+  },
+  "mediaDuringPlayback": {
+    "requests": 2,
+    "rangeRequests": 2,
+    "fileHandlesOpened": 2,
+    "fileHandlesClosed": 2,
+    "fileHandleCloseFailures": 0,
+    "streamsOpened": 2,
+    "streamsClosed": 2,
+    "activeStreams": 0,
+    "activeGrants": 1,
+    "bytesRead": 2222633
+  },
+  "mediaAfterFirstStopAppOpen": {
+    "requests": 2,
+    "rangeRequests": 2,
+    "fileHandlesOpened": 2,
+    "fileHandlesClosed": 2,
+    "fileHandleCloseFailures": 0,
+    "streamsOpened": 2,
+    "streamsClosed": 2,
+    "activeStreams": 0,
+    "activeGrants": 0,
+    "bytesRead": 2222633
+  },
+  "waitingClassification": {
+    "beforeFirstPlaying": 2,
+    "duringEstablishedPlayback": 0,
+    "stalled": 0,
+    "error": 0
+  },
+  "attemptTimings": [
+    {
+      "mainSubmitAt": 547.4742,
+      "firstDurableAttemptAndLoadingAt": 6815.0159,
+      "mainPlayingAt": 7350.6648,
+      "mainSubmitToPlayingMs": 6803.1906,
+      "rendererDispatchObservedAt": 247,
+      "rendererActualKeydown": "NOT_MEASURED",
+      "rendererLoadCommandAt": 6520.399999999907,
+      "htmlPlayingAt": 7026.199999999721,
+      "firstPositiveTimeupdateAt": 7732.399999999907,
+      "rendererDispatchToHtmlPlayingMs": 6779.199999999721,
+      "source": "Main submit/state and HTML events observed directly; Renderer dispatch observed before press, actual keydown NOT_MEASURED; clocks separate; first durable attempt at load-intent",
+      "attempt": 1,
+      "sameRealHost": true
+    },
+    {
+      "mainSubmitAt": 10409.4646,
+      "firstDurableAttemptAndLoadingAt": 15449.5584,
+      "mainPlayingAt": 15583.1322,
+      "mainSubmitToPlayingMs": 5173.667600000001,
+      "rendererDispatchObservedAt": 10108.799999999814,
+      "rendererActualKeydown": "NOT_MEASURED",
+      "rendererLoadCommandAt": 15153.19999999972,
+      "htmlPlayingAt": 15241.600000000093,
+      "firstPositiveTimeupdateAt": 16014.69999999972,
+      "rendererDispatchToHtmlPlayingMs": 5132.800000000279,
+      "source": "Main submit/state and HTML events observed directly; Renderer dispatch observed before press, actual keydown NOT_MEASURED; clocks separate; first durable attempt at load-intent",
+      "attempt": 2,
+      "sameRealHost": true
+    }
+  ],
+  "logs": [
+    "/tmp/kq-f0-structural-windows-final-guards.log",
+    "/tmp/kq-f0-structural-electron-final-guards.log",
+    "/tmp/kq-f0-bootstrap-electron-final-guards.log",
+    "/tmp/kq-f0-production-regression-final-guards.log",
+    "/tmp/kq-f0-library-races-before.log",
+    "/tmp/kq-f0-library-races-after.log",
+    "/tmp/kq-f0-protocol-before.log",
+    "/tmp/kq-f0-structural-windows-final.log",
+    "/tmp/kq-f0-runtime-final.log",
+    "/tmp/kq-f0-runner-unit-final.log"
+  ],
+  "limitations": [
+    "Synthetic/internal fixture performance is not external USB performance",
+    "No physical T3",
+    "No installed-package validation",
+    "No human audiovisual certification",
+    "Operational profile and external drive not accessed",
+    "Earlier real-library results and possible LastAccessTime updates not reclassified"
+  ],
+  "priorFailures": [
+    {
+      "case": "existing Windows checkout",
+      "result": "FAIL preflight; branch divergence; old checkout preserved; isolated clone created from local Git bundle"
+    },
+    {
+      "case": "new runtime unit cleanup on Windows",
+      "result": "FAIL 9/14 due caller-owned test SQLite repositories left open; explicit close fixed; no assertion/timeout weakening"
+    },
+    {
+      "case": "protocol mutation control without post-open authorization check",
+      "result": "FAIL 3/10 (revoke, abort, dispose); final protocol 10/10 PASS"
+    },
+    {
+      "case": "Renderer submit event observer",
+      "result": "actual keydown consumed before test listener; final test observes pre-dispatch timestamp and explicitly marks actual Renderer keydown NOT_MEASURED; Main submit remains directly observed"
+    },
+    {
+      "case": "two deterministic scan admission/publication races",
+      "result": "Before correction: 23/25 PASS, 2 FAIL (new active attempt after idle notification; new revision published during playback). After correction: 25/25 PASS, Linux and native Windows."
+    }
+  ],
+  "mainE2EScenarios": 11,
+  "inheritedRecoveryCases": [
+    "paused",
+    "playing",
+    "pending",
+    "uncertain",
+    "invalid"
+  ],
+  "priorRuns": [
+    {
+      "fingerprint": "30c65d709406b2658c30478cd50ddb838aa781930f31eaa6a3209ed46b4e6d22",
+      "result": "PASS (intermediate test harness; production unchanged)"
+    },
+    {
+      "fingerprint": "f114eed9883f9db7c18ebbfd712bdf4a6f808b84edada8d9c38e3bf5ecd321d4",
+      "result": "PASS (intermediate test harness; production unchanged)"
+    },
+    {
+      "fingerprint": "408e54067b791088eb2d501a20d0cad03cf02decef1cb843e6d8a02c40e58995",
+      "result": "PASS before the two newly reproduced scan admission/publication races were corrected"
+    }
+  ],
+  "libraryE2ECases": [
+    "legacy Controller resolves to Combined and preserves invalid media configuration",
+    "Player scan, no Controller database/UI, and restart reconstruction",
+    "Combined owns one Controller database and one Player library service",
+    "invalid Player configuration preserves existing Controller SQLite"
+  ]
+}

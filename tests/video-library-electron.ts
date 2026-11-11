@@ -216,6 +216,93 @@ async function runPlayerScanAndRestart() {
     assert.equal(initialOptions.library.scanStatus, 'ready')
     assert.equal(initialOptions.library.indexedFiles, 1, 'Standalone Options must expose the completed media-library index')
 
+    await controlPage.evaluate(() => {
+      window.__f0AvailabilityOptionsEvents = []
+      window.__f0UnsubscribeAvailabilityOptions = window.standalonePlayer.onOptionsChanged(snapshot => {
+        window.__f0AvailabilityOptionsEvents.push(snapshot)
+      })
+    })
+    await controlPage.keyboard.press('Escape')
+    await controlPage.waitForFunction(() => document.body.dataset.menuScreen === 'main')
+    await controlPage.locator('#menu-item-options').click()
+    await controlPage.waitForFunction(() => document.body.dataset.menuScreen === 'options')
+    assert.equal(await controlPage.locator('#options-library-state').textContent(), 'Pasta disponível')
+    const libraryIndexPath = path.join(profile.userData, 'video-library-index.json')
+    const generationBeforeRemoval = JSON.parse(fs.readFileSync(libraryIndexPath, 'utf8')).generation
+
+    // The active-window contract polls every 5s; an inactive window polls every 30s.
+    // This scenario asserts the active contract rather than relying on desktop focus left by previous tests.
+    const focusControl = async () => {
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(window =>
+        window.webContents.getURL().includes('standalone-player.html')).focus())
+      await controlPage.waitForFunction(() => document.hasFocus())
+    }
+    await focusControl()
+    // The fixture root is disposable; this simulates temporary media-root loss without touching a real volume.
+    fs.rmSync(mediaRoot, { recursive: true })
+    await controlPage.waitForFunction(() => {
+      const state = document.querySelector('#options-library-state')
+      const unconfirmed = document.querySelector('#options-library-unconfirmed')
+      return state?.hidden === false && state.textContent === 'Pasta indisponível' &&
+        unconfirmed?.hidden === false
+    }, undefined, { timeout: 20000 })
+    const unavailableEvents = await controlPage.evaluate(() => window.__f0AvailabilityOptionsEvents.map(snapshot => snapshot.library))
+    assert.ok(unavailableEvents.some(snapshot => snapshot.scanStatus === 'degraded'),
+      'Main must publish temporary root loss through the real options IPC subscription.')
+    assert.equal((await controlPage.evaluate(() => window.standalonePlayer.getOptionsSnapshot())).library.folderName,
+      path.basename(mediaRoot), 'temporary root loss must preserve the configured folder name.')
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(profile.userData, 'video-library.json'), 'utf8')),
+      { version: 1, roots: [mediaRoot] }, 'temporary root loss must not erase the library configuration.')
+    assert.equal(JSON.parse(fs.readFileSync(libraryIndexPath, 'utf8')).generation, generationBeforeRemoval,
+      'a failed availability probe must preserve the last complete on-disk inventory.')
+
+    fs.mkdirSync(path.join(mediaRoot, 'nested'), { recursive: true })
+    fs.writeFileSync(path.join(mediaRoot, '01234.mp4'), '')
+    await focusControl()
+    try {
+      await controlPage.waitForFunction(() => {
+        const state = document.querySelector('#options-library-state')
+        const count = document.querySelector('#options-library-count')
+        const indexing = document.querySelector('#options-library-indexing')
+        return state?.hidden === false && state.textContent === 'Pasta disponível' &&
+          count?.hidden === false && count.textContent === '1 vídeos indexados' && indexing?.hidden === true
+      }, undefined, { timeout: 20000 })
+    } catch (error) {
+      const diagnostic = await controlPage.evaluate(async () => ({
+        focused: document.hasFocus(),
+        library: (await window.standalonePlayer.getOptionsSnapshot()).library,
+        rendered: {
+          state: { text: document.querySelector('#options-library-state')?.textContent,
+            hidden: document.querySelector('#options-library-state')?.hidden },
+          count: { text: document.querySelector('#options-library-count')?.textContent,
+            hidden: document.querySelector('#options-library-count')?.hidden },
+          indexingHidden: document.querySelector('#options-library-indexing')?.hidden
+        },
+        publishedEvents: window.__f0AvailabilityOptionsEvents.map(snapshot => ({
+          revision: snapshot.revision, scanStatus: snapshot.library.scanStatus,
+          indexedFiles: snapshot.library.indexedFiles
+        }))
+      }))
+      process.stderr.write(`F0_AVAILABILITY_RECONNECT_DIAGNOSTIC ${JSON.stringify(diagnostic)}\n`)
+      throw error
+    }
+    const reconnectedEvents = await controlPage.evaluate(() => window.__f0AvailabilityOptionsEvents.map(snapshot => snapshot.library))
+    const degradedIndex = reconnectedEvents.findIndex(snapshot => snapshot.scanStatus === 'degraded')
+    const restoredIndex = reconnectedEvents.findIndex((snapshot, index) => index > degradedIndex &&
+      snapshot.scanStatus === 'ready' && snapshot.indexedFiles === 1)
+    assert.ok(degradedIndex >= 0 && restoredIndex > degradedIndex,
+      'a reconnection must publish a newer ready inventory after the unavailable generation.')
+    const reconnectionDeadline = Date.now() + 15000
+    let generationAfterReconnect = JSON.parse(fs.readFileSync(libraryIndexPath, 'utf8')).generation
+    while (generationAfterReconnect <= generationBeforeRemoval && Date.now() < reconnectionDeadline) {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      generationAfterReconnect = JSON.parse(fs.readFileSync(libraryIndexPath, 'utf8')).generation
+    }
+    assert.ok(generationAfterReconnect > generationBeforeRemoval,
+      'a successful reconciliation after reconnection must publish a newer complete generation.')
+    await controlPage.keyboard.press('Escape')
+    await controlPage.keyboard.press('Escape')
+
     const previousRunId = ready.runId
     await closeStandalone(app, controlPage)
     app = undefined

@@ -71,12 +71,19 @@ async function run() {
     return data
   }
   const done = async () => {
-    const before = await pendingNames()
     const beforeData = await checkDatabaseOrder()
+    const before = await pendingNames()
     // Anchor retries to this turn. The generic current-button selector can
     // resolve to the following turn when a click removes/replaces its DOM node.
     const action = await page.locator('#now-block .btn-done-lg').getAttribute('onclick')
+    assert.ok(action?.includes(beforeData.state.current_turn_id), 'click targets the persisted current turn')
     await page.locator(`#now-block .btn-done-lg[onclick=${JSON.stringify(action)}]`).click()
+    // Native click delivery does not await the Main IPC mutation or its Renderer publication.
+    // Observe the expected next turn before making another completion possible.
+    await page.waitForFunction((expected: string | null) => {
+      const current = document.querySelector('#now-block .now-name')
+      return expected === null ? !document.querySelector('#now-block .now-card') : current?.textContent?.trim() === expected
+    }, before[0] ?? null)
     if (before.length) assert.equal(await page.locator('#now-block .now-name').innerText(), before[0], 'executes displayed first turn')
     const afterData = await checkDatabaseOrder()
     assert.equal(afterData.entries.filter(entry => entry.status === 'done').length,

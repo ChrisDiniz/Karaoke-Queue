@@ -191,7 +191,11 @@ export class StandaloneOperationCoordinator {
           return rejectedResult(request.operationId, 'DISPOSED', this.context.getSnapshot())
         }
         try {
-          this.context.recovery?.assertPlaybackAllowed()
+          const storageResolution = this.context.getSnapshot().storageRecovery
+          const resolvingStorage = storageResolution?.contained && ['recover-storage', 'discard-interrupted', 'stop-all'].includes(request.command.type)
+          // Only the validated storage-resolution action may enter the arbiter while its
+          // durably pending record awaits explicit leaveStopped. Startup/default remains fenced.
+          if (!resolvingStorage) this.context.recovery?.assertPlaybackAllowed()
         } catch (error) {
           return rejectedResult(request.operationId, errorCode(error), this.context.getSnapshot())
         }
@@ -353,6 +357,8 @@ export interface StandalonePlayerCompositionOptions {
   /** Creates exactly one shared playback service with the supplied persistence boundary. */
   createPlayback(persistence?: PlayerPlaybackPersistence): StandalonePlaybackPort
   recovery?: StandaloneRecoveryPort
+  /** Main prepares the window/host before explicitly completing startup recovery. */
+  deferStartupRecovery?: boolean
   catalog?: StandaloneCatalogPort
   getSnapshot(): StandalonePlayerSnapshot
   getPlaybackCorrelation(): StandalonePlaybackCorrelation
@@ -393,6 +399,7 @@ export async function createStandalonePlayerComposition(
     }
     playback = options.createPlayback(options.recovery)
     options.recovery?.attachPlayback(playback)
+    if (!options.deferStartupRecovery) await options.recovery?.resolveStandaloneStartup?.()
 
     const transitions = new StandaloneTransitionArbiter()
     const normalizeCode = options.normalizeCode ?? normalizeCatalogCodeForVideoMatch
@@ -462,8 +469,8 @@ function parseRequest(value: unknown): ParsedRequest {
     normalized = { type: 'next' }
   } else if (command.type === 'restart' && hasOnlyKeys(command, ['type'])) {
     normalized = { type: 'restart' }
-  } else if (command.type === 'stop-all' && hasOnlyKeys(command, ['type'])) {
-    normalized = { type: 'stop-all' }
+  } else if (['stop-all', 'recover-storage', 'discard-interrupted'].includes(String(command.type)) && hasOnlyKeys(command, ['type'])) {
+    normalized = { type: command.type as 'stop-all' | 'recover-storage' | 'discard-interrupted' }
   } else {
     throw new StandaloneRuntimeError('INVALID_STATE', 'O comando Standalone é inválido.')
   }
@@ -482,7 +489,9 @@ function commandFingerprint(command: StandalonePlayerCommand): string {
     case 'toggle-pause':
     case 'next':
     case 'restart':
-    case 'stop-all': return JSON.stringify([command.type])
+    case 'stop-all':
+    case 'recover-storage':
+    case 'discard-interrupted': return JSON.stringify([command.type])
   }
 }
 

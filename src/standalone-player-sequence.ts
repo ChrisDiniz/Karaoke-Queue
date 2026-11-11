@@ -18,6 +18,7 @@ import {
   type StandalonePlayerSnapshot,
   type StandaloneQueueEntry,
   type StandaloneStableState,
+  type StandaloneStorageRecovery,
   type StandaloneTransitioningSnapshot,
   type StandaloneUncertainSnapshot,
   STANDALONE_CELEBRATION_MESSAGES
@@ -92,6 +93,7 @@ interface TransitionReservation {
   celebrationPendingAdmissions?: number
   celebrationExpired?: boolean
   shutdownCelebrationRemainingMs?: number
+  recoverBlockedFailure?: boolean
 }
 
 /** Main-side owner of the Standalone V1 volatile sequence; it is not wired to Electron startup or IPC. */
@@ -123,11 +125,152 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
       STANDALONE_CELEBRATION_MESSAGES[Math.floor(Math.random() * STANDALONE_CELEBRATION_MESSAGES.length)]!)
   }
 
+  private storageAvailable = true
+  private readonly mediaIdentities = new Map<string, string>()
+  private storageRecovery: (StandaloneStorageRecovery & { countdownMs?: number }) | undefined
+
+  /** Root loss alone does not interrupt a buffered playing attempt. */
+  async notifyLibraryAvailability(available: boolean): Promise<void> {
+    if (this.disposed || this.shutdownAdmissionClosed) return
+    await this.composition!.transitions.run(() => {
+      if (this.disposed || this.shutdownAdmissionClosed) return
+      this.storageAvailable = available
+      if (this.storageRecovery) { this.storageRecovery = { ...this.storageRecovery, available }; this.publish(); return }
+      if (available) return
+      const token = this.reservation
+      if (token?.startPhase === 'countdown') {
+        const remaining = this.remainingCountdownMs(token)
+        this.enterStorageRecovery(token.target, 'countdown', remaining)
+      } else if (token?.target && token.kind !== 'celebration' && token.kind !== 'stop-all') {
+        this.enterStorageRecovery(token.target, 'transition')
+        this.scheduleBackgroundEffect(async () => {
+          try {
+            const state = await this.composition!.playback.stop()
+            if (state.status === 'stopped' && state.attemptId) await this.composition!.playback.clearStoppedMedia(state.attemptId)
+          } finally { if (!this.disposed) await this.composition!.transitions.run(() => this.publish()) }
+        })
+      } else if (!token && this.stableState.operationalState === 'paused') {
+        const current = this.stableState.current
+        this.enterStorageRecovery(current, 'media')
+        this.scheduleBackgroundEffect(async () => {
+          try {
+            const state = await this.composition!.playback.stop(current.attemptId)
+            if (state.status === 'stopped') await this.composition!.playback.clearStoppedMedia(current.attemptId)
+          } finally { if (!this.disposed) await this.composition!.transitions.run(() => this.publish()) }
+        })
+      }
+    })
+  }
+
+  private storageContained(): boolean {
+    const state = this.composition!.playback.getState()
+    return state.status === 'idle' || state.status === 'stopped' && !state.attemptId || state.status === 'completed' ||
+      ['failed', 'uncertain'].includes(state.status) && state.errorCode !== 'RECOVERY_PERSISTENCE_FAILED' &&
+      ['stop-acknowledged', 'host-terminated'].includes(state.containmentStatus ?? '')
+  }
+
+  private enterStorageRecovery(target: StandaloneQueueEntry | undefined, phase: StandaloneStorageRecovery['phase'], countdownMs?: number, code: StandalonePlayerErrorCode = 'MEDIA_UNAVAILABLE'): void {
+    if (this.storageRecovery) return
+    const token = this.reservation
+    this.storageRecovery = { target: target ? { entryId: target.entryId, musicCode: target.musicCode } : null,
+      phase, wasPaused: this.stableState.operationalState === 'paused', available: this.storageAvailable,
+      contained: false, positionRestorable: false, ...(countdownMs === undefined ? {} : { countdownMs }) }
+    this.operationEpoch++
+    if (token) this.clearReservation(token)
+    this.unavailable = { playbackCondition: 'blocked', lastConfirmedState: this.stableState,
+      pending: [...this.pending], error: { code } }
+    this.publish()
+  }
+
+  private validateEntry(code: string, context: StandaloneCommandContext): Promise<string | void> {
+    return context.playback.validatedMediaIdentity ? context.playback.validatedMediaIdentity(code) : context.playback.validateMusicCode(code)
+  }
+
+  private startEntry(entry: StandaloneQueueEntry, context: StandaloneCommandContext) {
+    return context.playback.playImmediately(entry.musicCode, undefined, undefined, this.mediaIdentities.get(entry.entryId))
+  }
+
+  private prepareStorageAction(request: StandalonePlayerCommandRequest, context: StandaloneCommandContext): StandalonePreparedCommand | StandalonePlayerCommandResult {
+    const recovery = this.storageRecovery
+    if (!recovery || !this.storageContained() || this.reservation) return rejected(request.operationId, 'INVALID_STATE', this.getSnapshot())
+    const discard = request.command.type === 'discard-interrupted'
+    if (!discard && !this.storageAvailable) return rejected(request.operationId, 'MEDIA_UNAVAILABLE', this.getSnapshot())
+    const target = recovery.target ?? this.pending[0]
+    const token = this.reserve('cleanup', undefined, request.operationId)
+    this.publish()
+    return {
+      execute: async () => {
+        try {
+          let state = context.playback.getState()
+          if (state.status === 'uncertain' && state.attemptId && state.musicCode) {
+            if (context.recovery) await context.recovery.leaveStopped(state.attemptId)
+            else await context.playback.resolveRecoveryAsStopped(state.attemptId, state.musicCode)
+            state = context.playback.getState()
+          }
+          if (state.attemptId) {
+            const cleared = state.status === 'failed' ? await context.playback.clearFailedMedia?.(state.attemptId)
+              : state.status === 'completed' ? await context.playback.clearCompletedMedia(state.attemptId)
+              : state.status === 'stopped' ? await context.playback.clearStoppedMedia(state.attemptId) : false
+            if (!cleared) return executionUncertain(request.operationId, 'HOST_NOT_READY')
+          }
+          context.recovery?.assertPlaybackAllowed()
+          if (!discard && target) {
+            const identity = await this.validateEntry(target.musicCode, context)
+            const previous = this.mediaIdentities.get(target.entryId)
+            if (previous && identity !== previous) return executionRejected(request.operationId, 'MEDIA_CHANGED')
+            if (identity && !previous) this.mediaIdentities.set(target.entryId, identity)
+          }
+          return { outcome: 'confirmed', operationId: request.operationId }
+        } catch (error) { return executionRejected(request.operationId, errorCode(error)) }
+      },
+      commit: result => {
+        if (this.disposed || this.shutdownAdmissionClosed) return rejected(request.operationId, 'DISPOSED', this.getSnapshot())
+        if (this.reservation !== token || !this.storageRecovery) return rejected(request.operationId, 'SUPERSEDED', this.getSnapshot())
+        this.clearReservation(token)
+        if (result.outcome !== 'confirmed') {
+          if (result.outcome === 'uncertain') this.unavailable = { ...this.unavailable!, playbackCondition: 'uncertain', error: result.error }
+          else if ('error' in result && this.unavailable) this.unavailable = { ...this.unavailable, error: result.error }
+          this.publish()
+          return rejected(request.operationId, 'error' in result ? result.error.code : 'PLAYBACK_FAILED', this.getSnapshot())
+        }
+        if (discard) {
+          if (recovery.target) { this.removePending(recovery.target.entryId); this.mediaIdentities.delete(recovery.target.entryId) }
+          this.stableState = { operationalState: 'idle', current: null, pending: [] }
+          if (this.pending.length) {
+            this.storageRecovery = { ...recovery, target: null, phase: 'transition', countdownMs: undefined }
+            this.unavailable = { playbackCondition: 'blocked', lastConfirmedState: this.stableState, pending: [...this.pending], error: { code: 'MEDIA_UNAVAILABLE' } }
+          } else { this.storageRecovery = undefined; this.unavailable = undefined }
+          this.publish()
+          return confirmed(request.operationId, this.getSnapshot())
+        }
+        if (!target) return rejected(request.operationId, 'INVALID_STATE', this.getSnapshot())
+        if (!this.pending.some(e => e.entryId === target.entryId)) this.pending.unshift(target)
+        this.stableState = { operationalState: 'idle', current: null, pending: [] }
+        this.storageRecovery = undefined
+        this.unavailable = undefined
+        const start = this.reserve('start', target, request.operationId)
+        // Explicit restart uses the existing five-second countdown. A frozen countdown keeps its remaining time.
+        this.beginInitialCountdown(start, context)
+        if (recovery.countdownMs !== undefined) {
+          this.cancelCountdownTimer(start)
+          start.countdownRemainingMs = recovery.countdownMs
+          start.countdownDeadlineMs = this.countdownScheduler.now() + recovery.countdownMs
+          this.armCountdownTimer(start, context)
+          this.publish()
+        }
+        return confirmed(request.operationId, this.getSnapshot())
+      }
+    }
+  }
+
+  private startupRecoveryPending = false
+
   static async create(options: StandalonePlayerSequenceOptions): Promise<StandalonePlayerSequence> {
     const owner = new StandalonePlayerSequence(options)
     owner.composition = await createStandalonePlayerComposition({
       createPlayback: options.createPlayback,
       recovery: options.recovery,
+      deferStartupRecovery: options.deferStartupRecovery,
       catalog: options.catalog,
       onCoordinationError: options.onCoordinationError,
       normalizeCode: options.normalizeCode,
@@ -138,13 +281,39 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
       onPlaybackEvent: (event, current, context) => owner.onPlaybackEvent(event, current, context)
     })
     const recovery = owner.composition.getRecoveryState()
-    if (recovery.status === 'pending') owner.setInitialRecoveryBlock('RECOVERY_PENDING')
+    if (options.deferStartupRecovery) {
+      owner.startupRecoveryPending = true
+      owner.setInitialRecoveryBlock('RECOVERY_PENDING')
+    }
+    else if (recovery.status === 'pending') owner.setInitialRecoveryBlock('RECOVERY_PENDING')
     else if (recovery.status === 'unreadable') owner.setInitialRecoveryBlock('RECOVERY_UNAVAILABLE')
     else if (recovery.status === 'unavailable') owner.setInitialRecoveryBlock('RECOVERY_PERSISTENCE_FAILED')
     return owner
   }
 
+  /** Main calls this only after the fresh Chromium host is attached and ready. */
+  async resolveStartupRecovery(): Promise<void> {
+    if (!this.startupRecoveryPending) return
+    if (this.disposed || this.shutdownAdmissionClosed) throw new Error('STANDALONE_STARTUP_CANCELLED')
+    await this.composition!.recovery?.resolveStandaloneStartup?.()
+    if (this.disposed || this.shutdownAdmissionClosed) throw new Error('STANDALONE_STARTUP_CANCELLED')
+    const recovery = this.composition!.getRecoveryState()
+    if (['pending', 'unreadable', 'unavailable'].includes(recovery.status)) {
+      throw new Error('STANDALONE_STARTUP_RECOVERY_UNRESOLVED')
+    }
+    this.startupRecoveryPending = false
+    this.unavailable = undefined
+    this.publish()
+  }
+
   getSnapshot(): StandalonePlayerSnapshot {
+    const snapshot = this.getSequenceSnapshot()
+    if (!this.storageRecovery) return snapshot
+    const { countdownMs: _private, ...recovery } = this.storageRecovery
+    return { ...snapshot, storageRecovery: { ...recovery, contained: this.storageContained() } }
+  }
+
+  private getSequenceSnapshot(): StandalonePlayerSnapshot {
     if (this.unavailable) return cloneSnapshot(this.unavailable)
     if (this.reservation) {
       return cloneSnapshot(this.createTransitioningSnapshot())
@@ -277,14 +446,18 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     this.lastCommandContext = context
     if (this.disposed) return rejected(request.operationId, 'DISPOSED', this.getSnapshot())
     const snapshot = this.getSnapshot()
-    if (snapshot.playbackCondition === 'blocked' || snapshot.playbackCondition === 'uncertain') {
+    if (request.command.type === 'recover-storage' || request.command.type === 'discard-interrupted') return this.prepareStorageAction(request, context)
+    const recoverContainedFailure = request.command.type === 'stop-all' && (Boolean(this.storageRecovery && this.storageContained()) ||
+      snapshot.playbackCondition === 'blocked' && this.hasContainedKnownFailure(snapshot, context))
+    if ((snapshot.playbackCondition === 'blocked' || snapshot.playbackCondition === 'uncertain') &&
+        !recoverContainedFailure) {
       return unavailableResult(request.operationId, snapshot)
     }
     // Stop All is explicitly allowed to cancel any known, non-recovery transition,
     // including countdown, loading, Next, Restart, and celebration.
     if (request.command.type === 'stop-all') {
       if (this.reservation?.kind === 'stop-all') return rejected(request.operationId, 'INVALID_STATE', snapshot)
-      return this.prepareStopAll(request, context)
+      return this.prepareStopAll(request, context, recoverContainedFailure)
     }
     if (this.reservation) {
       if (this.reservation.kind === 'celebration') {
@@ -345,7 +518,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     return {
       execute: async signal => {
         if (signal.aborted) return executionRejected(request.operationId, 'DISPOSED')
-        try { await context.playback.validateMusicCode(code) }
+        try { const identity = await this.validateEntry(code, context); if (identity) this.mediaIdentities.set(entry.entryId, identity) }
         catch (error) { return executionRejected(request.operationId, errorCode(error)) }
         if (!startup) return { outcome: 'confirmed', operationId: request.operationId }
         return { outcome: 'confirmed', operationId: request.operationId }
@@ -405,6 +578,10 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
   }
 
   private prepareTogglePause(request: StandalonePlayerCommandRequest, context: StandaloneCommandContext) {
+    if (!this.storageAvailable && this.stableState.operationalState === 'paused') {
+      this.scheduleBackgroundEffect(() => this.notifyLibraryAvailability(false))
+      return rejected(request.operationId, 'MEDIA_UNAVAILABLE', this.getSnapshot())
+    }
     const current = this.stableState.current
     if (!current) return confirmed(request.operationId, this.getSnapshot())
     const action = this.stableState.operationalState === 'playing' ? 'pause' : 'resume'
@@ -804,7 +981,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
         try {
           const started = await context.transitions.run(() => {
             if (signal.aborted || this.reservation !== token || this.unavailable) return undefined
-            return { promise: context.playback.playImmediately(selected.target!.musicCode) }
+            return { promise: this.startEntry(selected.target!, context) }
           })
           if (!started) return executionRejected(request.operationId, 'SUPERSEDED')
           const state = await started.promise
@@ -854,7 +1031,8 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     }, result => this.commitRestart(token, current, result))
   }
 
-  private prepareStopAll(request: StandalonePlayerCommandRequest, context: StandaloneCommandContext) {
+  private prepareStopAll(request: StandalonePlayerCommandRequest, context: StandaloneCommandContext,
+    recoverBlockedFailure = false) {
     this.operationEpoch++
     const previous = this.reservation
     if (previous) {
@@ -862,14 +1040,24 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
       this.cancelCelebrationTimer(previous)
     }
     const token = this.reserve('stop-all', undefined, request.operationId, this.stableState.current ?? undefined)
+    token.recoverBlockedFailure = recoverBlockedFailure
     this.publish()
     return this.preparedTransition(request, token, async signal => {
       if (signal.aborted) return executionRejected(request.operationId, 'DISPOSED')
       try {
+        if (this.storageRecovery && this.storageContained()) {
+          const state = context.playback.getState()
+          if (state.status === 'uncertain' && state.attemptId && state.musicCode) {
+            if (context.recovery) await context.recovery.leaveStopped(state.attemptId)
+            else await context.playback.resolveRecoveryAsStopped(state.attemptId, state.musicCode)
+          }
+        }
+        if (this.storageRecovery) context.recovery?.assertPlaybackAllowed()
         // The unqualified Stop also advances PlayerPlaybackService's command generation,
         // invalidating any older pending load/start/restart before this operation commits.
         const started = await context.transitions.run(() => {
-          if (signal.aborted || this.disposed || this.unavailable || this.reservation !== token) return undefined
+          if (signal.aborted || this.disposed || (this.unavailable && !token.recoverBlockedFailure) ||
+              this.reservation !== token) return undefined
           return { promise: context.playback.stop() }
         })
         if (!started) return executionRejected(request.operationId, 'SUPERSEDED')
@@ -881,6 +1069,11 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
           }
         } else if (stopped.status === 'completed' && stopped.attemptId) {
           const cleared = await context.playback.clearCompletedMedia(stopped.attemptId)
+          if (!cleared && context.playback.getState().status !== 'idle') {
+            return { outcome: 'blocked', operationId: request.operationId, error: { code: 'HOST_NOT_READY' } }
+          }
+        } else if (stopped.status === 'failed' && stopped.attemptId && token.recoverBlockedFailure) {
+          const cleared = await context.playback.clearFailedMedia?.(stopped.attemptId)
           if (!cleared && context.playback.getState().status !== 'idle') {
             return { outcome: 'blocked', operationId: request.operationId, error: { code: 'HOST_NOT_READY' } }
           }
@@ -905,7 +1098,9 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     return {
       execute,
       commit: result => {
-        if (this.unavailable) return unavailableResult(request.operationId, this.unavailable)
+        if (this.unavailable && !(token.kind === 'stop-all' && token.recoverBlockedFailure)) {
+          return unavailableResult(request.operationId, this.unavailable)
+        }
         if (token.completed) return confirmed(request.operationId, this.getSnapshot())
         if (token.kind === 'pause' && token.naturalEndWon) return rejected(request.operationId, 'SUPERSEDED', this.getSnapshot())
         if (this.reservation !== token) return rejected(request.operationId, 'INVALID_STATE', this.getSnapshot())
@@ -922,6 +1117,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     const state = token.pauseAction === 'pause' ? 'paused' : 'playing'
     this.clearReservation(token)
     this.stableState = { operationalState: state, current, pending: [...this.pending] }
+    if (state === 'paused' && !this.storageAvailable) this.scheduleBackgroundEffect(() => this.notifyLibraryAvailability(false))
     this.publish()
     return confirmed(token.operationId!, this.getSnapshot(), current.attemptId)
   }
@@ -956,7 +1152,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
 
   private commitStopAll(token: TransitionReservation, result: StandaloneCommandExecutionResult,
     context: StandaloneCommandContext): StandalonePlayerCommandResult {
-    if (this.unavailable) return unavailableResult(token.operationId!, this.unavailable)
+    if (this.unavailable && !token.recoverBlockedFailure) return unavailableResult(token.operationId!, this.unavailable)
     if (this.reservation !== token) return rejected(token.operationId!, 'SUPERSEDED', this.getSnapshot())
     if (result.outcome === 'rejected') return this.rejectReservation(token, result.error.code)
     if (result.outcome !== 'confirmed') return this.failReservation(token, result.outcome, result.error.code)
@@ -964,9 +1160,12 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     if (playback.status !== 'idle' && !(playback.status === 'stopped' && !playback.attemptId)) {
       return this.failReservation(token, 'uncertain', playback.errorCode ?? 'PLAYBACK_FAILED')
     }
+    this.storageRecovery = undefined
+    this.mediaIdentities.clear()
     this.pending = []
     this.entryOrder.clear()
     this.stableState = { operationalState: 'idle', current: null, pending: [] }
+    this.unavailable = undefined
     this.clearReservation(token)
     this.publish()
     return confirmed(token.operationId!, this.getSnapshot())
@@ -993,6 +1192,16 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     const code = event.type === 'uncertain'
       ? playbackState?.attemptId === current.attemptId ? playbackState.errorCode ?? 'COMMAND_TIMEOUT' : 'COMMAND_TIMEOUT'
       : event.errorCode
+    if (event.type === 'error' && ['MEDIA_LOAD_FAILED', 'MEDIA_UNAVAILABLE', 'MEDIA_UNKNOWN', 'MEDIA_STALLED', 'MEDIA_CHANGED'].includes(code) ||
+        event.type === 'uncertain' && !this.storageAvailable && code !== 'RECOVERY_PERSISTENCE_FAILED') {
+      this.enterStorageRecovery(this.reservation?.target ?? this.stableState.current ?? undefined,
+        this.reservation ? 'transition' : 'media', undefined, code)
+      this.scheduleBackgroundEffect(async () => {
+        if (context.playback.getState().status === 'failed') await context.playback.clearFailedMedia?.(current.attemptId)
+        if (!this.disposed) await context.transitions.run(() => this.publish())
+      })
+      return undefined
+    }
     if (this.reservation) this.failReservation(this.reservation, event.type === 'uncertain' ? 'uncertain' : 'blocked', code)
     else if (event.type === 'uncertain') this.markUncertain('playback-event', code)
     else this.block('playback-event', code)
@@ -1039,6 +1248,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
   }
 
   private reserveNaturalTransition(ended: StandaloneCurrentEntry, context: StandaloneCommandContext): TransitionReservation {
+    this.mediaIdentities.delete(ended.entryId)
     const token = this.reserve('celebration', undefined, 'playback-event', ended)
     token.celebrationMessage = this.selectCelebrationMessage()
     token.celebrationRemainingMs = STANDALONE_CELEBRATION_MS
@@ -1061,7 +1271,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
         token.startPhase = 'loading'
         this.publish()
       }
-      return { promise: context.playback.playImmediately(token.target.musicCode) }
+      return { promise: this.startEntry(token.target, context) }
     })
     if (!start) return
     try {
@@ -1096,7 +1306,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
         const start = await context.transitions.run(() => {
           if (this.shutdownAdmissionClosed || this.disposed || this.unavailable ||
               this.reservation !== token || !token.target) return undefined
-          return { promise: context.playback.playImmediately(token.target.musicCode) }
+          return { promise: this.startEntry(token.target, context) }
         })
         if (!start) return executionRejected(operationId, 'SUPERSEDED')
         const state = await start.promise
@@ -1159,6 +1369,7 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
     if (!token.target || this.reservation !== token || this.pending[0]?.entryId !== token.target.entryId) {
       return this.failReservation(token, 'uncertain', 'INVALID_STATE')
     }
+    if (this.stableState.current && this.stableState.current.entryId !== token.target.entryId) this.mediaIdentities.delete(this.stableState.current.entryId)
     this.removePending(token.target.entryId)
     const current: StandaloneCurrentEntry = { ...token.target, attemptId }
     this.clearReservation(token)
@@ -1221,6 +1432,10 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
         ? unavailableResult(token.operationId ?? 'playback-event', this.unavailable)
         : rejected(token.operationId ?? 'playback-event', 'INVALID_STATE', this.getSnapshot())
     }
+    if (outcome === 'blocked' && token.target && ['MEDIA_UNAVAILABLE', 'MEDIA_UNKNOWN', 'MEDIA_LOAD_FAILED', 'MEDIA_CHANGED'].includes(code)) {
+      this.enterStorageRecovery(token.target, 'transition', undefined, code)
+      return unavailableResult(token.operationId ?? 'playback-event', this.getSnapshot() as StandaloneBlockedSnapshot)
+    }
     const lastConfirmedState = this.transitional?.lastConfirmedState ?? this.stableState
     this.clearReservation(token)
     const unavailable: StandaloneBlockedSnapshot | StandaloneUncertainSnapshot = outcome === 'blocked'
@@ -1278,6 +1493,14 @@ export class StandalonePlayerSequence implements StandalonePlayerControl {
       return !(token.kind === 'next' && token.stopConfirmed)
     }
     return false
+  }
+
+  private hasContainedKnownFailure(snapshot: StandaloneBlockedSnapshot | StandaloneUncertainSnapshot,
+    context: StandaloneCommandContext): boolean {
+    if (snapshot.playbackCondition !== 'blocked') return false
+    const playback = context.playback.getState()
+    return playback.status === 'failed' && playback.errorCode === snapshot.error.code &&
+      ['stop-acknowledged', 'host-terminated'].includes(playback.containmentStatus ?? '')
   }
 
   private reserve(kind: TransitionReservation['kind'], target?: StandaloneQueueEntry,
@@ -1424,6 +1647,10 @@ function isCurrentCompleted(state: PlayerPlaybackState, current: StandaloneCurre
 }
 
 function cloneSnapshot(snapshot: StandalonePlayerSnapshot): StandalonePlayerSnapshot {
+  if (snapshot.storageRecovery) {
+    const { storageRecovery, ...base } = snapshot
+    return { ...cloneSnapshot(base), storageRecovery: { ...storageRecovery, target: storageRecovery.target ? { ...storageRecovery.target } : null } }
+  }
   if (snapshot.playbackCondition === 'ready') {
     const state = snapshot.state
     return { playbackCondition: 'ready', state: state.operationalState === 'idle'

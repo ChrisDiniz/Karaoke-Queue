@@ -13,6 +13,8 @@ const { _electron: electron } = require('playwright')
 
 if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
   const { app, BrowserWindow, ipcMain, protocol } = require('electron')
+  let resolveIntegrationReady
+  app.__kqStandaloneIntegrationReady = new Promise(resolve => { resolveIntegrationReady = resolve })
   const projectRoot = process.env.KQ_PROJECT_ROOT
   const mediaRoot = process.env.KQ_PLAYER_TEST_MEDIA_DIR
   const profileRoot = process.env.KQ_PLAYER_TEST_PROFILE
@@ -61,6 +63,8 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
     if (scenario === 'invalid-recovery' && !fs.existsSync(recoveryStore.filePath)) {
       fs.writeFileSync(recoveryStore.filePath, '{"version":1,"status":"playing"}')
     }
+    // Resolve inherited attempts only after the new Chromium surface confirms idle.
+    await Promise.all([hostWindow.loadFile(playbackDocument), host.ready])
     const recovery = new PlayerPlaybackRecoveryCoordinator(recoveryStore)
     const sequence = await createStandalonePlayerWithSharedPlayback({
       library,
@@ -178,7 +182,6 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       return window
     }
     await createControlWindow()
-    await Promise.all([hostWindow.loadFile(playbackDocument), host.ready])
 
     const waitForSnapshot = (expected, timeoutMs = 20000) => new Promise((resolve, reject) => {
       const matches = snapshot => {
@@ -319,6 +322,7 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       waitForHostTimeAfter,
       waitForHostRestart,
       getSequenceSnapshot: () => sequence.getSnapshot(),
+      execute: request => sequence.execute(request),
       getRecoveryState: () => recovery.getState(),
       getRecoveryDiagnostic: () => recovery.getDiagnosticSummary(),
       getRecoveryRecord: () => recoveryStore.read(),
@@ -404,6 +408,7 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       return { bridgeCount: bridges.size, url: pathToFileURL(controlDocument).href }
     }
     globalThis.__kqStandaloneIntegrationTest = app.__kqStandaloneIntegrationTest
+    resolveIntegrationReady()
   }).catch(error => {
     console.error(error)
     app.exit(1)
@@ -460,7 +465,7 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       timeout: 30000
     })
     try {
-      await app.firstWindow()
+      await app.evaluate(async ({ app }) => await app.__kqStandaloneIntegrationReady)
       const pages = await app.windows()
       await Promise.all(pages.map(page => page.waitForLoadState('domcontentloaded')))
       let controlPage = pages.find(page => page.url().includes(path.basename(controlHtml)))
@@ -783,19 +788,36 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
     const context = await launch('relaunch', true)
     try {
       const initial = await subscribe(context.controlPage)
-      assert.equal(initial.snapshot.playbackCondition, 'blocked')
+      assert.equal(initial.snapshot.playbackCondition, 'ready')
+      assert.equal(initial.snapshot.state.operationalState, 'idle')
       const recovery = await call(context.app, 'getRecoveryState')
-      assert.equal(recovery.status, 'pending')
+      assert.equal(recovery.status, 'resolved')
+      assert.equal(recovery.outcome, 'dismissed')
       assert.equal(recovery.attemptId, expectedAttemptId)
+      const startupRecord = JSON.parse(fs.readFileSync(path.join(profileRoot, 'player-playback-recovery.json'), 'utf8'))
+      assert.equal(startupRecord.status, 'dismissed')
+      assert.equal(startupRecord.reason, `startup-prior:${parsedBefore.playbackStatus}:${parsedBefore.lastTransition}`,
+        'the old recovery classification remains durable through the confirmed startup resolution')
       const noAutoplay = await videoState(context)
       assert.equal(noAutoplay, null, 'a relaunch from the actual crash record does not autoplay recovered media')
       const command = makeInteraction(context)
-      const blocked = await command.code('1002')
-      assert.equal(blocked.reply.outcome, 'rejected')
-      assert.equal(blocked.reply.error.code, 'RECOVERY_PENDING')
-      assert.equal(blocked.status.outcome, 'rejected')
-      assert.deepEqual(fs.readFileSync(path.join(profileRoot, 'player-playback-recovery.json'), 'utf8'), before,
-        'observing the recovery record and blocked operation does not rewrite or discard it')
+      const accepted = await command.code('1002')
+      assert.equal(accepted.reply.outcome, 'confirmed', 'a prior crash record must not block a new Standalone operation')
+      const playing = await call(context.app, 'waitForSnapshot', {
+        playbackCondition: 'ready', operationalState: 'playing', musicCode: '01002'
+      })
+      assert.notEqual(playing.state.current.attemptId, expectedAttemptId,
+        'the new run receives a fresh attempt and does not resume the crashed media')
+      const stopped = await call(context.app, 'execute', {
+        operationId: 'f0-p1-relaunch-stop', command: { type: 'stop-all' }
+      })
+      assert.equal(stopped.outcome, 'confirmed')
+      await call(context.app, 'waitForSnapshot', { playbackCondition: 'ready', operationalState: 'idle' })
+      const resolvedRecord = JSON.parse(fs.readFileSync(path.join(profileRoot, 'player-playback-recovery.json'), 'utf8'))
+      assert.equal(resolvedRecord.status, 'stopped')
+      assert.equal(resolvedRecord.lastTransition, 'stop-confirmed')
+      assert.notEqual(resolvedRecord.attemptId, expectedAttemptId,
+        'the durable recovery state now belongs to the fresh attempt')
       const shutdownState = await shutdown(context)
       assert.equal(shutdownState.controllerDatabaseExists, false)
       command.interaction.dispose()
@@ -811,15 +833,34 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
     const context = await launchWithProfile('invalid-recovery', invalidProfile)
     try {
       const initial = await subscribe(context.controlPage)
-      assert.equal(initial.snapshot.playbackCondition, 'blocked')
-      assert.equal((await call(context.app, 'getRecoveryDiagnostic')).code, 'INVALID_RECORD')
+      assert.equal(initial.snapshot.playbackCondition, 'ready')
+      assert.equal(initial.snapshot.state.operationalState, 'idle')
+      assert.equal(await call(context.app, 'getRecoveryDiagnostic'), null)
       assert.equal(await videoState(context), null)
-      assert.equal(fs.readFileSync(invalidFile, 'utf8'), invalidBytes)
+      const startupSafeRecord = JSON.parse(fs.readFileSync(invalidFile, 'utf8'))
+      assert.equal(startupSafeRecord.status, 'idle')
+      assert.equal(startupSafeRecord.lastTransition, 'invalid-recovery-resolved')
       const command = makeInteraction(context)
-      const blocked = await command.code('1001')
-      assert.equal(blocked.reply.outcome, 'rejected')
-      assert.equal(blocked.reply.error.code, 'RECOVERY_UNAVAILABLE')
-      assert.equal(fs.readFileSync(invalidFile, 'utf8'), invalidBytes)
+      const accepted = await command.code('1001')
+      assert.equal(accepted.reply.outcome, 'confirmed')
+      const playing = await call(context.app, 'waitForSnapshot', {
+        playbackCondition: 'ready', operationalState: 'playing', musicCode: '01001'
+      })
+      assert.equal(playing.state.current.musicCode, '01001')
+      const stopped = await call(context.app, 'execute', {
+        operationId: 'f0-p1-invalid-stop', command: { type: 'stop-all' }
+      })
+      assert.equal(stopped.outcome, 'confirmed')
+      await call(context.app, 'waitForSnapshot', { playbackCondition: 'ready', operationalState: 'idle' })
+      const archives = fs.readdirSync(invalidProfile)
+        .filter(name => /^player-playback-recovery-quarantine-[0-9a-f-]{36}\.bin$/.test(name))
+      assert.equal(archives.length, 1)
+      assert.equal(fs.readFileSync(path.join(invalidProfile, archives[0]), 'utf8'), invalidBytes,
+        'invalid recovery evidence is quarantined byte-for-byte before startup continues')
+      const latestRecord = JSON.parse(fs.readFileSync(invalidFile, 'utf8'))
+      assert.equal(latestRecord.status, 'stopped')
+      assert.notEqual(latestRecord.attemptId, startupSafeRecord.attemptId,
+        'the recovery file tracks the new attempt after it is explicitly stopped')
       await shutdown(context)
       command.interaction.dispose()
     } finally {
@@ -840,7 +881,7 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       timeout: 30000
     })
     try {
-      await app.firstWindow()
+      await app.evaluate(async ({ app }) => await app.__kqStandaloneIntegrationReady)
       const pages = await app.windows()
       await Promise.all(pages.map(page => page.waitForLoadState('domcontentloaded')))
       const controlPage = pages.find(page => page.url().includes(path.basename(controlHtml)))
@@ -863,7 +904,7 @@ if (process.env.KQ_STANDALONE_INTEGRATION_E2E_MAIN === '1') {
       const hashesAfter = await hashSamples()
       assert.deepEqual(hashesAfter, hashesBefore, 'all selected original MP4 samples remain byte-for-byte unchanged')
       assert.equal(fs.existsSync(path.join(profileRoot, 'karaoke.sqlite')), false)
-      process.stdout.write(`PASS Standalone B4.2 real Electron IPC + B2 transport + Chromium MP4 integration; recovery crash/relaunch blocked and invalid record preserved; CSV discovered=${JSON.stringify(csvFiles)} and omitted; sample hashes unchanged.\n`)
+      process.stdout.write(`PASS Standalone real Electron/IPC + Chromium MP4 integration; old recovery resolved to safe idle without autoplay, invalid recovery quarantined byte-for-byte; CSV omitted; sample hashes unchanged.\n`)
     } finally { fs.rmSync(tempRoot, { recursive: true, force: true }) }
   }
 

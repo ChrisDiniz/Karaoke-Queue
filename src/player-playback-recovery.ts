@@ -68,6 +68,7 @@ export class PlayerPlaybackRecoveryCoordinator implements PlayerPlaybackPersiste
   private manual: ManualPlaybackService | undefined
   private resolvingRecoveryAttempt: string | undefined
   private startupRecoveryRequired = false
+  private standaloneStartupEvidence: { playbackStatus: PlayerPlaybackRecoveryRecord['playbackStatus']; lastTransition: PlayerPlaybackRecoveryRecord['lastTransition'] } | undefined
   private confirmedShutdownAttempt: string | undefined
   private shutdownPromise: Promise<PlayerShutdownResult> | undefined
 
@@ -97,6 +98,55 @@ export class PlayerPlaybackRecoveryCoordinator implements PlayerPlaybackPersiste
   attachPlayback(playback: PlayerPlaybackRecoveryTarget): void {
     if (this.playback || this.manual) throw new PlayerPlaybackError('INVALID_STATE', 'A recuperação do Player já foi conectada.')
     this.playback = playback
+  }
+
+  /** Resolve only a record inherited by a fresh Standalone process, without replaying media. */
+  async resolveStandaloneStartup(): Promise<PlayerRecoverySnapshot> {
+    const state = this.getState()
+    if (state.status === 'unreadable') {
+      this.resolveInvalidRecovery()
+      const resolved = this.getState()
+      if (resolved.status !== 'none') throw new PlayerPlaybackError('RECOVERY_UNAVAILABLE',
+        'O estado inválido foi preservado, mas a resolução não pôde ser confirmada.')
+      return resolved
+    }
+    if (state.status === 'unavailable') {
+      throw new PlayerPlaybackError('RECOVERY_PERSISTENCE_FAILED',
+        'A persistência do recovery está indisponível; a reprodução permanece bloqueada.')
+    }
+    if (state.status !== 'pending') return state
+
+    const previousRecord = this.requirePendingAttempt(state.attemptId)
+    if (this.resolvingRecoveryAttempt) throw new PlayerPlaybackError('SUPERSEDED',
+      'Outra decisão de recuperação já está em andamento.')
+    const playback = this.requirePlayback()
+    const currentPlayback = playback.getState()
+    if (currentPlayback.status !== 'idle' || currentPlayback.attemptId !== undefined) {
+      throw new PlayerPlaybackError('INVALID_STATE',
+        'Uma tentativa de playback existe nesta execução; recovery anterior não foi liberado.')
+    }
+    this.resolvingRecoveryAttempt = state.attemptId
+    try {
+      const cleared = await playback.clearFreshStartupRecovery?.(state.attemptId)
+      if (cleared !== true) throw new PlayerPlaybackError('RECOVERY_UNAVAILABLE',
+        'O host de mídia não confirmou a superfície ociosa; o recovery anterior permanece pendente.')
+      this.standaloneStartupEvidence = {
+        playbackStatus: previousRecord.playbackStatus, lastTransition: previousRecord.lastTransition
+      }
+      try {
+        this.persistTransition({ status: 'stopped', attemptId: state.attemptId, musicCode: previousRecord.musicCode! },
+          currentPlayback, 'recovery-dismissed')
+      } finally { this.standaloneStartupEvidence = undefined }
+    } finally {
+      if (this.resolvingRecoveryAttempt === state.attemptId) this.resolvingRecoveryAttempt = undefined
+    }
+    const confirmed = this.verifyPersistedState()
+    if (confirmed.status !== 'resolved' || confirmed.outcome !== 'dismissed' ||
+        confirmed.attemptId !== state.attemptId) {
+      throw new PlayerPlaybackError('RECOVERY_PERSISTENCE_FAILED',
+        'A resolução segura do recovery anterior não foi confirmada no armazenamento.')
+    }
+    return confirmed
   }
 
   getState(): PlayerRecoverySnapshot {
@@ -216,7 +266,9 @@ export class PlayerPlaybackRecoveryCoordinator implements PlayerPlaybackPersiste
       updatedAt: timestamp,
       startedAt: sameAttempt ? this.record?.startedAt : timestamp,
       terminalAt: terminal ? timestamp : undefined,
-      reason: next.errorCode ?? (transition === 'natural-end-confirmed' ? 'natural-end-candidate' : terminal ? transition : undefined)
+      reason: this.standaloneStartupEvidence
+        ? `startup-prior:${this.standaloneStartupEvidence.playbackStatus}:${this.standaloneStartupEvidence.lastTransition}`
+        : next.errorCode ?? (transition === 'natural-end-confirmed' ? 'natural-end-candidate' : terminal ? transition : undefined)
     })
     if (this.resolvingRecoveryAttempt) this.startupRecoveryRequired = false
   }

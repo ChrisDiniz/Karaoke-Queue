@@ -24,6 +24,7 @@ class FakePlayback implements StandalonePlaybackPort {
   readonly stops: Array<string | undefined> = []
   readonly clearedCompleted: string[] = []
   readonly clearedStopped: string[] = []
+  readonly clearedFailed: string[] = []
   validateCalls: string[] = []
   validationErrors = new Map<string, Error>()
   startErrors: Error[] = []
@@ -45,6 +46,7 @@ class FakePlayback implements StandalonePlaybackPort {
   nextSubscriptionAdded: Deferred<void> | undefined
   clearCompletedResult = true
   clearStoppedResult = true
+  clearFailedResult = true
   disposeCount = 0
   private attemptNumber = 0
   private commandGeneration = 0
@@ -131,6 +133,7 @@ class FakePlayback implements StandalonePlaybackPort {
     await this.stopGate?.promise
     const stopError = this.stopErrors.shift()
     if (stopError) throw stopError
+    if (this.state.status === 'failed') return this.getState()
     if (expectedAttemptId && this.state.attemptId !== expectedAttemptId) {
       throw new PlayerPlaybackError('SUPERSEDED', 'Playback changed')
     }
@@ -159,6 +162,15 @@ class FakePlayback implements StandalonePlaybackPort {
   async clearStoppedMedia(attemptId: string): Promise<boolean> {
     this.clearedStopped.push(attemptId)
     if (!this.clearStoppedResult || this.state.status !== 'stopped' || this.state.attemptId !== attemptId) return false
+    this.state = { status: 'idle' }
+    this.emit({ type: 'state-changed', state: this.getState() })
+    return true
+  }
+
+  async clearFailedMedia(attemptId: string): Promise<boolean> {
+    this.clearedFailed.push(attemptId)
+    if (!this.clearFailedResult || this.state.status !== 'failed' || this.state.attemptId !== attemptId ||
+        !['stop-acknowledged', 'host-terminated'].includes(this.state.containmentStatus ?? '')) return false
     this.state = { status: 'idle' }
     this.emit({ type: 'state-changed', state: this.getState() })
     return true
@@ -1619,6 +1631,41 @@ test('known failure to start preserves the first pending entry in blocked state'
   assert.equal(retry.outcome, 'blocked')
   assert.deepEqual(playback.starts, ['01001'])
   assert.equal(sequence.getSnapshot().playbackCondition, 'blocked')
+  const stop = await sequence.execute({ operationId: 'blocked-start-stop-all', command: { type: 'stop-all' } })
+  assert.equal(stop.outcome, 'blocked', 'a failure without confirmed containment cannot be reset.')
+  const stillBlocked = sequence.getSnapshot()
+  assert.equal(stillBlocked.playbackCondition, 'blocked')
+  if (stillBlocked.playbackCondition === 'blocked') {
+    assert.deepEqual(stillBlocked.pending.map(entry => entry.musicCode), ['01001'])
+  }
+  await sequence.dispose()
+})
+
+test('Stop All recovers only a contained known failure and preserves the queue until the explicit reset', async () => {
+  const { sequence, playback } = await build()
+  await addCurrent(sequence)
+  await submit(sequence, 'recovery-queued', '1002')
+  const current = ready(sequence.getSnapshot()).current!
+  playback.state = { status: 'failed', attemptId: current.attemptId, musicCode: current.musicCode,
+    errorCode: 'PLAYBACK_FAILED', containmentStatus: 'stop-acknowledged' }
+  const blockedResult = waitForSnapshot(sequence, snapshot => snapshot.playbackCondition === 'blocked')
+  playback.emit({ type: 'error', attemptId: current.attemptId, musicCode: current.musicCode,
+    errorCode: 'PLAYBACK_FAILED' })
+  await blockedResult
+
+  const blocked = sequence.getSnapshot()
+  assert.equal(blocked.playbackCondition, 'blocked')
+  if (blocked.playbackCondition === 'blocked') assert.deepEqual(blocked.pending.map(entry => entry.musicCode), ['01002'])
+  const reset = await sequence.execute({ operationId: 'contained-failure-stop-all', command: { type: 'stop-all' } })
+  assert.equal(reset.outcome, 'confirmed')
+  assert.deepEqual(playback.clearedFailed, [current.attemptId])
+  assert.deepEqual(ready(sequence.getSnapshot()), { operationalState: 'idle', current: null, pending: [] })
+
+  const next = await submitRaw(sequence, 'after-contained-failure', '1003')
+  assert.equal(next.outcome, 'confirmed')
+  const nextSnapshot = sequence.getSnapshot()
+  assert.equal(nextSnapshot.playbackCondition, 'transitioning')
+  if (nextSnapshot.playbackCondition === 'transitioning') assert.equal(nextSnapshot.phase, 'countdown')
   await sequence.dispose()
 })
 
@@ -1788,4 +1835,367 @@ test('startup recovery remains blocked and does not autoplay or admit a song', a
   assert.equal(snapshot.playbackCondition, 'blocked')
   if (snapshot.playbackCondition === 'blocked') assert.deepEqual(snapshot.pending, [])
   await sequence.dispose()
+})
+
+test('deferred Main bootstrap fences commands until recovery confirmation and cannot reopen shutdown', async () => {
+  const playback = new FakePlayback()
+  const sequence = await StandalonePlayerSequence.create({ createPlayback: () => playback,
+    deferStartupRecovery: true, onCoordinationError: () => undefined })
+  assert.equal(sequence.getSnapshot().playbackCondition, 'blocked')
+  assert.equal((await submit(sequence, 'before-host', '1002')).outcome, 'blocked')
+  assert.deepEqual(playback.starts, [])
+  await sequence.resolveStartupRecovery()
+  assert.equal(sequence.getSnapshot().playbackCondition, 'ready')
+  await sequence.beginShutdown()
+  await sequence.resolveStartupRecovery() // idempotent completion must not reopen admission
+  assert.equal((await submit(sequence, 'after-close', '1002')).outcome, 'rejected')
+  await sequence.dispose()
+})
+
+test('failed deferred recovery stays blocked and shutdown during confirmation cannot publish ready', async () => {
+  const playback = new FakePlayback()
+  const gate = deferred<void>()
+  let persistenceFailed = true
+  const recovery: StandaloneRecoveryPort = {
+    initialize: () => ({ status: 'none' }), getState: () => ({ status: 'none' }),
+    attachPlayback: () => undefined, assertPlaybackAllowed: () => undefined,
+    resolveStandaloneStartup: async () => {
+      if (persistenceFailed) throw new Error('RECOVERY_PERSISTENCE_FAILED')
+      await gate.promise; return { status: 'none' }
+    },
+    resolveInvalidRecovery: () => ({ state: { status: 'none' }, preservedFileCount: 0 }),
+    leaveStopped: async () => ({ status: 'none' }), persistTransition: () => undefined, dispose: () => undefined
+  }
+  const sequence = await StandalonePlayerSequence.create({ createPlayback: () => playback,
+    recovery, deferStartupRecovery: true, onCoordinationError: () => undefined })
+  await assert.rejects(sequence.resolveStartupRecovery(), /RECOVERY_PERSISTENCE_FAILED/)
+  assert.equal(sequence.getSnapshot().playbackCondition, 'blocked')
+  persistenceFailed = false
+  const resolution = sequence.resolveStartupRecovery()
+  await sequence.beginShutdown()
+  gate.resolve()
+  await assert.rejects(resolution, /STARTUP_CANCELLED/)
+  assert.equal(sequence.getSnapshot().playbackCondition, 'blocked')
+  await sequence.dispose()
+})
+
+// F0-08: storage failures preserve the live volatile session; recovery is operator initiated.
+async function storageFailure(playback: FakePlayback, sequence: StandalonePlayerSequence) {
+  const previous = playback.getState()
+  assert.ok(previous.attemptId && previous.musicCode)
+  const observed = waitForSnapshot(sequence, s => Boolean(s.storageRecovery))
+  playback.state = { ...previous, status: 'failed', errorCode: 'MEDIA_LOAD_FAILED', containmentStatus: 'stop-acknowledged' }
+  playback.emit({ type: 'error', attemptId: previous.attemptId, musicCode: previous.musicCode, errorCode: 'MEDIA_LOAD_FAILED' })
+  await observed
+  await new Promise<void>(resolve => setImmediate(resolve))
+  return previous
+}
+
+for (const paused of [false, true]) {
+  test(`F0-08 contained media failure preserves normal/priority queue and manual restart (paused=${paused})`, async () => {
+    const { sequence, playback, scheduler } = await build()
+    try {
+      await addCurrent(sequence)
+      await submit(sequence, 'normal', '1002')
+      await submit(sequence, 'priority', '1003', 'priority')
+      if (paused) await sequence.execute({ operationId: 'pause', command: { type: 'toggle-pause' } })
+      const before = ready(sequence.getSnapshot())
+      const old = await storageFailure(playback, sequence)
+      assert.deepEqual(sequence.getSnapshot().playbackCondition === 'ready' ? [] : (sequence.getSnapshot() as any).pending, before.pending)
+      assert.equal(sequence.getSnapshot().storageRecovery?.wasPaused, paused)
+      assert.equal(sequence.getSnapshot().storageRecovery?.positionRestorable, false)
+      const starts = playback.starts.length
+      await sequence.notifyLibraryAvailability(false)
+      await sequence.notifyLibraryAvailability(true)
+      await scheduler.advance(60000)
+      assert.equal(playback.starts.length, starts, 'reconnection and old timers must not autoplay')
+      const reply = await sequence.execute({ operationId: 'manual-recover', command: { type: 'recover-storage' } })
+      assert.equal(reply.outcome, 'confirmed')
+      await advanceInitialCountdown(sequence, scheduler)
+      const after = ready(sequence.getSnapshot())
+      assert.notEqual(after.current?.attemptId, old.attemptId)
+      assert.equal(after.current?.entryId, before.current?.entryId)
+      assert.deepEqual(after.pending, before.pending)
+      playback.emit({ type: 'natural-end-candidate', attemptId: old.attemptId!, musicCode: old.musicCode!, duration: 1, endedAt: '' })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.deepEqual(ready(sequence.getSnapshot()), after, 'old EOF cannot complete restarted occurrence')
+    } finally { await sequence.dispose() }
+  })
+}
+
+test('F0-08 root loss while buffered playing never stops media or advances queue', async () => {
+  const { sequence, playback } = await build()
+  try {
+    await addCurrent(sequence)
+    const before = sequence.getSnapshot()
+    await sequence.notifyLibraryAvailability(false)
+    await sequence.notifyLibraryAvailability(true)
+    assert.deepEqual(sequence.getSnapshot(), before)
+    assert.equal(playback.stops.length, 0)
+  } finally { await sequence.dispose() }
+})
+
+test('F0-08 countdown freezes on confirmed root loss and stale timers cannot start media', async () => {
+  const { sequence, playback, scheduler } = await build()
+  try {
+    await submitRaw(sequence, 'countdown', '1001')
+    await scheduler.advance(2000)
+    await sequence.notifyLibraryAvailability(false)
+    assert.equal(sequence.getSnapshot().storageRecovery?.phase, 'countdown')
+    await scheduler.advance(60000)
+    assert.equal(playback.starts.length, 0)
+    await sequence.notifyLibraryAvailability(true)
+    await sequence.execute({ operationId: 'recover', command: { type: 'recover-storage' } })
+    const snapshot = sequence.getSnapshot()
+    assert.ok(snapshot.playbackCondition === 'transitioning' && snapshot.phase === 'countdown')
+    assert.equal(snapshot.remainingMs, 3000)
+    await scheduler.advance(3000)
+    assert.equal(playback.starts.length, 1)
+  } finally { await sequence.dispose() }
+})
+
+test('F0-08 paused root loss contains and preserves pause intent without automatic resume', async () => {
+  const { sequence, playback, scheduler } = await build()
+  try {
+    await addCurrent(sequence)
+    await sequence.execute({ operationId: 'pause', command: { type: 'toggle-pause' } })
+    await sequence.notifyLibraryAvailability(false)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(sequence.getSnapshot().storageRecovery?.wasPaused, true)
+    assert.equal(sequence.getSnapshot().storageRecovery?.contained, true)
+    await sequence.notifyLibraryAvailability(true)
+    await scheduler.advance(60000)
+    assert.equal(playback.starts.length, 1)
+    assert.equal(playback.resumeCalls, 0)
+  } finally { await sequence.dispose() }
+})
+
+for (const command of ['discard-interrupted', 'stop-all'] as const) {
+  test(`F0-08 ${command} affects only the explicitly selected scope`, async () => {
+    const { sequence, playback } = await build()
+    try {
+      await addCurrent(sequence)
+      await submit(sequence, 'pending', '1002')
+      await storageFailure(playback, sequence)
+      const result = await sequence.execute({ operationId: 'discard', command: { type: command } })
+      assert.equal(result.outcome, 'confirmed')
+      if (command === 'stop-all') assert.equal(ready(sequence.getSnapshot()).operationalState, 'idle')
+      else {
+        assert.equal(sequence.getSnapshot().storageRecovery?.target, null)
+        assert.equal((sequence.getSnapshot() as any).pending.length, 1)
+        assert.equal(playback.starts.length, 1, 'discard never starts next automatically')
+      }
+    } finally { await sequence.dispose() }
+  })
+}
+
+for (const error of ['MEDIA_UNAVAILABLE', 'MEDIA_CHANGED', 'MEDIA_UNKNOWN'] as const) {
+  test(`F0-08 failed revalidation ${error} retains interruption and queue`, async () => {
+    const { sequence, playback } = await build()
+    try {
+      await addCurrent(sequence)
+      await submit(sequence, 'pending', '1002')
+      await storageFailure(playback, sequence)
+      playback.validationErrors.set('01001', new PlayerPlaybackError(error, 'fixture failure'))
+      const before = sequence.getSnapshot()
+      const result = await sequence.execute({ operationId: 'recover', command: { type: 'recover-storage' } })
+      assert.equal(result.outcome, 'rejected')
+      assert.ok(sequence.getSnapshot().storageRecovery)
+      assert.deepEqual((sequence.getSnapshot() as any).pending, (before as any).pending)
+      assert.equal(playback.starts.length, 1)
+    } finally { await sequence.dispose() }
+  })
+}
+
+test('F0-08 missing next after valid celebration retains head and never skips a priority entry', async () => {
+  const { sequence, playback, scheduler } = await build()
+  try {
+    await addCurrent(sequence)
+    await submit(sequence, 'normal', '1002')
+    await submit(sequence, 'priority', '1003', 'priority')
+    await beginCelebration(sequence, playback)
+    playback.startErrors.push(new PlayerPlaybackError('MEDIA_UNAVAILABLE', 'fixture disappeared'))
+    await scheduler.advance(STANDALONE_CELEBRATION_MS)
+    assert.equal(sequence.getSnapshot().storageRecovery?.target?.musicCode, '01003')
+    assert.deepEqual((sequence.getSnapshot() as any).pending.map((e: any) => e.musicCode), ['01003', '01002'])
+    await sequence.notifyLibraryAvailability(true)
+    await scheduler.advance(60000)
+    assert.equal(playback.starts.length, 2)
+  } finally { await sequence.dispose() }
+})
+
+test('F0-08 shutdown during interrupted session prevents recovery admission', async () => {
+  const { sequence, playback } = await build()
+  await addCurrent(sequence)
+  await storageFailure(playback, sequence)
+  await sequence.beginShutdown()
+  assert.equal((await sequence.execute({ operationId: 'late', command: { type: 'recover-storage' } })).outcome, 'rejected')
+  await sequence.dispose()
+})
+
+test('F0-08 idle unavailability rejects a missing selection without creating a phantom session', async () => {
+  const { sequence, playback } = await build()
+  try {
+    await sequence.notifyLibraryAvailability(false)
+    playback.validationErrors.set('01001', new PlayerPlaybackError('MEDIA_UNAVAILABLE', 'fixture absent'))
+    assert.equal((await submitRaw(sequence, 'absent', '1001')).outcome, 'rejected')
+    assert.equal(ready(sequence.getSnapshot()).operationalState, 'idle')
+    assert.equal(playback.starts.length, 0)
+    await sequence.notifyLibraryAvailability(true)
+    assert.equal(playback.starts.length, 0)
+  } finally { await sequence.dispose() }
+})
+
+for (const state of ['loading', 'next'] as const) {
+  test(`F0-08 loss during ${state} fences late load/ACK and keeps the reserved occurrence`, async () => {
+    const { sequence, playback, scheduler } = await build()
+    const gate = deferred<void>(), entered = deferred<void>()
+    try {
+      if (state === 'next') { await addCurrent(sequence); await submit(sequence, 'queued', '1002') }
+      const code = state === 'next' ? '01002' : '01001'
+      playback.startGates.set(code, gate); playback.startStarted.set(code, entered)
+      const action = state === 'next' ? sequence.execute({ operationId: 'next', command: { type: 'next' } })
+        : submitRaw(sequence, 'initial', '1001')
+      if (state === 'loading') { await action; await scheduler.advance(5000) }
+      await entered.promise
+      await sequence.notifyLibraryAvailability(false)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      gate.resolve(); await action
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(sequence.getSnapshot().storageRecovery?.target?.musicCode, code)
+      assert.equal(sequence.getSnapshot().storageRecovery?.contained, true)
+      assert.equal((sequence.getSnapshot() as any).pending[0].musicCode, code)
+      assert.notEqual(sequence.getSnapshot().playbackCondition, 'ready')
+    } finally { gate.resolve(); await sequence.dispose() }
+  })
+}
+
+test('F0-08 repeated intermittent loss does not duplicate recovery or consume the queue', async () => {
+  const { sequence, playback, scheduler } = await build()
+  try {
+    await addCurrent(sequence); await submit(sequence, 'queued', '1002')
+    await storageFailure(playback, sequence)
+    const before = sequence.getSnapshot()
+    for (let i = 0; i < 10; i++) { await sequence.notifyLibraryAvailability(false); await sequence.notifyLibraryAvailability(true) }
+    await scheduler.advance(90000)
+    assert.equal(playback.starts.length, 1)
+    assert.deepEqual(sequence.getSnapshot(), before)
+    await sequence.notifyLibraryAvailability(false)
+    const result = await sequence.execute({ operationId: 'absent-retry', command: { type: 'recover-storage' } })
+    assert.equal(result.outcome, 'rejected')
+    assert.equal(playback.starts.length, 1)
+  } finally { await sequence.dispose() }
+})
+
+test('F0-08 unconfirmed containment never enables recovery or discard', async () => {
+  const { sequence, playback } = await build()
+  try {
+    await addCurrent(sequence)
+    const old = playback.getState()
+    playback.state = { ...old, status: 'failed', errorCode: 'MEDIA_LOAD_FAILED', containmentStatus: 'unconfirmed' }
+    playback.emit({ type: 'error', attemptId: old.attemptId!, musicCode: old.musicCode!, errorCode: 'MEDIA_LOAD_FAILED' })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(sequence.getSnapshot().storageRecovery?.contained, false)
+    for (const type of ['recover-storage', 'discard-interrupted'] as const) {
+      assert.equal((await sequence.execute({ operationId: type, command: { type } })).outcome, 'rejected')
+    }
+  } finally { await sequence.dispose() }
+})
+
+test('F0-08 simultaneous recovery and Stop All cannot publish a late restart', async () => {
+  const { sequence, playback, scheduler } = await build()
+  const gate = deferred<void>(), entered = deferred<void>()
+  try {
+    await addCurrent(sequence); await submit(sequence, 'queued', '1002')
+    await storageFailure(playback, sequence)
+    playback.validateGates.set('01001', gate); playback.validationStarted.set('01001', entered)
+    const recovering = sequence.execute({ operationId: 'recover-first', command: { type: 'recover-storage' } })
+    await entered.promise
+    assert.equal((await sequence.execute({ operationId: 'recover-second', command: { type: 'recover-storage' } })).outcome, 'rejected')
+    assert.equal((await sequence.execute({ operationId: 'stop-everything', command: { type: 'stop-all' } })).outcome, 'confirmed')
+    gate.resolve()
+    assert.equal((await recovering).outcome, 'rejected')
+    await scheduler.advance(60000)
+    assert.equal(ready(sequence.getSnapshot()).operationalState, 'idle')
+    assert.equal(playback.starts.length, 1)
+  } finally { gate.resolve(); await sequence.dispose() }
+})
+
+test('F0-08 a confirmed EOF celebration finishes without duplication even if the root disappears', async () => {
+  const { sequence, playback, scheduler } = await build()
+  try {
+    await addCurrent(sequence)
+    await beginCelebration(sequence, playback)
+    await sequence.notifyLibraryAvailability(false)
+    assert.equal(sequence.getSnapshot().playbackCondition, 'transitioning')
+    await scheduler.advance(STANDALONE_CELEBRATION_MS)
+    assert.equal(ready(sequence.getSnapshot()).operationalState, 'idle')
+    assert.equal(playback.starts.length, 1)
+    assert.equal(playback.clearedCompleted.length, 1)
+  } finally { await sequence.dispose() }
+})
+
+test('F0-08 storage uncertainty stays fenced until confirmed containment and explicit operator resolution', async () => {
+  const { sequence, playback, scheduler } = await build()
+  try {
+    await addCurrent(sequence); await submit(sequence, 'queued', '1002')
+    await sequence.notifyLibraryAvailability(false)
+    const old = playback.getState()
+    playback.state = { ...old, status: 'uncertain', errorCode: 'COMMAND_TIMEOUT', containmentStatus: 'pending' }
+    playback.emit({ type: 'uncertain', attemptId: old.attemptId!, musicCode: old.musicCode!, reason: 'command-outcome-unknown' })
+    await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(sequence.getSnapshot().storageRecovery?.contained, false)
+    assert.equal((await sequence.execute({ operationId: 'too-soon', command: { type: 'recover-storage' } })).outcome, 'rejected')
+    playback.state = { ...playback.state, containmentStatus: 'stop-acknowledged' }
+    await sequence.notifyLibraryAvailability(true)
+    assert.equal(playback.starts.length, 1)
+    const recovered = await sequence.execute({ operationId: 'confirmed-operator-recovery', command: { type: 'recover-storage' } })
+    assert.equal(recovered.outcome, 'confirmed')
+    await advanceInitialCountdown(sequence, scheduler)
+    assert.equal(ready(sequence.getSnapshot()).pending.length, 1)
+    assert.equal(playback.starts.length, 2)
+  } finally { await sequence.dispose() }
+})
+
+for (const command of ['recover-storage', 'discard-interrupted', 'stop-all'] as const) {
+  test(`F0-08 recovery persistence failure cannot publish success for ${command}`, async () => {
+    const playback = new FakePlayback(), scheduler = new FakeCountdownScheduler()
+    let deny = false
+    const recovery: StandaloneRecoveryPort = {
+      initialize: () => ({ status: 'none' }), attachPlayback: () => {}, getState: () => ({ status: 'none' }),
+      assertPlaybackAllowed: () => { if (deny) throw new PlayerPlaybackError('RECOVERY_PERSISTENCE_FAILED', 'injected persistence failure') },
+      persistTransition: () => {}, resolveInvalidRecovery: () => ({ state: { status: 'none' }, preservedFileCount: 0 }),
+      leaveStopped: async () => { throw new PlayerPlaybackError('RECOVERY_PERSISTENCE_FAILED', 'injected write failure') }, dispose: () => {}
+    }
+    const sequence = await StandalonePlayerSequence.create({ createPlayback: () => playback, recovery,
+      countdownScheduler: scheduler, onCoordinationError: () => {} })
+    schedulerBySequence.set(sequence, scheduler)
+    try {
+      await addCurrent(sequence); await submit(sequence, 'queued', '1002')
+      await storageFailure(playback, sequence)
+      deny = true
+      assert.notEqual((await sequence.execute({ operationId: command, command: { type: command } })).outcome, 'confirmed')
+      assert.ok(sequence.getSnapshot().storageRecovery)
+      assert.equal((sequence.getSnapshot() as any).pending.length, 1)
+      assert.equal(playback.starts.length, 1)
+    } finally { await sequence.dispose() }
+  })
+}
+
+test('F0-08 a recovery validation completing after shutdown cannot arm countdown or publish ready', async () => {
+  const { sequence, playback, scheduler } = await build()
+  const gate = deferred<void>(), entered = deferred<void>()
+  try {
+    await addCurrent(sequence); await storageFailure(playback, sequence)
+    playback.validateGates.set('01001', gate); playback.validationStarted.set('01001', entered)
+    const recovering = sequence.execute({ operationId: 'recovery-before-close', command: { type: 'recover-storage' } })
+    await entered.promise
+    await sequence.beginShutdown()
+    gate.resolve()
+    assert.equal((await recovering).outcome, 'rejected')
+    await scheduler.advance(60000)
+    assert.notEqual(sequence.getSnapshot().playbackCondition, 'ready')
+    assert.equal(scheduler.activeTimerCount, 0)
+    assert.equal(playback.starts.length, 1)
+  } finally { gate.resolve(); await sequence.dispose() }
 })

@@ -1,0 +1,519 @@
+{
+  "scope": "T3 infrastructure and synthetic regression only; physical T3 NOT RUN; D: NOT ACCESSED OR QUERIED",
+  "branch": "feature/remote-player-lan-integration-2",
+  "head": "bc3d37de09462485caa9ff027341eeabdd4b88cb",
+  "windowsFingerprint": "164fabb87e9c03b3ff15914a5917438463530b5859697457d0f8ff221f987e7e",
+  "sourceSha256": {
+    "package.json": "2b6f469d72ce869fc544899c03bb1548e54b147dcb3d5d8a6d9ffd2d885c4031",
+    "scripts/run-e2e-linux.cjs": "f365a30630182339b805398604b4bf654b6cb350b4661c3b89f3f8f71bedb0d8",
+    "scripts/run-windows-native-tests.cjs": "380f34c3d34cfbbb5fa48936d1c47decac2c5dd9616db83abc7d05c2e938b6c0",
+    "scripts/windows-native-runner.test.cjs": "95b24ba71cdd76e599d30678a10fb65187a64489b537a607c41ed273f442f474",
+    "scripts/manual-usb-reconnect.cjs": "91969e567d442f126005a624829107c233ffa1f79ba2c9d4dfa3c21db68bf242",
+    "scripts/usb-reconnect-core.cjs": "83c2a313bf9a4b097137f4c9860177b10456bae25042ea9c3984309e429ac051",
+    "scripts/usb-reconnect-native.cjs": "eaf54f4789a9febe6ede9cd00244f64423fc1a674531f372a653bc2db33d769f",
+    "scripts/usb-reconnect-electron.cjs": "5e31e7e22b7e1e4c6e83a27ceeafe28ee9ebe7eab6ffac8df69ffc80e455d60c",
+    "scripts/usb-reconnect.test.cjs": "70f6921d773e6c8855e8b7e7949a3c41959cdc81786a0988aa5bb8e2a1d7a280",
+    "tests/usb-reconnect-main-entry.ts": "b3be7c700199840827779fa28c79273efee0ddfde59c0526313f512ba29b3244",
+    "tests/usb-reconnect-synthetic-electron.ts": "a697a07708f9628544838f426eb4118288b967619505ea404f37cf16f23afd3b"
+  },
+  "unchangedProductionSha256": {
+    "main-runtime.ts": "f813cf77f7cf7590f1d1215473a8071dde9381f66c481162d3608b27ed21f804",
+    "src/main-media-runtime.ts": "59f9dcf54be5e3ee8982db16fddc5b7b9745de280430febe127fb9f5980f07c8",
+    "src/player-media-protocol.ts": "b452d24f7d243bb10f528a036d7c65ce6ed8c95e2cbc04e8e2be016962b67904",
+    "src/video-library-service.ts": "a07c733384613c2e363192f05d9c66ec8d2e056cac2a15193647e132b4f33a48"
+  },
+  "validation": {
+    "compileLinux": "PASS exit 0",
+    "compileWindows": "PASS exit 0",
+    "runnerUnitLinux": {
+      "pass": 51,
+      "skip": 1,
+      "fail": 0,
+      "reasonSkip": "PowerShell AST parser only available on Windows"
+    },
+    "runnerUnitWindows": {
+      "pass": 52,
+      "skip": 0,
+      "fail": 0
+    },
+    "officialRunnerUnitLinux": {
+      "pass": 37,
+      "fail": 0
+    },
+    "libraryWindows": {
+      "unitPass": 25,
+      "electronScenariosPass": 4
+    },
+    "syntheticLinux": "PASS exit 0",
+    "syntheticWindows": "PASS exit 0",
+    "windowsResidualProcesses": "PASS none",
+    "physicalT3": "NOT RUN forbidden this task",
+    "nativeInteractiveConsoleWorkflow": "NOT RUN physical workflow intentionally not invoked"
+  },
+  "logs": {
+    "compile": "/tmp/kq-t3-compile-final.log",
+    "runnerUnit": "/tmp/kq-t3-unit-final.log",
+    "officialRunnerUnit": "/tmp/kq-t3-runner-unit-final.log",
+    "syntheticLinux": "/tmp/kq-t3-synthetic-final.log",
+    "windows": "/tmp/kq-t3-windows-final.log"
+  },
+  "environments": {
+    "linux": {
+      "evidenceDirectory": "kq-usb-synthetic-evidence-v2VZHi",
+      "journal": "events-7c44ea77-89de-42f8-bd3e-4c773b2a4246.jsonl",
+      "journalSha256": "e6f97b0a6994d5dac4adbcb3120ba8d4e54c7842904542b63c9e3c580803ba39",
+      "scenarioSummaries": {
+        "scenario-A-7c44ea77-89de-42f8-bd3e-4c773b2a4246.json": {
+          "status": "PASS",
+          "unavailable": {
+            "available": false,
+            "detectionFromDiscoveryResumeMs": 4913.539066000001,
+            "focused": true,
+            "availability": {
+              "epoch": 2,
+              "availableRoots": 0,
+              "unavailableRoots": 1,
+              "permissionDeniedRoots": 0,
+              "volumeMismatchRoots": 0,
+              "unknownRoots": 0
+            },
+            "scanStarts": 1
+          },
+          "available": {
+            "available": true,
+            "detectionFromDiscoveryResumeMs": 5137.807998,
+            "focused": true,
+            "availability": {
+              "epoch": 3,
+              "availableRoots": 1,
+              "unavailableRoots": 0,
+              "permissionDeniedRoots": 0,
+              "volumeMismatchRoots": 0,
+              "unknownRoots": 0
+            },
+            "scanStarts": 2
+          },
+          "physical": false
+        },
+        "scenario-B-7c44ea77-89de-42f8-bd3e-4c773b2a4246.json": {
+          "status": "PASS",
+          "initial": {
+            "idle": true,
+            "gated": true,
+            "indexedFiles": 1,
+            "cacheRestored": true,
+            "indexReadMs": 8.580691000000002,
+            "windowFromMainReadyMs": 120.19763,
+            "usableFromMainReadyMs": 157.596951,
+            "windowFromProcessMs": 305,
+            "uiObservationFromProcessMs": 431.6061149999996,
+            "firstReaddirMainMonotonicMs": 314.9449,
+            "admissionMainMonotonicMs": 310.082218,
+            "gateMainMonotonicMs": 235.817918,
+            "reconciliationAdmissionMainMonotonicMs": 236.575497,
+            "scan": {
+              "durationMs": 13.528727000000003,
+              "directoriesEnumerated": 1,
+              "entriesEnumerated": 1,
+              "lstatCalls": 1,
+              "statCalls": 1,
+              "realpathCalls": 1,
+              "candidateFiles": 1,
+              "cacheHits": 1,
+              "fileOpens": 0,
+              "fileCloses": 0,
+              "bytesRead": 0,
+              "playbackYieldCount": 0,
+              "playbackYieldDurationMs": 0,
+              "scanInProgress": false,
+              "scanStatus": "ready"
+            },
+            "startupScan": {
+              "runId": "9d0fda7f-2a5c-4a01-b833-846895ef6415",
+              "elapsedMs": 253.31101499999997,
+              "phase": "library-scan",
+              "indexedFiles": 1,
+              "availableCodes": 1,
+              "durationMs": 13.528727000000003,
+              "directoriesEnumerated": 1,
+              "entriesEnumerated": 1,
+              "lstatCalls": 1,
+              "statCalls": 1,
+              "realpathCalls": 1,
+              "candidateFiles": 1,
+              "cacheHits": 1,
+              "fileOpens": 0,
+              "fileCloses": 0,
+              "bytesRead": 0,
+              "playbackYieldCount": 0,
+              "playbackYieldDurationMs": 0,
+              "scanInProgress": false,
+              "scanStatus": "ready"
+            },
+            "generation": 3,
+            "availability": {
+              "epoch": 1,
+              "availableRoots": 1,
+              "unavailableRoots": 0,
+              "permissionDeniedRoots": 0,
+              "volumeMismatchRoots": 0,
+              "unknownRoots": 0
+            }
+          },
+          "restored": {
+            "idle": true,
+            "gated": true,
+            "indexedFiles": 1,
+            "cacheRestored": true,
+            "indexReadMs": 8.533513,
+            "windowFromMainReadyMs": 130.51513400000002,
+            "usableFromMainReadyMs": 170.201632,
+            "windowFromProcessMs": -1195,
+            "uiObservationFromProcessMs": 412.7706619999999,
+            "firstReaddirMainMonotonicMs": 330.922908,
+            "admissionMainMonotonicMs": 326.108548,
+            "gateMainMonotonicMs": 255.238087,
+            "reconciliationAdmissionMainMonotonicMs": 256.246231,
+            "scan": {
+              "durationMs": 15.059316000000024,
+              "directoriesEnumerated": 1,
+              "entriesEnumerated": 1,
+              "lstatCalls": 1,
+              "statCalls": 1,
+              "realpathCalls": 1,
+              "candidateFiles": 1,
+              "cacheHits": 1,
+              "fileOpens": 0,
+              "fileCloses": 0,
+              "bytesRead": 0,
+              "playbackYieldCount": 0,
+              "playbackYieldDurationMs": 0,
+              "scanInProgress": false,
+              "scanStatus": "ready"
+            },
+            "startupScan": {
+              "runId": "8e2c3e62-a902-4cc6-8d96-5c8b1f0b9680",
+              "elapsedMs": 274.272171,
+              "phase": "library-scan",
+              "indexedFiles": 1,
+              "availableCodes": 1,
+              "durationMs": 15.059316000000024,
+              "directoriesEnumerated": 1,
+              "entriesEnumerated": 1,
+              "lstatCalls": 1,
+              "statCalls": 1,
+              "realpathCalls": 1,
+              "candidateFiles": 1,
+              "cacheHits": 1,
+              "fileOpens": 0,
+              "fileCloses": 0,
+              "bytesRead": 0,
+              "playbackYieldCount": 0,
+              "playbackYieldDurationMs": 0,
+              "scanInProgress": false,
+              "scanStatus": "ready"
+            },
+            "generation": 4,
+            "availability": {
+              "epoch": 1,
+              "availableRoots": 1,
+              "unavailableRoots": 0,
+              "permissionDeniedRoots": 0,
+              "volumeMismatchRoots": 0,
+              "unknownRoots": 0
+            }
+          },
+          "physical": false
+        }
+      },
+      "completion": {
+        "status": "PASS",
+        "physicalT3": "NOT RUN",
+        "repeatedReconnectCycles": 2,
+        "staleResultRejected": true,
+        "restoredRealPlayback": true,
+        "container": "generated WebM/VP8, not physical MP4 evidence"
+      },
+      "mediaEvents": [
+        {
+          "minimumSeconds": 0.25,
+          "media": {
+            "requests": 1,
+            "rangeRequests": 1,
+            "fileHandlesOpened": 1,
+            "fileHandlesClosed": 1,
+            "fileHandleCloseFailures": 0,
+            "streamsOpened": 1,
+            "streamsClosed": 1,
+            "activeStreams": 0,
+            "activeGrants": 1,
+            "bytesRead": 1432
+          }
+        },
+        {
+          "selectedCount": 1,
+          "mediaNamesRecorded": false
+        },
+        {
+          "minimumSeconds": 0.25,
+          "media": {
+            "requests": 1,
+            "rangeRequests": 1,
+            "fileHandlesOpened": 1,
+            "fileHandlesClosed": 1,
+            "fileHandleCloseFailures": 0,
+            "streamsOpened": 1,
+            "streamsClosed": 1,
+            "activeStreams": 0,
+            "activeGrants": 1,
+            "bytesRead": 1432
+          }
+        },
+        {
+          "selectedCount": 1,
+          "mediaNamesRecorded": false
+        }
+      ],
+      "clock": "Main and driver monotonic clocks separate; logger timestamps wall-clock"
+    },
+    "windows": {
+      "evidenceDirectory": "kq-usb-synthetic-evidence-hMT0dn",
+      "journal": "events-2bb4f17e-e30e-41a8-b8cf-473dbd701f3c.jsonl",
+      "journalSha256": "be918d5ab08e6541f31fad40bea74c0763b9c7df6bf5929c73a45f9c131fc217",
+      "scenarioSummaries": {
+        "scenario-A-2bb4f17e-e30e-41a8-b8cf-473dbd701f3c.json": {
+          "status": "PASS",
+          "unavailable": {
+            "available": false,
+            "detectionFromDiscoveryResumeMs": 4789.853000000001,
+            "focused": true,
+            "availability": {
+              "epoch": 2,
+              "availableRoots": 0,
+              "unavailableRoots": 1,
+              "permissionDeniedRoots": 0,
+              "volumeMismatchRoots": 0,
+              "unknownRoots": 0
+            },
+            "scanStarts": 1
+          },
+          "available": {
+            "available": true,
+            "detectionFromDiscoveryResumeMs": 5080.077799999999,
+            "focused": true,
+            "availability": {
+              "epoch": 3,
+              "availableRoots": 1,
+              "unavailableRoots": 0,
+              "permissionDeniedRoots": 0,
+              "volumeMismatchRoots": 0,
+              "unknownRoots": 0
+            },
+            "scanStarts": 2
+          },
+          "physical": false
+        },
+        "scenario-B-2bb4f17e-e30e-41a8-b8cf-473dbd701f3c.json": {
+          "status": "PASS",
+          "initial": {
+            "idle": true,
+            "gated": true,
+            "indexedFiles": 1,
+            "cacheRestored": true,
+            "indexReadMs": 15.170600000000007,
+            "windowFromMainReadyMs": 219.7487,
+            "usableFromMainReadyMs": 221.0031,
+            "windowFromProcessMs": 462,
+            "uiObservationFromProcessMs": 492.4342000000006,
+            "firstReaddirMainMonotonicMs": 428.5465,
+            "admissionMainMonotonicMs": 424.4862,
+            "gateMainMonotonicMs": 352.0929,
+            "reconciliationAdmissionMainMonotonicMs": 353.76599999999996,
+            "scan": {
+              "durationMs": 12.721699999999998,
+              "directoriesEnumerated": 1,
+              "entriesEnumerated": 1,
+              "lstatCalls": 1,
+              "statCalls": 1,
+              "realpathCalls": 1,
+              "candidateFiles": 1,
+              "cacheHits": 1,
+              "fileOpens": 0,
+              "fileCloses": 0,
+              "bytesRead": 0,
+              "playbackYieldCount": 0,
+              "playbackYieldDurationMs": 0,
+              "scanInProgress": false,
+              "scanStatus": "ready"
+            },
+            "startupScan": {
+              "runId": "fc9864d0-0e67-408a-a7f0-50edde38719b",
+              "elapsedMs": 372.54409999999996,
+              "phase": "library-scan",
+              "indexedFiles": 1,
+              "availableCodes": 1,
+              "durationMs": 12.721699999999998,
+              "directoriesEnumerated": 1,
+              "entriesEnumerated": 1,
+              "lstatCalls": 1,
+              "statCalls": 1,
+              "realpathCalls": 1,
+              "candidateFiles": 1,
+              "cacheHits": 1,
+              "fileOpens": 0,
+              "fileCloses": 0,
+              "bytesRead": 0,
+              "playbackYieldCount": 0,
+              "playbackYieldDurationMs": 0,
+              "scanInProgress": false,
+              "scanStatus": "ready"
+            },
+            "generation": 3,
+            "availability": {
+              "epoch": 1,
+              "availableRoots": 1,
+              "unavailableRoots": 0,
+              "permissionDeniedRoots": 0,
+              "volumeMismatchRoots": 0,
+              "unknownRoots": 0
+            }
+          },
+          "restored": {
+            "idle": true,
+            "gated": true,
+            "indexedFiles": 1,
+            "cacheRestored": true,
+            "indexReadMs": 8.69750000000002,
+            "windowFromMainReadyMs": 198.1369,
+            "usableFromMainReadyMs": 199.37300000000002,
+            "windowFromProcessMs": 424,
+            "uiObservationFromProcessMs": 832.5778,
+            "firstReaddirMainMonotonicMs": 396.5972,
+            "admissionMainMonotonicMs": 391.2188,
+            "gateMainMonotonicMs": 319.1476,
+            "reconciliationAdmissionMainMonotonicMs": 321.601,
+            "scan": {
+              "durationMs": 18.75799999999998,
+              "directoriesEnumerated": 1,
+              "entriesEnumerated": 1,
+              "lstatCalls": 1,
+              "statCalls": 1,
+              "realpathCalls": 1,
+              "candidateFiles": 1,
+              "cacheHits": 1,
+              "fileOpens": 0,
+              "fileCloses": 0,
+              "bytesRead": 0,
+              "playbackYieldCount": 0,
+              "playbackYieldDurationMs": 0,
+              "scanInProgress": false,
+              "scanStatus": "ready"
+            },
+            "startupScan": {
+              "runId": "e9d2bc4a-72d4-4cac-91ef-e669e9e4247b",
+              "elapsedMs": 346.02029999999996,
+              "phase": "library-scan",
+              "indexedFiles": 1,
+              "availableCodes": 1,
+              "durationMs": 18.75799999999998,
+              "directoriesEnumerated": 1,
+              "entriesEnumerated": 1,
+              "lstatCalls": 1,
+              "statCalls": 1,
+              "realpathCalls": 1,
+              "candidateFiles": 1,
+              "cacheHits": 1,
+              "fileOpens": 0,
+              "fileCloses": 0,
+              "bytesRead": 0,
+              "playbackYieldCount": 0,
+              "playbackYieldDurationMs": 0,
+              "scanInProgress": false,
+              "scanStatus": "ready"
+            },
+            "generation": 4,
+            "availability": {
+              "epoch": 1,
+              "availableRoots": 1,
+              "unavailableRoots": 0,
+              "permissionDeniedRoots": 0,
+              "volumeMismatchRoots": 0,
+              "unknownRoots": 0
+            }
+          },
+          "physical": false
+        }
+      },
+      "completion": {
+        "status": "PASS",
+        "physicalT3": "NOT RUN",
+        "repeatedReconnectCycles": 2,
+        "staleResultRejected": true,
+        "restoredRealPlayback": true,
+        "container": "generated WebM/VP8, not physical MP4 evidence"
+      },
+      "mediaEvents": [
+        {
+          "minimumSeconds": 0.25,
+          "media": {
+            "requests": 1,
+            "rangeRequests": 1,
+            "fileHandlesOpened": 1,
+            "fileHandlesClosed": 1,
+            "fileHandleCloseFailures": 0,
+            "streamsOpened": 1,
+            "streamsClosed": 1,
+            "activeStreams": 0,
+            "activeGrants": 1,
+            "bytesRead": 1454
+          }
+        },
+        {
+          "selectedCount": 1,
+          "mediaNamesRecorded": false
+        },
+        {
+          "minimumSeconds": 0.25,
+          "media": {
+            "requests": 1,
+            "rangeRequests": 1,
+            "fileHandlesOpened": 1,
+            "fileHandlesClosed": 1,
+            "fileHandleCloseFailures": 0,
+            "streamsOpened": 1,
+            "streamsClosed": 1,
+            "activeStreams": 0,
+            "activeGrants": 1,
+            "bytesRead": 1454
+          }
+        },
+        {
+          "selectedCount": 1,
+          "mediaNamesRecorded": false
+        }
+      ],
+      "clock": "Main and driver monotonic clocks separate; logger timestamps wall-clock"
+    }
+  },
+  "limitations": [
+    "No real USB/NTFS metadata policy queries were executed",
+    "No physical startup or performance/9k benchmark",
+    "Synthetic video is generated WebM/VP8, not physical MP4 or audible A/V",
+    "Strict physical preflight requires externally verified effective write protection and native IsReadOnly=true; LastAccess policy alone insufficient",
+    "Quiescence in scenario A is test instrumentation, not unmodified application behavior",
+    "No installation or operational profile touched; no owner homologation"
+  ],
+  "logSha256": {
+    "/tmp/kq-t3-compile-final.log": "a4d670f401dd1bb6de2de66c013daea19007642f378d77bb13e0b5876ea38217",
+    "/tmp/kq-t3-unit-final.log": "49bd42c16497b5f9788b673456f8a5e3db545b84d000d14381300e6eeb0ee482",
+    "/tmp/kq-t3-runner-unit-final.log": "5122c33a987d5c7333798351e43691153caf0d5aa17a0c95b4f642129e2289c0",
+    "/tmp/kq-t3-synthetic-final.log": "6e37ae019294ffaa58462c554d996f6a977d79f6a81b11a3974a54730c203249",
+    "/tmp/kq-t3-windows-final.log": "12b1984cf6992c6a286b34cf5d6c470048398d5a79b6753033b792d1cb192b33"
+  },
+  "runtimeVersions": {
+    "linuxNode": "24.15.0",
+    "windowsNode": "24.11.0",
+    "electronInstalledPackage": "45.0.0",
+    "playwrightInstalledPackage": "1.64.1"
+  }
+}

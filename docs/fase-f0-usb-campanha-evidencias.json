@@ -1,0 +1,296 @@
+{
+  "scope": "Unified T3/F0-08 physical campaign INFRASTRUCTURE ONLY; F: and D: NOT QUERIED OR ACCESSED; no physical run",
+  "branch": "feature/remote-player-lan-integration-2",
+  "head": "bc3d37de09462485caa9ff027341eeabdd4b88cb",
+  "windowsFingerprint": "7fec73f066441684457b5b9dcd261baeb5de93ccbcce1fb7a59fcffebcfe8d44",
+  "codeSha256": {
+    "scripts/manual-usb-reconnect.cjs": "8b16dc30a1717b8cd2243143e38583ff5c00bee57d2545b2d0fdaafb5af1b179",
+    "scripts/usb-reconnect-core.cjs": "2e61569ef9cde35c012c180354cd2fb704ca97bd4eadd19070df61ca0019a14d",
+    "scripts/usb-reconnect-native.cjs": "1d4d63ca28baf01dcdca9269d6c3f858e28d5afaa6b4f07964023411085844ba",
+    "scripts/usb-reconnect-electron.cjs": "0fb92b2e53bc2b937d6d097ec25a71154d10e8c820f879906994cd35c115318d",
+    "scripts/usb-campaign.cjs": "80aea1f43ea3e546e76be217351af7c86d41389e44e9dd5b61dcb97f6fc19d63",
+    "scripts/usb-campaign-electron.cjs": "0570bfd95faf935cbeba5457aa676b097fae322cfbc454c2fdf67d48886df233",
+    "scripts/usb-campaign.test.cjs": "5b92ac77ffc8140bd4251a0a6e39063cf7a23bc8ec608191a2f025be4ab204fb",
+    "scripts/run-e2e-linux.cjs": "05b9b3e408238d296145c3bceff9b8054019171ff0300b25beca328630a7b90e",
+    "scripts/run-windows-native-tests.cjs": "6397214844944588aa6526da35b085aa85f0ed12b62e65deea6a047f2460bf65",
+    "scripts/windows-native-runner.test.cjs": "f999ea4a6d67a41a1b0a6bb02e54cbbea9905ccc3670794099ed7369a5fd0b52",
+    "package.json": "1d58bcdf9526fabd168701a379467f1f79b623e0a8658a19c1244abceaa28ae8",
+    "tests/usb-campaign-electron.ts": "e524404e083fa0ac36173b8c26aaff6ef4a0e43683922ad00be346e6a2e3582f",
+    "tests/storage-resilience-electron.ts": "856d6f2304b5badbff2d6ec11b7fade4bc5c2edb89c840ee8c846092fa3e1d95"
+  },
+  "unchangedProductionComparedWithF008": {
+    "src/standalone-player-sequence.ts": "74bdce2d74b6a14c49719a7e9d4be29332e671d61c1282111f60f6cd89baaa9a",
+    "src/standalone-player-runtime.ts": "55c853be7bda3d77bb98a19fd895e0dd65133d14e3ae64da7b358648fdde17d4",
+    "src/standalone-player-contracts.ts": "312c567616029f6189ac602c68895cc11c6952a2c5b62a8c5ac26123099a718f",
+    "src/player-playback-service.ts": "9712d3dcd3b3ab6bb10a2fce777aacdea96dab8bbc20893e45fa011b3b84270e",
+    "src/player-playback-contracts.ts": "894208ae5bab4b0d3739ddd6a0b2047f4f8ec71120e77c7ce14ce0115d265471",
+    "src/main-media-runtime.ts": "4301ddf31a6f067a834d2e74b6a1f6dff732654568b50d815c6382c93ef650bf",
+    "src/standalone-player-ipc.ts": "c6dc035ec94c50905019a66a89add481c3ecc1312b1fa81ce58728929c6503e3",
+    "standalone-player-preload.ts": "fd6174445942a755e017b68b2b61135779d162e72049d55db7cc9215fe9ca09f",
+    "src/standalone-player-renderer.ts": "a20e4e4c08c484ff77c273f08cd1018d927b710725190dace383c71bae3a1974",
+    "src/standalone-player.html": "581572a88f94f732f45ff4c4ec236c79b835bc091834db074b569c8400e9d24e",
+    "src/standalone-player.css": "34aff2be33ad464b546c1e07f17e25f97dab1fe6f14889580943ff9ed5421f56"
+  },
+  "validation": {
+    "linuxCompile": "PASS exit 0",
+    "windowsCompile": "PASS exit 0",
+    "newRunnerUnitLinux": {
+      "pass": 61,
+      "skip": 1,
+      "fail": 0,
+      "skipReason": "Windows PowerShell AST parser only"
+    },
+    "newRunnerUnitWindows": {
+      "pass": 62,
+      "skip": 0,
+      "fail": 0
+    },
+    "legacyRunnerUnitLinux": {
+      "pass": 51,
+      "skip": 1,
+      "fail": 0
+    },
+    "legacyRunnerUnitWindows": {
+      "pass": 52,
+      "skip": 0,
+      "fail": 0
+    },
+    "officialRunnerUnitLinux": {
+      "pass": 37,
+      "fail": 0
+    },
+    "domainFocusedLinuxSuites": 6,
+    "windowsUnitCases": 422,
+    "windowsUnitSuites": 11,
+    "windowsLibraryElectronScenarios": 4,
+    "t3Synthetic": "PASS Linux/Windows",
+    "f008Synthetic": "PASS Linux/Windows after deterministic harness focus correction",
+    "unifiedCampaignElectron": "PASS Linux/Windows, real Main, playing/paused, mocked metadata, temporary files",
+    "eightScenarioController": "PASS mocked simulation; not physical evidence",
+    "focusNegativeControl": "PASS old harness deterministically dispatches recover-storage instead of intended discard-interrupted",
+    "windowsCleanup": "PASS no residual Electron process",
+    "physicalCampaign": "NOT RUN forbidden this task",
+    "nativeDeviceMetadataLiveCalls": "NOT RUN forbidden this task; mocked; native AST parser parses but does not execute queries"
+  },
+  "logs": {
+    "compile": {
+      "path": "/tmp/usb-campaign-compile-validated.log",
+      "sha256": "a4d670f401dd1bb6de2de66c013daea19007642f378d77bb13e0b5876ea38217",
+      "exitCode": 0
+    },
+    "unitNew": {
+      "path": "/tmp/usb-campaign-unit-validated.log",
+      "sha256": "901dd5924a4a0159cf000476df4a440a47db82c7f7a04f18953fe66f63772fb8",
+      "exitCode": 0
+    },
+    "unitLegacy": {
+      "path": "/tmp/usb-campaign-legacy-unit-validated.log",
+      "sha256": "6bec7d7ee7ac1b66f02c835e9066454600db2bbf9bb3c56583cb8717c70314d4",
+      "exitCode": 0
+    },
+    "unitOfficial": {
+      "path": "/tmp/usb-campaign-official-unit-validated.log",
+      "sha256": "a3cb5eb40ba5a8bfd75d06c6675e63c072d4ea846d2f912e5d69d2b848367d56",
+      "exitCode": 0
+    },
+    "domain": {
+      "path": "/tmp/usb-campaign-domain-regression.log",
+      "sha256": "eea0770f126199e1016f4919fdaec2775b43b84bb267b1f2d93e691bea722c94",
+      "exitCode": 0
+    },
+    "t3Linux": {
+      "path": "/tmp/usb-campaign-t3-regression.log",
+      "sha256": "8c74cae7dfbfab654bbcab685e8a771084f1d82f5b91ad1f3b7ef5efad1fc510",
+      "exitCode": 0
+    },
+    "f008Linux": {
+      "path": "/tmp/usb-campaign-f008-validated.log",
+      "sha256": "7deccab09aa29a0be7f113e8f3af08f61c641f9cf0a608f4b7d2f2cabc62204d",
+      "exitCode": 0
+    },
+    "focusControl": {
+      "path": "/tmp/usb-campaign-focus-control.log",
+      "sha256": "6d7627998f08567573f6ad8ac16f53a8ce661e33eef4b6e73882b7eb4039d777",
+      "exitCode": 0
+    },
+    "campaignLinux": {
+      "path": "/tmp/usb-campaign-electron-validated.log",
+      "sha256": "90b61001a95e9765ce35a10ec6f86b8253736205b5903d3afe40c55b16717746",
+      "exitCode": 0
+    },
+    "windowsFinal": {
+      "path": "/tmp/usb-campaign-windows-reviewed.log",
+      "sha256": "92546923061e7ecd28b5c4726781f8d952c0872049f638aa73b05b50d4ebb85a",
+      "exitCode": 0
+    }
+  },
+  "evidence": {
+    "linux": {
+      "directory": "kq-campaign-evidence-HNhlIR",
+      "journal": "events-005c1ae2-6601-4720-9cc0-5cdd6987aad3.jsonl",
+      "sha256": "396277926b4ab778da35f2bcdfb71dde6478761eb08c1e08be0c0e5f7c3f2c20",
+      "results": [
+        {
+          "status": "PASS",
+          "recoverable": true,
+          "expected": "8c80f7d0-0e3f-419d-a676-4d8deb9067b5",
+          "recoveryBranch": "OBSERVED",
+          "absenceObservedPhase": "recovery",
+          "scenario": "playing",
+          "attempt": 1,
+          "physical": false
+        },
+        {
+          "status": "PASS",
+          "recoverable": true,
+          "expected": "7d0a8c36-deb4-475c-bc15-7cbce0083faf",
+          "recoveryBranch": "OBSERVED",
+          "absenceObservedPhase": "recovery",
+          "scenario": "paused",
+          "attempt": 1,
+          "physical": false
+        }
+      ],
+      "completion": [
+        {
+          "status": "PASS",
+          "scenarios": [
+            "playing",
+            "paused"
+          ],
+          "physical": "NOT RUN",
+          "volumeMetadata": "mocked"
+        }
+      ]
+    },
+    "windows": {
+      "directory": "kq-campaign-evidence-RVFd4n",
+      "journal": "events-ba3ddb07-274a-4bd0-8339-5f047759deea.jsonl",
+      "sha256": "5b9707d5915343ba701e399889a7a099efad5bdbf4c2fb3f9474c9a8a7a2a850",
+      "results": [
+        {
+          "status": "PASS",
+          "recoverable": true,
+          "expected": "6000d348-60cd-4586-b363-6773ff4b1650",
+          "recoveryBranch": "OBSERVED",
+          "absenceObservedPhase": "recovery",
+          "scenario": "playing",
+          "attempt": 1,
+          "physical": false
+        },
+        {
+          "status": "PASS",
+          "recoverable": true,
+          "expected": "a83e41b6-e07f-4171-97a0-6de785259688",
+          "recoveryBranch": "OBSERVED",
+          "absenceObservedPhase": "recovery",
+          "scenario": "paused",
+          "attempt": 1,
+          "physical": false
+        }
+      ],
+      "completion": [
+        {
+          "status": "PASS",
+          "scenarios": [
+            "playing",
+            "paused"
+          ],
+          "physical": "NOT RUN",
+          "volumeMetadata": "mocked"
+        }
+      ]
+    },
+    "linuxF008": {
+      "directory": "kq-storage-evidence-clqoQn",
+      "journal": "events-61ba1ba5-7ffe-427b-adca-38985bc37eb0.jsonl",
+      "sha256": "c4e1778165b3c43f7b17220fd156f52c433011c04075f36e5af36573d684de59",
+      "discardDelivery": [
+        {
+          "command": "discard-interrupted",
+          "focusBarrier": "renderer animation frame"
+        }
+      ],
+      "completion": [
+        {
+          "status": "PASS",
+          "physicalUSB": "NOT RUN",
+          "main": true,
+          "ipc": true,
+          "renderer": true
+        }
+      ]
+    },
+    "windowsF008": {
+      "directory": "kq-storage-evidence-KOCFaF",
+      "journal": "events-2bcde64a-6f45-4e2c-a80d-213401d795ff.jsonl",
+      "sha256": "5e3318cca29894e8c8eac177c7fb45a65168d3f52b2a25bd64be75f964f41400",
+      "discardDelivery": [
+        {
+          "command": "discard-interrupted",
+          "focusBarrier": "renderer animation frame"
+        }
+      ],
+      "completion": [
+        {
+          "status": "PASS",
+          "physicalUSB": "NOT RUN",
+          "main": true,
+          "ipc": true,
+          "renderer": true
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "Physical command and full human console flow intentionally not executed",
+    "Physical B/A use safe Windows removal; active scenarios require per-scenario abrupt-removal consent on disposable copies",
+    "Short countdown/loading/transition/celebration windows may yield PARTIAL/NOT REPRODUCED",
+    "Buffer-only observation never promoted to full recovery PASS",
+    "Rebinding a verified changed letter aborts current scenario PARTIAL; only fresh profile/scenario continues, never remaps a live product session",
+    "Profile processes/handles close between physical scenarios; private scenario profiles retained for audit",
+    "No custom buffer, production timers or UI behavior changed",
+    "No physical MP4/USB/A/V/cold-cache/performance claim; generated WebM only",
+    "New CLI targets initial F metadata only and rejects C/D or unverified alternate drives"
+  ],
+  "intermediateFailures": [
+    {
+      "log": "/tmp/usb-campaign-f008-regression.log",
+      "status": "FAIL exit 1",
+      "code": "DISCARD_NOT_CONFIRMED",
+      "observed": "Main ended idle/empty after natural completion rather than target-null recovery; original harness did not log command delivery",
+      "controlledReproduction": "renderer autofocus frame held; old focus-before-frame sequence delivered recover-storage to Main instead of discard-interrupted",
+      "correction": "test waits actual renderer frame and targets native button at key dispatch; independently asserts Main received discard-interrupted",
+      "productionChanged": false,
+      "assertionsWeakened": false,
+      "timeoutsIncreased": false
+    },
+    {
+      "log": "/tmp/usb-campaign-legacy-unit.log",
+      "status": "FAIL in executor sandbox",
+      "code": "subprocess spawn EPERM",
+      "resolution": "same tests executed outside executor sandbox with authorization; Chromium sandbox not disabled"
+    }
+  ],
+  "historicalNativeRuns": [
+    {
+      "path": "/tmp/usb-campaign-windows-final.log",
+      "fingerprint": "583b3577604a63fbc4d296f4562e2a61ad22fd7168c0979c4bdba4d1cffa06c3",
+      "status": "historical PASS; superseded oracles",
+      "sha256": "d0a23083453fda03e7cf1147438f7b655c9a9d3d40484f67171a2c66e5340713"
+    },
+    {
+      "path": "/tmp/usb-campaign-windows-validated.log",
+      "fingerprint": "12c9833a651f7c5ad371c9bedf9142298da38f7e43a6b695d39772f52d6687ca",
+      "status": "historical PASS; preceded later Linux harness-focus failure",
+      "sha256": "eecc75b66fd7fa23b0675c8175c9624bd2ae948193e2a842dacfbb2c84f7f551"
+    }
+  ],
+  "finalDocumentChecks": {
+    "codeAndTestHashes": "PASS unchanged after native validation",
+    "newLinks": "PASS local targets and new principal anchors",
+    "whitespace": "git diff --check PASS",
+    "physicalRun": "NOT RUN",
+    "commitPush": "NOT PERFORMED"
+  }
+}

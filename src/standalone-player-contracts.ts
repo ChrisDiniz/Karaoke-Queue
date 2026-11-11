@@ -146,7 +146,18 @@ export type StandaloneUncertainSnapshot = Extract<StandaloneUnavailableSnapshot,
 export type StandaloneBlockedSnapshot = Extract<StandaloneUnavailableSnapshot, { playbackCondition: 'blocked' }>
 
 /** Main-owned sequence snapshot; it contains no Controller, session, or visual input state. */
-export type StandalonePlayerSnapshot = StandaloneReadySnapshot | StandaloneTransitioningSnapshot | StandaloneUnavailableSnapshot
+export interface StandaloneStorageRecovery {
+  readonly available: boolean
+  readonly contained: boolean
+  readonly target: StandaloneQueueEntry | null
+  readonly phase: 'countdown' | 'media' | 'transition'
+  readonly wasPaused: boolean
+  /** No seek acknowledgement exists in V1: recovery explicitly restarts from the beginning. */
+  readonly positionRestorable: false
+}
+export type StandalonePlayerSnapshot = (StandaloneReadySnapshot | StandaloneTransitioningSnapshot | StandaloneUnavailableSnapshot) & {
+  readonly storageRecovery?: StandaloneStorageRecovery
+}
 
 /** Only completed UI submissions cross the orchestration boundary; digit buffering stays in the UI. */
 export const STANDALONE_PLAYER_COMMAND_TYPES = Object.freeze([
@@ -154,7 +165,7 @@ export const STANDALONE_PLAYER_COMMAND_TYPES = Object.freeze([
   'toggle-pause',
   'next',
   'restart',
-  'stop-all'
+  'stop-all', 'recover-storage', 'discard-interrupted'
 ] as const)
 
 export type StandalonePlayerCommand =
@@ -163,6 +174,7 @@ export type StandalonePlayerCommand =
   | { readonly type: 'next' }
   | { readonly type: 'restart' }
   | { readonly type: 'stop-all' }
+  | { readonly type: 'recover-storage' | 'discard-interrupted' }
 
 /** A retry of one logical action reuses this ID and payload; a new operator action gets a new ID. */
 export interface StandalonePlayerCommandRequest {
@@ -210,13 +222,15 @@ export interface StandalonePlayerControl {
 /** Narrow technical playback dependency, structurally implemented by PlayerPlaybackService. */
 export interface StandalonePlaybackPort extends PlayerPlaybackRecoveryTarget {
   validateMusicCode(canonicalCode: string): Promise<void>
-  playImmediately(canonicalCode: string, validateBeforeCommit?: () => void): Promise<PlayerPlaybackState>
+  validatedMediaIdentity?(canonicalCode: string): Promise<string>
+  playImmediately(canonicalCode: string, validateBeforeCommit?: () => void, recoveryAttemptId?: string, expectedIdentity?: string): Promise<PlayerPlaybackState>
   pause(): Promise<PlayerPlaybackState>
   resume(): Promise<PlayerPlaybackState>
   restart(): Promise<PlayerPlaybackState>
   stop(expectedAttemptId?: string): Promise<PlayerPlaybackState>
   clearCompletedMedia(expectedAttemptId: string): Promise<boolean>
   clearStoppedMedia(expectedAttemptId: string): Promise<boolean>
+  clearFailedMedia?(expectedAttemptId: string): Promise<boolean>
   subscribe(listener: PlayerPlaybackListener): () => void
 }
 
@@ -227,6 +241,8 @@ export type StandaloneCatalogPort = Pick<MusicCatalogService, 'lookupByVideoCode
 export interface StandaloneRecoveryPort extends PlayerPlaybackPersistence {
   initialize(): PlayerRecoverySnapshot
   attachPlayback(playback: PlayerPlaybackRecoveryTarget): void
+  /** Standalone-only fresh-process recovery; absent in lightweight test ports. */
+  resolveStandaloneStartup?(): Promise<PlayerRecoverySnapshot>
   getState(): PlayerRecoverySnapshot
   assertPlaybackAllowed(recoveryAttemptId?: string): void
   resolveInvalidRecovery(): { state: PlayerRecoverySnapshot; preservedFileCount: number }

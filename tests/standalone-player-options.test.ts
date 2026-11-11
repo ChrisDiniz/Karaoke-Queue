@@ -95,6 +95,41 @@ test('options service persists selected roots, reports real ready/degraded scans
   assert.ok(updates.length >= 4)
 })
 
+test('availability changes publish to options subscribers and reconnection refreshes without losing the chosen root', async t => {
+  const temp = temporaryDirectory()
+  const root = path.join(temp.directory, 'usb-library')
+  fs.mkdirSync(root)
+  fs.writeFileSync(path.join(root, '00123.mp4'), '')
+  const library = new VideoLibraryService([root])
+  await library.refresh()
+  const database = createPlayerMusicCatalogDatabase(temp.directory)
+  const catalog = new MusicCatalogService(database, library)
+  const options = new StandalonePlayerOptionsService({ library, catalog, userDataDirectory: temp.directory,
+    dialogs: { chooseVideoFolder: async () => null, chooseCatalogFile: async () => null } })
+  t.after(async () => {
+    options.dispose()
+    await catalog.close()
+    database.close()
+    library.close()
+    temp.cleanup()
+  })
+  const updates: string[] = []
+  const unsubscribe = options.subscribe(snapshot => updates.push(snapshot.library.scanStatus))
+  fs.rmSync(root, { recursive: true, force: true })
+  await library.probeAvailability()
+  assert.equal(options.getSnapshot().library.scanStatus, 'degraded')
+  assert.ok(updates.includes('degraded'), 'the UI-facing subscription observes the unavailable root')
+  assert.deepEqual(library.roots, [root], 'temporary device loss does not discard the selected library configuration')
+
+  fs.mkdirSync(root)
+  fs.writeFileSync(path.join(root, '00123.mp4'), 'restored')
+  await library.probeAvailability()
+  await library.refresh()
+  assert.equal(options.getSnapshot().library.scanStatus, 'ready')
+  assert.ok(updates.includes('ready'), 'reconnection publishes the reconciled current snapshot')
+  unsubscribe()
+})
+
 test('catalog import snapshots include only the selected filename and committed metadata', async t => {
   const temp = temporaryDirectory()
   let library: VideoLibraryService | undefined

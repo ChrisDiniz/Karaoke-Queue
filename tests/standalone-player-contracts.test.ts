@@ -50,7 +50,7 @@ test('initial Standalone snapshots do not share a mutable pending array', () => 
   assert.notEqual(first.state.pending, second.state.pending)
 })
 
-test('Standalone command set contains V1 operations and the approved C5 stop-all command', () => {
-  assert.deepEqual(STANDALONE_PLAYER_COMMAND_TYPES, ['submit-code', 'toggle-pause', 'next', 'restart', 'stop-all'])
+test('Standalone command set contains V1 operations and approved C5/F0-08 recovery commands', () => {
+  assert.deepEqual(STANDALONE_PLAYER_COMMAND_TYPES, ['submit-code', 'toggle-pause', 'next', 'restart', 'stop-all', 'recover-storage', 'discard-interrupted'])
   assert.equal(sharedPlaybackServiceCompatibility, true)
 })

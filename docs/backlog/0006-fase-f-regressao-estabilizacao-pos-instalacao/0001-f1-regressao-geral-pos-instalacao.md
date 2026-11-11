@@ -50,3 +50,7 @@ Ticket criado nesta reorganização documental. Nenhuma regressão pós-instalad
 - [Windows release process](../../windows-release-process.md)
 - [SQLite persistence safety](../../sqlite-persistence-safety.md)
 - [Remote player architecture](../../remote-player-architecture.md)
+
+## Dependência F0 — atualização de 2026-11-10
+
+A [F0](0000-f0-estabilizacao-critica-standalone.md) deve estar concluída e aprovada antes da execução geral de F1–F4. Esta atualização não inicia nem renumera esta etapa; as dependências sequenciais e autorizações individuais permanecem. E está encerrada por declaração do proprietário, sem converter limitações históricas em PASS.

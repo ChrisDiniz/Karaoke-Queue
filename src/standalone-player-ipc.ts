@@ -751,6 +751,12 @@ function cloneMetadataPreview(value: unknown): StandalonePlayerMetadataPreview {
 }
 
 function cloneSnapshot(snapshot: StandalonePlayerSnapshot): StandalonePlayerSnapshot {
+  if (snapshot.storageRecovery) {
+    const { storageRecovery: r, ...base } = snapshot
+    return { ...cloneSnapshot(base), storageRecovery: { available: r.available, contained: r.contained,
+      phase: r.phase, wasPaused: r.wasPaused, positionRestorable: false,
+      target: r.target ? { entryId: r.target.entryId, musicCode: r.target.musicCode } : null } }
+  }
   if (snapshot.playbackCondition === 'ready') return { playbackCondition: 'ready', state: cloneStableState(snapshot.state) }
   if (snapshot.playbackCondition === 'transitioning') {
     const base = {

@@ -42,3 +42,7 @@ Validação Windows do pacote instalado e regressões selecionadas; aprovação 
 - [standalone-player-roadmap.md](../../standalone-player-roadmap.md)
 - [windows-release-process.md](../../windows-release-process.md)
 - [windows-native-testing.md](../../windows-native-testing.md)
+
+## Dependência F0 — atualização de 2026-11-10
+
+A [F0](0000-f0-estabilizacao-critica-standalone.md) deve estar concluída e aprovada antes da execução geral de F1–F4. Esta atualização não inicia nem renumera esta etapa; as dependências sequenciais e autorizações individuais permanecem. E está encerrada por declaração do proprietário, sem converter limitações históricas em PASS.

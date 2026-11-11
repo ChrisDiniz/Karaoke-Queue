@@ -89,3 +89,26 @@ test('a late Chromium command acknowledgement after the real timeout is ignored'
     host.dispose()
   }
 })
+
+test('host readiness fails closed at its deadline without accepting a later ready event', async context => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const { host, webContents, ipc } = createHost(async () => false)
+  try {
+    const failure = assert.rejects(host.ready, { code: 'HOST_TERMINATED' })
+    context.mock.timers.tick(15000)
+    await failure
+    const ready = ipc.handlers.get('player-playback:ready')
+    if (ready) await assert.rejects(Promise.resolve().then(() => ready({ sender: webContents, senderFrame: webContents.mainFrame })),
+      { code: 'HOST_TERMINATED' })
+    await assert.rejects(host.send({ type: 'clear', commandId: 'after-deadline', attemptId: 'old-attempt' }),
+      { code: 'HOST_TERMINATED' })
+  } finally { host.dispose() }
+})
+
+test('closing an unready host rejects readiness and releases its IPC handlers', async () => {
+  const { host, ipc } = createHost(async () => false)
+  const failure = assert.rejects(host.ready, { code: 'HOST_TERMINATED' })
+  host.dispose()
+  await failure
+  assert.equal(ipc.handlers.size, 0)
+})

@@ -22,7 +22,11 @@ const suites = [
   'queue-menu-electron',
   'singer-autocomplete-electron',
   'sidebar-display-name-electron',
-  'diagnostics-electron'
+  'diagnostics-electron',
+  'f0-bootstrap-electron',
+  'usb-reconnect-synthetic-electron',
+  'storage-resilience-electron',
+  'usb-campaign-electron'
 ]
 const env = { ...process.env }
 delete env.WAYLAND_DISPLAY

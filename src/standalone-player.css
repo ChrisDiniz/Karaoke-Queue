@@ -1114,3 +1114,13 @@ body[data-transition-phase="celebration"][data-celebration-paused="true"] .celeb
 #standalone-license-error { min-height: 24px; color: #fca5a5; margin-top: 10px; }
 .standalone-license-dialog .stop-confirmation-button.cancel { border-color: #43434e; background: #24242b; color: #e4e4eb; }
 .standalone-license-dialog .stop-confirmation-button.confirm { border-color: #818cf8; background: #6366f1; color: #fff; }
+
+/* F0-08: owner-authorized informational recovery modal, existing visual language. */
+#storage-recovery-modal { z-index: 19; position: fixed; }
+.storage-recovery-dialog { max-height: calc(100vh - 32px); overflow-y: auto; width: 600px; }
+.storage-recovery-dialog h2 { color: #f1f1f4; font-size: clamp(18px, 2.5vw, 24px); }
+.storage-recovery-dialog p { margin-top: 14px; color: #c5c5d0; line-height: 1.5; }
+.storage-recovery-dialog .stop-confirmation-actions { flex-wrap: wrap; }
+.storage-recovery-dialog button { height: auto; min-height: 44px; padding: 10px 14px; white-space: normal; }
+.storage-recovery-dialog button:focus-visible { outline: 3px solid #bf9cff; outline-offset: 3px; }
+#storage-recovery-modal button[hidden] { display: none; }

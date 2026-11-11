@@ -19,6 +19,7 @@ const {
   powershellCancellation,
   powershellLauncher,
   recoverNoopInterruptedSync,
+  requiresStandaloneProductionMedia,
   requiresWindowFocus,
   selectWindowsTestSuites,
   stageSnapshot,
@@ -87,6 +88,7 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   const playerRecovery = powershellLauncher('C:\\stage', 'run-player-recovery', false, '--player-recovery')
   const standaloneOptions = powershellLauncher('C:\\stage', 'run-standalone-options', false, '--standalone-options')
   const standaloneProduction = powershellLauncher('C:\\stage', 'run-standalone-production', false, '--standalone-production')
+  const videoLibrary = powershellLauncher('C:\\stage', 'run-video-library', false, '--video-library')
   const packageCandidate = powershellLauncher('C:\\stage', 'run-package-candidate', false, null, null, null, true)
   const screenshots = powershellLauncher('C:\\stage', 'run-screenshots', false, null, null,
     'E:\\KaraokeQueue\\e1-03-validation\\ui-screenshots')
@@ -101,6 +103,7 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.equal(launcherPayload(playerRecovery).playbackMode, '--player-recovery')
   assert.equal(launcherPayload(standaloneOptions).playbackMode, '--standalone-options')
   assert.equal(launcherPayload(standaloneProduction).playbackMode, '--standalone-production')
+  assert.equal(launcherPayload(videoLibrary).playbackMode, '--video-library')
   assert.equal(launcherPayload(packageCandidate).packageCandidate, true)
   assert.equal(launcherPayload(screenshots).screenshotRoot, 'E:\\KaraokeQueue\\e1-03-validation\\ui-screenshots')
   assert.match(evaluation, /\$workerArgs \+= "--playback-evaluation"/)
@@ -112,6 +115,7 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.match(playerRecovery, /\$workerArgs \+= "--player-recovery"/)
   assert.match(standaloneOptions, /\$workerArgs \+= "--standalone-options"/)
   assert.match(standaloneProduction, /\$workerArgs \+= "--standalone-production"/)
+  assert.match(videoLibrary, /\$workerArgs \+= "--video-library"/)
   assert.match(packageCandidate, /\$workerArgs \+= "--package-candidate"/)
   assert.match(screenshots, /\$env:KQ_PLAYER_SCREENSHOT_DIR = \$screenshotRoot/)
   assert.match(screenshots, /não pode ficar dentro do checkout Windows/)
@@ -131,8 +135,18 @@ test('focused playback recovery harness does not require unrelated window-focus 
   assert.equal(requiresWindowFocus('--standalone-integration'), false)
   assert.equal(requiresWindowFocus('--standalone-options'), false)
   assert.equal(requiresWindowFocus('--standalone-production'), false)
+  assert.equal(requiresWindowFocus('--video-library'), false)
   assert.equal(requiresWindowFocus('--playback-chromium-final'), false)
   assert.equal(requiresWindowFocus(null), true)
+})
+
+test('synthetic F0 startup validation does not require a production MP4 path', () => {
+  assert.equal(requiresStandaloneProductionMedia(true), false,
+    'the startup-only harness creates its own temporary empty-media fixture')
+  assert.equal(requiresStandaloneProductionMedia(false), true,
+    'playback-capable production harnesses still require a real MP4 path')
+  assert.equal(requiresStandaloneProductionMedia(false, true), false,
+    'the explicit F0 real-library campaign selects MP4s from the persisted inventory, not a fixed fixture filename')
 })
 
 test('runner cancellation scopes cleanup to the owned run and recovers orphan Electron profiles safely', () => {
@@ -197,7 +211,16 @@ test('focused Windows Player recovery mode runs recovery unit coverage before re
     'build/tests/standalone-player-ipc.test.js',
     'build/tests/player-playback.test.js',
     'build/tests/player-playback-recovery.test.js',
-    'build/tests/standalone-player-production-electron.js'
+    'build/tests/main-media-runtime.test.js',
+    'build/tests/video-library.test.js',
+    'build/tests/video-library-index-store.test.js',
+    'build/tests/player-media-protocol.test.js',
+    'build/tests/chromium-playback-host.test.js',
+    'build/tests/video-library-electron.js',
+    'build/tests/standalone-player-production-electron.js',
+    'build/tests/f0-bootstrap-electron.js',
+    'build/tests/main-management-host.test.js',
+    'build/tests/manual-playback.test.js'
   ])
 })
 
@@ -231,6 +254,31 @@ test('focused Windows Standalone integration mode covers B2/IPC, shared playback
     'build/tests/player-playback.test.js',
     'build/tests/player-playback-recovery.test.js',
     'build/tests/standalone-player-integration-electron.js'
+  ])
+})
+
+test('focused Windows video-library mode runs only the real library unit and Electron fixture suites', () => {
+  assert.deepEqual(selectWindowsTestSuites('--video-library').map(suite => suite.script), [
+    'build/tests/video-library-index-store.test.js',
+    'build/tests/chromium-playback-host.test.js',
+    'build/tests/standalone-player-runtime.test.js',
+    'build/tests/f0-bootstrap-electron.js',
+    'scripts/f0-ci.test.cjs',
+    'build/tests/video-library.test.js',
+    'build/tests/video-library-electron.js',
+    'scripts/usb-reconnect.test.cjs',
+    'build/tests/usb-reconnect-synthetic-electron.js',
+    'build/tests/standalone-player-sequence.test.js',
+    'build/tests/player-playback.test.js',
+    'build/tests/player-playback-recovery.test.js',
+    'build/tests/player-media-protocol.test.js',
+    'build/tests/main-media-runtime.test.js',
+    'build/tests/standalone-player-ipc.test.js',
+    'build/tests/manual-playback.test.js',
+    'build/tests/main-management-host.test.js',
+    'build/tests/storage-resilience-electron.js',
+    'scripts/usb-campaign.test.cjs',
+    'build/tests/usb-campaign-electron.js'
   ])
 })
 

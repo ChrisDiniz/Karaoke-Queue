@@ -1,0 +1,303 @@
+{
+  "scope": "F0-08 live-session storage resilience; internal disposable fixtures only; external D: NOT ACCESSED OR QUERIED; physical T3 NOT RUN",
+  "branch": "feature/remote-player-lan-integration-2",
+  "head": "bc3d37de09462485caa9ff027341eeabdd4b88cb",
+  "windowsFingerprint": "f457a17b41aa84b2c2e6e58c730a4b1a7a87483be509301934e103ab2c29621d",
+  "codeSha256": {
+    "src/standalone-player-sequence.ts": "74bdce2d74b6a14c49719a7e9d4be29332e671d61c1282111f60f6cd89baaa9a",
+    "src/standalone-player-runtime.ts": "55c853be7bda3d77bb98a19fd895e0dd65133d14e3ae64da7b358648fdde17d4",
+    "src/standalone-player-contracts.ts": "312c567616029f6189ac602c68895cc11c6952a2c5b62a8c5ac26123099a718f",
+    "src/player-playback-service.ts": "9712d3dcd3b3ab6bb10a2fce777aacdea96dab8bbc20893e45fa011b3b84270e",
+    "src/player-playback-contracts.ts": "894208ae5bab4b0d3739ddd6a0b2047f4f8ec71120e77c7ce14ce0115d265471",
+    "src/main-media-runtime.ts": "4301ddf31a6f067a834d2e74b6a1f6dff732654568b50d815c6382c93ef650bf",
+    "src/standalone-player-ipc.ts": "c6dc035ec94c50905019a66a89add481c3ecc1312b1fa81ce58728929c6503e3",
+    "standalone-player-preload.ts": "fd6174445942a755e017b68b2b61135779d162e72049d55db7cc9215fe9ca09f",
+    "src/standalone-player-renderer.ts": "a20e4e4c08c484ff77c273f08cd1018d927b710725190dace383c71bae3a1974",
+    "src/standalone-player.html": "581572a88f94f732f45ff4c4ec236c79b835bc091834db074b569c8400e9d24e",
+    "src/standalone-player.css": "34aff2be33ad464b546c1e07f17e25f97dab1fe6f14889580943ff9ed5421f56",
+    "tests/standalone-player-sequence.test.ts": "38ce573a8598eaee07902c49ca379d523a880d44b3a92ef04465aced9fea9e3e",
+    "tests/player-playback.test.ts": "7dc8efd00fab9bf9275b4018ee7af60446661efd4ed8e47e5fa83d2fdffa2478",
+    "tests/player-media-protocol.test.ts": "f9962e821ede5727f4ccd5d688c98a9a6aebd14adce3525ea2d754978376f36e",
+    "tests/storage-resilience-electron.ts": "e9d130af4a7a13f53bea55003ee6661e4551ca7cfde0645ab1b538db7ee1a70b",
+    "scripts/usb-reconnect-electron.cjs": "030d5e0490007e13cf803827ad4dbdf85ff5de9b30dcc1fcac6f87072aba7683",
+    "scripts/run-e2e-linux.cjs": "24c7345432e0579d6a8a7386ecce7c4393ee9580118c988778defdfee150c591",
+    "scripts/run-windows-native-tests.cjs": "8798a0a7a904f4d9dd0641d8236957b9c1381143b8a0051d6244889c6b981ca4",
+    "scripts/windows-native-runner.test.cjs": "71f77d320dedd5412d1a33b882464d9cbed4ab5387e02d44ad92b6a340f361ad",
+    "package.json": "ac81fb77cd24f3cdee50766fe8ca107f4485e53bccb0e2ce401b385c5cf73fc7"
+  },
+  "tests": {
+    "newUnitCases": 32,
+    "sequence": 100,
+    "playback": 35,
+    "protocol": 11,
+    "windowsUnit": 360,
+    "windowsUnitSuites": 10,
+    "officialRunnerUnit": 37,
+    "linuxOtherFocusedSuites": 12,
+    "linuxBootstrapMainScenarios": 10,
+    "libraryElectronWindowsScenarios": 4,
+    "newStorageMainElectron": {
+      "linux": "PASS",
+      "windows": "PASS"
+    },
+    "t3SyntheticWindows": "PASS",
+    "physicalUSB": "NOT RUN",
+    "installedApp": "NOT RUN",
+    "perceptualAudioVideo": "NOT RUN",
+    "positionSeekRestoration": "NOT IMPLEMENTED; explicit restart from beginning offered",
+    "t3SyntheticLinux": "PASS"
+  },
+  "environments": {
+    "linux": {
+      "node": "24.15.0",
+      "electron": "45.0.0",
+      "playwright": "1.64.1",
+      "kind": "WSL Linux native Electron/Xvfb, not Windows measurement"
+    },
+    "windows": {
+      "node": "24.11.0",
+      "electron": "45.0.0",
+      "playwright": "1.64.1",
+      "kind": "official runner, NTFS validation checkout, private profiles, generated WebM/VP8"
+    }
+  },
+  "e2eEvidence": {
+    "linux": {
+      "directory": "kq-storage-evidence-Idde98",
+      "journal": "events-35224f8b-c470-4f25-b193-ab6c4fd0ede9.jsonl",
+      "journalSha256": "ca3842222c339116c05653110f3b66e0d7af0821c0b33f67d34d3cf6b7cb4611",
+      "oracles": [
+        {
+          "runId": "35224f8b-c470-4f25-b193-ab6c4fd0ede9",
+          "sequence": 1,
+          "at": "2026-11-11T03:00:17.837Z",
+          "monotonicMs": 400.066968,
+          "type": "fixture-scope",
+          "details": {
+            "physicalUSB": "NOT RUN",
+            "devicePolicy": "NOT QUERIED",
+            "video": "generated WebM/VP8"
+          }
+        },
+        {
+          "runId": "35224f8b-c470-4f25-b193-ab6c4fd0ede9",
+          "sequence": 30,
+          "at": "2026-11-11T03:00:46.101Z",
+          "monotonicMs": 30277.592393,
+          "type": "manual-recovery-confirmed",
+          "details": {
+            "sameOccurrence": true,
+            "newAttempt": true,
+            "queued": 2,
+            "minimumTime": 0.5
+          }
+        },
+        {
+          "runId": "35224f8b-c470-4f25-b193-ab6c4fd0ede9",
+          "sequence": 33,
+          "at": "2026-11-11T03:00:46.261Z",
+          "monotonicMs": 30437.084424,
+          "type": "discard-current-confirmed",
+          "details": {
+            "pendingPreserved": 2,
+            "automaticNext": false
+          }
+        },
+        {
+          "runId": "35224f8b-c470-4f25-b193-ab6c4fd0ede9",
+          "sequence": 47,
+          "at": "2026-11-11T03:00:52.994Z",
+          "monotonicMs": 37170.342779,
+          "type": "shutdown-recovery-p1-confirmed",
+          "details": {
+            "safeIdle": true,
+            "autoplay": false
+          }
+        },
+        {
+          "runId": "35224f8b-c470-4f25-b193-ab6c4fd0ede9",
+          "sequence": 48,
+          "at": "2026-11-11T03:00:52.999Z",
+          "monotonicMs": 37174.620607,
+          "type": "storage-resilience-complete",
+          "details": {
+            "status": "PASS",
+            "physicalUSB": "NOT RUN",
+            "main": true,
+            "ipc": true,
+            "renderer": true
+          }
+        }
+      ],
+      "screenshots": {
+        "modal-1280.png": "04f8021b54c4ff13bed12a31178bb2a6267755c5221e72b07e20e5b1057a7adb",
+        "modal-640.png": "5df2f2055fe2f57ada700c4834832de0abb6b1bbcfc41604c464d8ce4f885d35"
+      }
+    },
+    "windows": {
+      "directory": "kq-storage-evidence-B7PUm8",
+      "journal": "events-2eb198ba-c0f4-4fab-bc84-fd33192967cb.jsonl",
+      "journalSha256": "4cb90a8c44fbfd9e9be6f4628c1761898faaaec5a3ff6860ecd831ece541f7e1",
+      "oracles": [
+        {
+          "runId": "2eb198ba-c0f4-4fab-bc84-fd33192967cb",
+          "sequence": 1,
+          "at": "2026-11-11T03:03:01.604Z",
+          "monotonicMs": 317.1958,
+          "type": "fixture-scope",
+          "details": {
+            "physicalUSB": "NOT RUN",
+            "devicePolicy": "NOT QUERIED",
+            "video": "generated WebM/VP8"
+          }
+        },
+        {
+          "runId": "2eb198ba-c0f4-4fab-bc84-fd33192967cb",
+          "sequence": 32,
+          "at": "2026-11-11T03:03:30.473Z",
+          "monotonicMs": 29186.1456,
+          "type": "manual-recovery-confirmed",
+          "details": {
+            "sameOccurrence": true,
+            "newAttempt": true,
+            "queued": 2,
+            "minimumTime": 0.5
+          }
+        },
+        {
+          "runId": "2eb198ba-c0f4-4fab-bc84-fd33192967cb",
+          "sequence": 35,
+          "at": "2026-11-11T03:03:30.566Z",
+          "monotonicMs": 29278.7177,
+          "type": "discard-current-confirmed",
+          "details": {
+            "pendingPreserved": 2,
+            "automaticNext": false
+          }
+        },
+        {
+          "runId": "2eb198ba-c0f4-4fab-bc84-fd33192967cb",
+          "sequence": 47,
+          "at": "2026-11-11T03:03:36.968Z",
+          "monotonicMs": 35681.4142,
+          "type": "shutdown-recovery-p1-confirmed",
+          "details": {
+            "safeIdle": true,
+            "autoplay": false
+          }
+        },
+        {
+          "runId": "2eb198ba-c0f4-4fab-bc84-fd33192967cb",
+          "sequence": 48,
+          "at": "2026-11-11T03:03:36.971Z",
+          "monotonicMs": 35683.6061,
+          "type": "storage-resilience-complete",
+          "details": {
+            "status": "PASS",
+            "physicalUSB": "NOT RUN",
+            "main": true,
+            "ipc": true,
+            "renderer": true
+          }
+        }
+      ],
+      "screenshots": {
+        "modal-1280.png": "b519b3765ca27484749abdb464f39d952ced1869e5f5f2c6451314d0e7e2e0ac",
+        "modal-640.png": "120496a7a7805ea321ca03ff644040635d09f70c48be2bfcc810b1e79eb8a39c"
+      }
+    }
+  },
+  "logs": {
+    "compile-final": {
+      "path": "/tmp/f008-compile-final.log",
+      "sha256": "a4d670f401dd1bb6de2de66c013daea19007642f378d77bb13e0b5876ea38217",
+      "exitCode": 0
+    },
+    "sequence-final": {
+      "path": "/tmp/f008-sequence-final.log",
+      "sha256": "23a4b69398df70cc18ea961b6cc0f5e49fe7819c027331e8841f68f333e20f9f",
+      "exitCode": 0
+    },
+    "playback-final": {
+      "path": "/tmp/f008-playback-final.log",
+      "sha256": "e65bc1f2cfb2683bf18e5f085084e7b0edd78cdf095b03f3a17ee74c85db076d",
+      "exitCode": 0
+    },
+    "protocol-final": {
+      "path": "/tmp/f008-protocol-final.log",
+      "sha256": "88c6a7227c8d49cc213a1d4fdc959a884b1506960c4785d26ab610b7b8837405",
+      "exitCode": 0
+    },
+    "regressions-final": {
+      "path": "/tmp/f008-regressions-final.log",
+      "sha256": "6ce939328b055f3064374ef801c9afff93d828cce87512533f86be3db7b06538",
+      "exitCode": 0
+    },
+    "runner-unit-final": {
+      "path": "/tmp/f008-runner-unit-final.log",
+      "sha256": "10aa73e57a8e01baa66260e50639588f9ef8a9dbf805fc2df11ba51fbe4ae81a",
+      "exitCode": 0
+    },
+    "electron-latest": {
+      "path": "/tmp/f008-electron-latest.log",
+      "sha256": "3f91d5401031542a0b01ce08bdfd1272c638e43fd4dafe4d3d435a5322e49de3",
+      "exitCode": 0
+    },
+    "bootstrap-regression-2": {
+      "path": "/tmp/f008-bootstrap-regression-2.log",
+      "sha256": "d0336f00107c138dee46e5c4586b8e61bb8778b6188ac05651d3d181704e10ac",
+      "exitCode": 0
+    },
+    "windows-final": {
+      "path": "/tmp/f008-windows-final.log",
+      "sha256": "893dbf665003caa8c71be6d7e1760b7aa3e7f6c79496394b2af05c9e93df95ae",
+      "exitCode": 0
+    },
+    "t3-final": {
+      "path": "/tmp/f008-t3-final.log",
+      "sha256": "252d0417517f05e2132c86b203f70526b2bb07f0c83baecb391f67731eea611d",
+      "exitCode": 0
+    }
+  },
+  "limitations": [
+    "No physical USB or NTFS LastAccess policy query",
+    "No 9k performance/cold-cache campaign",
+    "No MP4 playback in this new E2E: own generated WebM/VP8",
+    "Chromium resource failure forced by query invalidation; real EIO stream failure covered separately in protocol test",
+    "Watchdog observes lack of currentTime progress; not physical storage diagnosis",
+    "Metadata identity fingerprint is not a content hash",
+    "Live volatile queue only; no promise across process restart",
+    "Unconfirmed containment or persistence failure keeps commands protected; no forced idle",
+    "Full historical MP4 production campaign not repeated; targeted real-Main F0-08, P1 bootstrap, library, T3 and units executed"
+  ],
+  "intermediateFailures": [
+    {
+      "log": "/tmp/f008-electron.log",
+      "cause": "async browser predicate used as oracle; replaced by explicit driver-awaited snapshot checks"
+    },
+    {
+      "log": "/tmp/f008-electron-2.log",
+      "cause": "Preload schema rejected newly introduced recovery metadata; exact validation and cloning added"
+    },
+    {
+      "log": "/tmp/f008-electron-3.log",
+      "cause": "cleanup modal stacking masked original error; preserved primary error and corrected recovery/exit stacking"
+    },
+    {
+      "log": "/tmp/f008-electron-4.log",
+      "cause": "reload reused decoded buffer and reached a valid EOF; fault injection changed to force a fresh real resource error, without falsifying EOF"
+    },
+    {
+      "log": "/tmp/f008-electron-5.log",
+      "cause": "duplicate modal ID from insertion at two main closing tags; corrected to one element, permanent count assertion"
+    },
+    {
+      "log": "/tmp/f008-electron-final.log",
+      "cause": "Stop from technical idle returns stopped without attempt by existing contract; oracle now independently requires authoritative Sequence idle/empty queue and engine idle/stopped without attempt plus zero resources"
+    },
+    {
+      "log": "/tmp/f008-bootstrap-regression.log",
+      "cause": "missing fixture precondition; rerun bootstrap-only with explicit empty internal inventory fixture, no playback claim"
+    }
+  ]
+}
