@@ -197,3 +197,7 @@ Inventário, seletores, exclusões manuais, correções de expectativas antigas 
 ## Auditoria e consolidação pré-commit
 
 O proprietário autorizou auditar o working tree F0/CI e fazer commit local se não houver bloqueador. [Registro de auditoria](../../fase-f0-ci.md) e [evidência física posterior B](../../fase-f0-relatorio.md#evidência-física-posterior-e-auditoria-pré-commit): B verificado PASS em sessão isolada com 37 arquivos; wrapper PARTIAL por resposta final inválida. Campanha física posterior/countdown aguardam auditoria dos logs, sem inferir causa ou homologação. Gates automatizados e ajuste de sincronização do E2E Round Robin registrados no documento CI. Não iniciar F1–F4; GitHub Actions remoto continua pendente do proprietário.
+
+## Correção CI do PR #5
+
+Autorizado corrigir, commitar e enviar ajustes até checks verdes, sem merge/homologação. Run inicial `42973574081`: Linux PASS; Windows FAIL no CSV do bootstrap F0 (identidade de caminho temporário). Adaptador passa TEMP/TMP canônicos aos filhos, sem alterar proteção de produção. Teste focado e diff check PASS; resultado remoto será acompanhado no PR. [Registro técnico](../../fase-f0-ci.md#correção-do-pr-5--caminhos-temporários-windows).

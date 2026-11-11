@@ -2,7 +2,7 @@
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
-const { suites, run } = require('./run-f0-ci.cjs')
+const { suites, run, fixtureEnvironment } = require('./run-f0-ci.cjs')
 test('hosted Windows F0 selects existing deterministic tests, never physical or external media', () => {
   const files = suites().map(s => s.script)
   assert.equal(new Set(files).size, files.length)
@@ -26,4 +26,14 @@ test('failure or signal stops remaining suites and fails the job', () => {
 })
 test('external media and campaign overrides block before spawning', () => {
   for (const key of ['KQ_F0_REAL_LIBRARY', 'KQ_PLAYER_TEST_MEDIA_DIR', 'KQ_USB_FOCUS_CONTROL']) assert.throws(() => run(() => assert.fail('must not spawn'), { [key]: '1' }), /isolated generated fixtures/)
+})
+
+test('Windows fixtures inherit canonical TEMP and TMP without changing the parent environment', () => {
+  const env = { TEMP: 'C:\\Users\\RUNNER~1\\Temp', TMP: 'alias', OTHER: 'preserved' }
+  const canonical = 'C:\\Users\\runneradmin\\Temp'
+  const result = fixtureEnvironment(env, 'win32', () => canonical)
+  assert.deepEqual(result, { ...env, TEMP: canonical, TMP: canonical })
+  assert.equal(env.TMP, 'alias')
+  assert.equal(fixtureEnvironment(env, 'linux', () => assert.fail('Windows only')), env)
+  assert.throws(() => fixtureEnvironment(env, 'win32', () => { throw new Error('unavailable temp') }), /unavailable temp/)
 })
