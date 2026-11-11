@@ -110,7 +110,9 @@ async function seedCatalogDatabase(userData) {
   const csvPath = path.join(userData, 'catalogo.csv')
   fs.writeFileSync(csvPath, 'artista,numero,nome_musica\nBon Jovi,1001,Always\n', 'utf8')
   try {
-    const imported = await catalog.importFile(csvPath)
+    // Use the canonical fixture filename: hosted Windows may resolve the
+    // temporary profile through a filesystem alias even after TEMP normalization.
+    const imported = await catalog.importFile(await fs.promises.realpath(csvPath))
     assert.equal(imported.recordCount, 1)
   } finally {
     await catalog.close()

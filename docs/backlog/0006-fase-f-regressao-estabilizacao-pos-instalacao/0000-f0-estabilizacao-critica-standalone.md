@@ -201,3 +201,5 @@ O proprietário autorizou auditar o working tree F0/CI e fazer commit local se n
 ## Correção CI do PR #5
 
 Autorizado corrigir, commitar e enviar ajustes até checks verdes, sem merge/homologação. Run inicial `42973574081`: Linux PASS; Windows FAIL no CSV do bootstrap F0 (identidade de caminho temporário). Adaptador passa TEMP/TMP canônicos aos filhos, sem alterar proteção de produção. Teste focado e diff check PASS; resultado remoto será acompanhado no PR. [Registro técnico](../../fase-f0-ci.md#correção-do-pr-5--caminhos-temporários-windows).
+
+Run `42974852457`: Linux PASS, mesma falha Windows. Complemento no harness: caminho do CSV resolvido antes da importação. Compile/teste focado/bootstrap Linux 5+5 PASS; próxima validação Windows remota pendente. Proteção de produção preservada.
