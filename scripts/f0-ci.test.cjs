@@ -37,3 +37,18 @@ test('Windows fixtures inherit canonical TEMP and TMP without changing the paren
   assert.equal(fixtureEnvironment(env, 'linux', () => assert.fail('Windows only')), env)
   assert.throws(() => fixtureEnvironment(env, 'win32', () => { throw new Error('unavailable temp') }), /unavailable temp/)
 })
+test('Windows temp normalization uses native realpath to expand 8.3 aliases', () => {
+  const original = fs.realpathSync.native
+  let called = false
+  try {
+    fs.realpathSync.native = input => {
+      assert.equal(input, require('node:os').tmpdir())
+      called = true
+      return 'canonical-temp'
+    }
+    assert.equal(fixtureEnvironment({}, 'win32').TEMP, 'canonical-temp')
+    assert.equal(called, true)
+  } finally {
+    fs.realpathSync.native = original
+  }
+})

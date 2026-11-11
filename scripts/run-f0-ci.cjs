@@ -6,7 +6,7 @@ const { selectWindowsTestSuites } = require('./run-windows-native-tests.cjs')
 function suites() {
   return selectWindowsTestSuites('--video-library')
 }
-function fixtureEnvironment(env, platform = process.platform, canonicalTemp = () => require('node:fs').realpathSync(require('node:os').tmpdir())) {
+function fixtureEnvironment(env, platform = process.platform, canonicalTemp = () => require('node:fs').realpathSync.native(require('node:os').tmpdir())) {
   if (platform !== 'win32') return env
   // Hosted Windows TEMP may use an 8.3 alias. Fixtures must use the real path
   // so production anti-link checks see the same identity as realpath().
