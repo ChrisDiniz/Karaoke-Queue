@@ -1,0 +1,6 @@
+{
+  "direct": "PASS",
+  "terminatedTlsDifferentCertificate": "rejected by authenticated fingerprint",
+  "certificateSwapAfterProbe": "rejected by TLS",
+  "limits": "exact player-bind formula with observed DER fingerprints and SRP vector K/M1/M2; not G2 end-to-end"
+}

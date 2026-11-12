@@ -344,13 +344,13 @@ export function createRemoteTransportServer(options: RemoteTransportServerOption
       }
     }
     try {
-      if (closing) return reject(503, 'TRANSPORT_CLOSING')
+      if (closing) { socket.destroy(); return }
       if (request.method !== 'GET' || request.url !== REMOTE_CONTROL_PATH || request.headers.origin !== undefined ||
           request.headers['sec-websocket-protocol'] !== REMOTE_CONTROL_SUBPROTOCOL ||
           !hasExactlyOneHeader(request, 'sec-websocket-protocol')) return reject(400, 'UPGRADE_INVALID')
       const connectionId = randomUUID()
       const peer = await authorize(request, connectionId)
-      if (closing || socket.destroyed) return reject(503, 'TRANSPORT_CLOSING')
+      if (closing || socket.destroyed) { socket.destroy(); return }
       if (!peer || !peer.scopes.includes('transport:control')) return reject(401, 'NOT_AUTHORIZED')
       if ((controlSocket && controlSocket.readyState < WebSocket.CLOSING) || controlReservation) {
         return reject(409, 'CONNECTION_BUSY')
@@ -361,7 +361,8 @@ export function createRemoteTransportServer(options: RemoteTransportServerOption
       if (closing || socket.destroyed) {
         if (controlReservation === connectionId) controlReservation = undefined
         reservedId = undefined
-        return reject(503, 'TRANSPORT_CLOSING')
+        socket.destroy()
+        return
       }
       if (!isCurrent) {
         if (controlReservation === connectionId) controlReservation = undefined
@@ -450,6 +451,7 @@ export function createRemoteTransportServer(options: RemoteTransportServerOption
       })
     } catch (error) {
       if (reservedId && controlReservation === reservedId) controlReservation = undefined
+      if (closing || socket.destroyed) { socket.destroy(); return }
       const message = error instanceof Error ? error.message : 'REMOTE_UPGRADE_FAILED'
       if (message === 'REMOTE_RATE_LIMITED') return reject(429, 'LIMIT_EXCEEDED')
       if (message === 'REMOTE_AUTH_TIMEOUT') return reject(503, 'AUTH_UNAVAILABLE')

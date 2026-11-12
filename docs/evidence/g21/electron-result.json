@@ -1,0 +1,28 @@
+{
+  "node": "v24.22.0",
+  "electron": "45.0.0",
+  "packageIntegrity": "sha512-lHRYYaaIbMrhZtsdGTwPN82UbqD9Bv8QfOlKs+Dz6YRnByZifOh93EYmf2iEWFtkOEIqR2IK8cFD0UN5wLIWBQ==",
+  "gitHead": "df6cdb6583024a3e4379501f4689777f02aa4d8c",
+  "tests": [
+    "npm SHA512 integrity and SHA1 shasum",
+    "published JS equals gitHead TS compiled by TypeScript 4.4.3 (map directive excluded)",
+    "HAP upstream known vector: N/g/A/B/v/S/K/M1 and mutual M2",
+    "Independent HAP-python B/S/K/M1/M2 + pysrp S/K PASS (one fixed vector; padding edge interop not claimed)",
+    "independent HAP-python server: B/S/K/M1/M2 and pysrp premaster",
+    "wrong password, altered M1/M2, reflection, prior-session replay rejected",
+    "raw provider invalid public values rejected; short encoding accepted (wrapper mandatory)",
+    "forced hash u=0 is NOT rejected by provider (fault injection, no feasible attack demonstrated)",
+    "RFC5869 test case 1",
+    "every transcript field tamper, certificate substitution, reflection rejected",
+    "recovery tree exactly reconstructs commit keys after discarding SRP K"
+  ],
+  "costMs": {
+    "min": 922.1207539999996,
+    "max": 1064.8047540000007,
+    "mean": 983.3901400000009
+  },
+  "sha256": {
+    "tarball": "41356e01728c9b4f1d92d7468e97cc9564d3157d126a6f425460536fd4e6f8b9",
+    "source": "7345e9c33d09ed780c845d70d3d4b5f259d897868f91588c13d5fdc9e5b5a62d"
+  }
+}

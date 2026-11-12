@@ -1,0 +1,32 @@
+{
+  "descriptor": "AAAADktRLVBhaXItcmVjb3JkAAAACWtxLXBhaXIvMgAAACCNBGoGSgP0zYqukYXOZXJCUJo9e2idN80Zv-1k-HEXNAAAACAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAAAACACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgAAAAExAAAAATAAAAABMAAAACCMDMF6BJQsxPjg_gswJgbTEIhgwSZCi6LO61-e1BwrBQ",
+  "D": "Hqi3Ep7hm1ySmptUbVaRQxJ9AbcFhgdWX15VckEVuMo",
+  "receipts": [
+    {
+      "type": "prepare",
+      "tag": "YLOXAM6wWtxGsiL73noEIOfH40twLoX-SA-pmKPUVu0"
+    },
+    {
+      "type": "prepared",
+      "tag": "U8Qh2WGPRdNqNix7vYxGzwRXYqngwRLiYyKojQJ0XPM"
+    },
+    {
+      "type": "committed",
+      "tag": "ULNfAmnzA5OcZKTCmczkSOe0wMaji5Fs5mQRdkd_o7k"
+    },
+    {
+      "type": "final",
+      "tag": "gGI_rQ76VlySsDzPObViwVrOnf3_FQq__BZb1pGg8_A"
+    },
+    {
+      "type": "active",
+      "tag": "dOt-oZGfxaHgl4oOdSOkUKHbtqNK-pX4XmWntSAKPUM"
+    }
+  ],
+  "queryBytes": "AAAAEEtRLVBhaXItcmVjb3ZlcnkAAAAJa3EtcGFpci8yAAAABXF1ZXJ5AAAAII0EagZKA_TNiq6Rhc5lckJQmj17aJ03zRm_7WT4cRc0AAAAAAAAACACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgAAAAExAAAAIA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NAAAABWJvdW5kAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "queryMac": "GEnZ5f_6mmuH5uFWy2cLiIw8LYpsm2LoaJGsmModGjM",
+  "answerBytes": "AAAAEEtRLVBhaXItcmVjb3ZlcnkAAAAJa3EtcGFpci8yAAAABmFuc3dlcgAAACCNBGoGSgP0zYqukYXOZXJCUJo9e2idN80Zv-1k-HEXNAAAACAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAAAACACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgAAAAExAAAAIA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NAAAAB3BlbmRpbmcAAAAglOPAYQEIwMtIX9l-X1yG50wOq6vJsrp6r1wLBV3Hsj0AAAAzAAAALwAAAAdwcmVwYXJlAAAAIGCzlwDOsFrcRrIi-956BCDnx-NLcC6F_kgPqZij1FbtAAAAIC8xF-sTrg_Kj17drRCxivODpFSLx2GFkc2D9MbI71HA",
+  "answerMac": "10ABZrdZ477YTF5T_mPNR4RnCsjycx0zI2WMV744HH0",
+  "prepareDigest": "LzEX6xOuD8qPXt2tELGK84OkVIvHYYWRzYP0xsjvUcA",
+  "fixture": "public fixed token09 pairing08 nonce0d; bound query with unknown pairingId"
+}

@@ -1,0 +1,34 @@
+{
+  "runtime": {
+    "node": "v24.15.0",
+    "electron": null
+  },
+  "tests": [
+    "RFC9807 C.1.1: deterministic OPRF/server public registration response exact",
+    "RFC9807 C.1.2: deterministic OPRF/server public registration response exact",
+    "registration entirely inside trusted Player: no network registration, code never sent as plaintext",
+    "real HTTPS bilateral login: both session-key digests equal",
+    "wrong code rejected before credentials",
+    "altered KE2 rejected before credentials",
+    "client identity substituted rejected before credentials",
+    "version/downgrade context rejected before credentials",
+    "purpose context rejected before credentials",
+    "TLS-terminating MITM with second certificate and relayed KE1/KE2: native authenticated server identifier mismatch",
+    "certificate replacement after candidate pin rejected by TLS",
+    "KE3 replay into different AKE rejected",
+    "authentication interrupted and state discarded: stale KE3 rejected",
+    "registration start alone emits no registrationRecord (no product-store claim)"
+  ],
+  "scope": "isolated experiment, not approved wire contract or production G2",
+  "fullRfcAkeVector": "NOT RUN: public API fixes nonempty-context=None and Argon2 KSF; RFC vectors use Identity KSF and explicit context; no library fork/RNG hook",
+  "elapsedMs": 6259.1277230000005,
+  "rssBeforeBytes": 78872576,
+  "rssAfterBytes": 158433280,
+  "maxRssKiB": 154720,
+  "limits": [
+    "no frozen G2 OPAQUE wire contract",
+    "identifier binding experiment, not audited composition",
+    "full RFC AKE vectors not executed",
+    "no native Windows/cofre validation"
+  ]
+}

@@ -582,3 +582,32 @@ test('Main remote runtime waits for an in-flight Player start and cleans resourc
     await fs.rm(directory, { recursive: true, force: true })
   }
 })
+
+test('Main remote runtime rejects a second Player start after the listener is active', async () => {
+  const directory = await temporaryDirectory()
+  let advertiserStops = 0
+  const storage: SafeStoragePort = {
+    async isAsyncEncryptionAvailable() { return true }, isEncryptionAvailable() { return true },
+    getSelectedStorageBackend() { return 'gnome_libsecret' },
+    async encryptStringAsync(value) { return Buffer.from(`safe:${value}`) },
+    async decryptStringAsync(value) { return { result: Buffer.from(value).toString().slice(5), shouldReEncrypt: false } },
+    encryptString(value) { return Buffer.from(`safe:${value}`) },
+    decryptString(value) { return Buffer.from(value).toString().slice(5) }
+  }
+  const runtime = new MainRemoteRuntime({ mode: 'player', userDataDirectory: directory, safeStorage: storage,
+    createAdvertiser: () => ({
+      async start() {},
+      async update() {},
+      async stop() { advertiserStops++ }
+    }) })
+  try {
+    const options = { interfaceAddress: '127.0.0.1', displayName: 'Test Player', port: 0,
+      authorization: { async authorizeBearer() { return null }, isCurrent() { return false } } }
+    await runtime.startPlayer(options)
+    assert.throws(() => runtime.startPlayer(options), /REMOTE_PLAYER_ALREADY_STARTED/)
+  } finally {
+    await runtime.close()
+    assert.equal(advertiserStops, 1)
+    await fs.rm(directory, { recursive: true, force: true })
+  }
+})

@@ -1,0 +1,130 @@
+{
+  "node": "v24.15.0",
+  "electron": null,
+  "integrityVerified": true,
+  "synchronousMainDelayMs": 1154.686547,
+  "measurements": [
+    {
+      "kind": "srp",
+      "cancel": false,
+      "events": [
+        "started",
+        "result"
+      ],
+      "response": {
+        "event": "result",
+        "elapsedMs": 2912.893868,
+        "result": {
+          "knownVector": true
+        }
+      },
+      "main": {
+        "processedWhileBusy": true,
+        "ticks": 277,
+        "maxIntervalMs": 11.820204999999987
+      },
+      "cancelMs": null
+    },
+    {
+      "kind": "srp",
+      "cancel": true,
+      "events": [
+        "started"
+      ],
+      "response": null,
+      "main": {
+        "processedWhileBusy": true,
+        "ticks": 0,
+        "maxIntervalMs": null
+      },
+      "cancelMs": 4.652103999999781
+    },
+    {
+      "kind": "opaque",
+      "cancel": false,
+      "events": [
+        "started",
+        "result"
+      ],
+      "response": {
+        "event": "result",
+        "elapsedMs": 1978.0128640000003,
+        "result": {
+          "keyBytes": 64,
+          "messageBytes": {
+            "KE1": 96,
+            "KE2": 320,
+            "KE3": 64,
+            "registrationRecord": 192
+          },
+          "negatives": [
+            "wrong password",
+            "old finish to fresh session",
+            "altered loginResponse"
+          ],
+          "independentVectors": false
+        }
+      },
+      "main": {
+        "processedWhileBusy": true,
+        "ticks": 189,
+        "maxIntervalMs": 11.831420000000435
+      },
+      "cancelMs": null
+    },
+    {
+      "kind": "opaque",
+      "cancel": true,
+      "events": [
+        "started"
+      ],
+      "response": null,
+      "main": {
+        "processedWhileBusy": true,
+        "ticks": 0,
+        "maxIntervalMs": null
+      },
+      "cancelMs": 3.5568040000007386
+    },
+    {
+      "kind": "srp",
+      "cancel": false,
+      "events": [
+        "started",
+        "result"
+      ],
+      "response": {
+        "event": "result",
+        "elapsedMs": 2773.1192229999997,
+        "result": {
+          "knownVector": true
+        }
+      },
+      "main": {
+        "processedWhileBusy": true,
+        "ticks": 264,
+        "maxIntervalMs": 11.25989699999991
+      },
+      "cancelMs": null
+    }
+  ],
+  "proofMismatchMicrobenchmark": {
+    "0": {
+      "medianNs": 22489.180000000488,
+      "minNs": 19407.62899999936,
+      "maxNs": 29313.638999999966
+    },
+    "31": {
+      "medianNs": 22117.247000000134,
+      "minNs": 20489.838999999847,
+      "maxNs": 25900.08299999863
+    },
+    "63": {
+      "medianNs": 20910.203999999794,
+      "minNs": 19384.393000000273,
+      "maxNs": 23953.74400000037
+    }
+  },
+  "activeWorkersAtEnd": 0,
+  "securityClaim": "NONE: scheduling/cancellation measurements and same-provider OPAQUE negatives do not prove constant time or independent OPAQUE interoperability"
+}

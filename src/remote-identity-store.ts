@@ -93,6 +93,57 @@ export class RemoteIdentityStore {
     return this.coalesce('controller', () => this.loadOrCreateController())
   }
 
+  /** Reads the retained identity for local renewal recovery; callers must never expose it over TLS. */
+  async loadPlayerIdentityForRenewal(): Promise<RemoteDeviceIdentity> {
+    await this.secretProtector.assertAvailable()
+    const existing = await this.read('player') as StoredPlayerIdentity | undefined
+    if (!existing) throw new Error('REMOTE_PLAYER_IDENTITY_MISSING')
+    const decrypted = await this.secretProtector.decrypt(Buffer.from(existing.encryptedPrivateKey, 'base64'))
+    const certificate = validatePlayerCertificate(existing.certificatePem, decrypted.plaintext,
+      existing.deviceId, this.now(), true)
+    if (certificate.fingerprintSha256 !== existing.certificateFingerprintSha256) {
+      throw new Error('REMOTE_IDENTITY_FINGERPRINT_MISMATCH')
+    }
+    if (decrypted.shouldReEncrypt) {
+      const updated = { ...existing, encryptedPrivateKey: Buffer.from(decrypted.ciphertext).toString('base64') }
+      await writeAtomically(this.identityPath('player'), `${JSON.stringify(updated)}\n`)
+    }
+    return { schemaVersion: 1, role: 'player', deviceId: existing.deviceId, createdAt: existing.createdAt,
+      certificatePem: existing.certificatePem, certificateFingerprintSha256: certificate.fingerprintSha256,
+      privateKeyPem: decrypted.plaintext }
+  }
+
+  /** Atomically promotes a locally staged, still-valid certificate bundle and confirms readback. */
+  async replacePlayerIdentity(identity: RemoteDeviceIdentity): Promise<RemoteDeviceIdentity> {
+    if (identity.role !== 'player' || !identity.privateKeyPem || !identity.certificatePem ||
+        !identity.certificateFingerprintSha256) throw new Error('REMOTE_PLAYER_IDENTITY_INVALID')
+    const inFlight = this.inFlight.get('player')
+    if (inFlight) await inFlight.catch(() => undefined)
+    await this.secretProtector.assertAvailable()
+    const existing = await this.read('player') as StoredPlayerIdentity | undefined
+    if (!existing || existing.deviceId !== identity.deviceId) throw new Error('REMOTE_IDENTITY_ID_MISMATCH')
+    const certificate = validatePlayerCertificate(identity.certificatePem, identity.privateKeyPem,
+      identity.deviceId, this.now())
+    if (certificate.fingerprintSha256 !== identity.certificateFingerprintSha256) {
+      throw new Error('REMOTE_IDENTITY_FINGERPRINT_MISMATCH')
+    }
+    const encryptedPrivateKey = await this.secretProtector.encrypt(identity.privateKeyPem)
+    const candidate: StoredPlayerIdentity = {
+      schemaVersion: 1, role: 'player', deviceId: identity.deviceId,
+      createdAt: identity.createdAt, certificatePem: identity.certificatePem,
+      certificateFingerprintSha256: certificate.fingerprintSha256,
+      encryptedPrivateKey: Buffer.from(encryptedPrivateKey).toString('base64')
+    }
+    const serialized = `${JSON.stringify(candidate)}\n`
+    await writeAtomically(this.identityPath('player'), serialized)
+    const confirmedBytes = await fs.readFile(this.identityPath('player'), 'utf8')
+    if (confirmedBytes !== serialized) throw new Error('REMOTE_IDENTITY_PROMOTION_UNCERTAIN')
+    const confirmed = await this.loadOrCreatePlayer()
+    if (confirmed.certificateFingerprintSha256 !== certificate.fingerprintSha256 ||
+        confirmed.deviceId !== identity.deviceId) throw new Error('REMOTE_IDENTITY_PROMOTION_UNCERTAIN')
+    return confirmed
+  }
+
   private coalesce(role: RemoteDeviceRole, operation: () => Promise<RemoteDeviceIdentity>): Promise<RemoteDeviceIdentity> {
     const current = this.inFlight.get(role)
     if (current) return current

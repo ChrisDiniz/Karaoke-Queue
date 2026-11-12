@@ -14,6 +14,15 @@ const PENDING = 'karaoke-queue-wsl-sync-pending.json'
 const LOCK = 'karaoke-queue-windows-test.lock'
 const REPORT = 'karaoke-queue-last-windows-test.json'
 const REPORT_OWNER = 'karaoke-queue-windows-test-runner-v1'
+// Reviewed source only: this safeStorage adapter has no credential material. Pin the exact inspected bytes and
+// Git for Windows' CRLF checkout form so edits remain blocked until their contents are reviewed again.
+const REVIEWED_SAFE_STORAGE_SOURCE = Object.freeze({
+  path: 'src/remote-secret-protector.ts',
+  sha256: Object.freeze([
+    'e934ab4b948413d2d80aeea717bc2cb18b4e6edade77b7a19c8efac428f53441',
+    'e800e0cc56f23219f55de093a09c509132c00ea9a2cf50203be2fb8bfc4d9a21'
+  ])
+})
 const EXCLUDED_DIRS = new Set(['.git', '.npm-cache', '.playwright-mcp', 'build', 'coverage', 'dist', 'ia', 'node_modules', 'out'])
 const EXCLUDED_PATH_PREFIXES = ['/build-resources/native/build/', '/build-resources/native/win32-x64/']
 const EXCLUDED_NAMES = new Set(['.ds_store'])
@@ -94,6 +103,11 @@ function isSensitivePath(value) {
     || /^(license|licence|activation)(-token)?\.(json|dat|bin|txt|token)$/i.test(name)
 }
 
+function isReviewedSafeStorageSource(filePath, digest, kind) {
+  return filePath === REVIEWED_SAFE_STORAGE_SOURCE.path &&
+    REVIEWED_SAFE_STORAGE_SOURCE.sha256.includes(digest) && ['tracked', 'adopted'].includes(kind)
+}
+
 function sha256(filePath) {
   return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex')
 }
@@ -124,8 +138,13 @@ function validateManifest(input) {
       !Array.isArray(input.trackedPaths) || !Array.isArray(input.files)) fail('Manifesto de snapshot inválido.')
   const trackedPaths = input.trackedPaths.map(normalizePath).sort()
   if (new Set(trackedPaths).size !== trackedPaths.length) fail('Caminhos tracked duplicados no manifesto.')
+  const reviewedSensitivePaths = new Set(input.files
+    .filter(item => item && isReviewedSafeStorageSource(item.path, item.sha256, item.kind))
+    .map(item => item.path))
   for (const filePath of trackedPaths) {
-    if (isSensitivePath(filePath)) fail('Caminho tracked sensível bloqueado: ' + filePath)
+    if (isSensitivePath(filePath) && !reviewedSensitivePaths.has(filePath)) {
+      fail('Caminho tracked sensível bloqueado: ' + filePath)
+    }
     if (isExcludedPath(filePath)) fail('Artefato excluído em caminho tracked: ' + filePath)
   }
   const files = input.files.map(item => {
@@ -133,7 +152,9 @@ function validateManifest(input) {
     if (!/^[a-f0-9]{64}$/.test(item.sha256) || !['tracked', 'untracked', 'adopted'].includes(item.kind)) {
       fail('Entrada inválida no manifesto: ' + filePath)
     }
-    if (isSensitivePath(filePath)) fail('Arquivo sensível bloqueado: ' + filePath)
+    if (isSensitivePath(filePath) && !isReviewedSafeStorageSource(filePath, item.sha256, item.kind)) {
+      fail('Arquivo sensível bloqueado: ' + filePath)
+    }
     if (isExcludedPath(filePath)) fail('Artefato excluído presente no manifesto: ' + filePath)
     return { path: filePath, sha256: item.sha256, kind: item.kind }
   }).sort((a, b) => a.path.localeCompare(b.path))
@@ -224,9 +245,12 @@ function readSourceSnapshot(root) {
     }
     const stat = fs.lstatSync(absolute)
     if (!stat.isFile() || stat.isSymbolicLink()) fail('Somente arquivos regulares podem ser sincronizados: ' + item.path)
-    if (isSensitivePath(item.path)) fail('Arquivo sensível não será transferido: ' + item.path)
+    const contentHash = sha256(absolute)
+    if (isSensitivePath(item.path) && !isReviewedSafeStorageSource(item.path, contentHash, item.kind)) {
+      fail('Arquivo sensível não será transferido: ' + item.path)
+    }
     if (isExcludedPath(item.path)) fail('Arquivo versionado/não ignorado usa nome de artefato: ' + item.path)
-    files.push({ path: item.path, sha256: sha256(absolute), kind: item.kind })
+    files.push({ path: item.path, sha256: contentHash, kind: item.kind })
   }
   for (const filePath of Object.keys(headBlobs)) {
     if (!tracked.has(filePath) || !fs.existsSync(path.join(root, ...filePath.split('/')))) deletedTracked.push(filePath)
@@ -901,6 +925,16 @@ function requiresStandaloneProductionMedia(f0StartupOnly, f0RealLibrary = false)
 
 function selectWindowsTestSuites(playbackMode) {
   if (playbackMode === '--remote-infrastructure') return [
+    { name: 'pairing-opaque-worker', script: 'scripts/pairing-opaque-worker.test.cjs' },
+    { name: 'pairing-bootstrap-integration', script: 'scripts/pairing-bootstrap-integration.test.cjs' },
+    { name: 'pairing-bootstrap-lifecycle', script: 'build/tests/pairing-bootstrap-lifecycle.test.js' },
+    { name: 'pairing-crypto-unit', script: 'build/tests/pairing-crypto.test.js' },
+    { name: 'pairing-store-unit', script: 'build/tests/pairing-store.test.js' },
+    { name: 'pairing-audit-regressions', script: 'build/tests/pairing-audit-regressions.test.js' },
+    { name: 'pairing-wire-unit', script: 'build/tests/pairing-wire.test.js' },
+    { name: 'pairing-renewal-unit', script: 'build/tests/pairing-renewal.test.js' },
+    { name: 'pairing-independent-processes', script: 'scripts/pairing-process-integration.test.cjs' },
+    { name: 'pairing-dpapi-persistence-restart', script: 'scripts/pairing-safe-storage-restart-electron.test.cjs' },
     { name: 'remote-infrastructure-unit', script: 'build/tests/remote-infrastructure.test.js' },
     { name: 'remote-discovery-cache-unit', script: 'build/tests/remote-discovery-cache.test.js' },
     { name: 'remote-private-network', script: 'build/tests/remote-private-network.test.js' },
@@ -1502,6 +1536,8 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       runNpmCommand(root, 'npm.cmd run build:windows', 'npm.cmd run build:windows')
       process.stdout.write('PACKAGE VERIFY npm.cmd run verify:windows-build\n')
       runNpmCommand(root, 'npm.cmd run verify:windows-build', 'npm.cmd run verify:windows-build')
+      process.stdout.write('PACKAGE SMOKE OPAQUE worker/WASM inside packaged Electron + app.asar\n')
+      run(process.execPath, ['scripts/pairing-packaged-worker-smoke.cjs'], { cwd: root, stdio: 'inherit' })
       const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
       const installerPath = path.join(outputDirectory, `Karaoke-Queue-Setup-${packageJson.version}-x64.exe`)
       assertPlainFile(installerPath, 'Instalador candidato')

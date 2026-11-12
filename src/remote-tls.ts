@@ -43,7 +43,8 @@ export function validatePlayerCertificate(
   certificatePem: string,
   privateKeyPem?: string,
   expectedDeviceId?: string,
-  now = new Date()
+  now = new Date(),
+  allowExpiredForLocalRenewal = false
 ): PinnedCertificate & { serialNumber: string } {
   const certificate = parseCertificate(certificatePem)
   const serialHex = certificate.serialNumber.replace(/:/g, '')
@@ -60,8 +61,9 @@ export function validatePlayerCertificate(
   }
   const validFrom = new Date(certificate.validFrom)
   const validTo = new Date(certificate.validTo)
-  if (!Number.isFinite(validFrom.valueOf()) || !Number.isFinite(validTo.valueOf()) ||
-      validFrom.valueOf() > now.valueOf() + 5 * 60 * 1000 || validTo.valueOf() <= now.valueOf() ||
+  if (!Number.isFinite(validFrom.valueOf()) || !Number.isFinite(validTo.valueOf()) || validTo.valueOf() <= validFrom.valueOf() ||
+      validFrom.valueOf() > now.valueOf() + 5 * 60 * 1000 ||
+      (!allowExpiredForLocalRenewal && validTo.valueOf() <= now.valueOf()) ||
       validTo.valueOf() - validFrom.valueOf() > 365 * DAY_MS + 5 * 60 * 1000) {
     throw new Error('REMOTE_CERTIFICATE_EXPIRED_OR_INVALID')
   }

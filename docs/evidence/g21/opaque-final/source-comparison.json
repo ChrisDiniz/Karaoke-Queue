@@ -1,0 +1,16 @@
+{
+  "declaredReleaseCommit": "ca1cb22f03b9e456159ce367e2975124f87f5ad8",
+  "historicalCheckpoint": {
+    "commit": "6714925d4c65efa1d4b2ded0b5935778b596a6e4",
+    "date": "2023-09-19",
+    "auditedCommit": false
+  },
+  "hashesSha256": {
+    "opaque-ca1cb22f03b9e456159ce367e2975124f87f5ad8/Cargo.toml": "bdc5c69d7734ae90f10fbf7b560cc8e86cc6c3b5edf4df8e891532ed3aebc210",
+    "opaque-ca1cb22f03b9e456159ce367e2975124f87f5ad8/src/lib.rs": "ea303c17798c2589951dcb28e75a9e952b1d8b10a26063dfcb7c37ab69e15453",
+    "opaque-6714925d4c65efa1d4b2ded0b5935778b596a6e4/Cargo.toml": "6d9e9b7cb60fc88dd256314be9a11d0437ee00287b70ecafc4cfe13133d82d98",
+    "opaque-6714925d4c65efa1d4b2ded0b5935778b596a6e4/src/lib.rs": "afdccc7da389c024d6f247b9ce8bb0196bf0dc4870823a5724a47f2c741ce3d3",
+    "opaque-ke.crate": "59f84f1c2242fdac95be9592fa00c36ec221291e9b79155f70633afadb3dedf3"
+  },
+  "scope": "source comparison and crate inspection, not a new cryptographic audit or reproducible WASM build"
+}

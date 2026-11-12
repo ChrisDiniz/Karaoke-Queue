@@ -9,6 +9,10 @@ function fail(message) {
   throw new Error(`Windows package validation failed: ${message}`)
 }
 
+function asarDependencyManifest(dependency, pathApi = path) {
+  return pathApi.join('node_modules', dependency, 'package.json')
+}
+
 function verifyWindowsBuild(root = path.resolve(__dirname, '..')) {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(pkg.version)) {
@@ -61,6 +65,11 @@ function verifyWindowsBuild(root = path.resolve(__dirname, '..')) {
     'build/src/remote-contracts.js', 'build/src/remote-discovery.js',
     'build/src/remote-identity-store.js', 'build/src/remote-secret-protector.js',
     'build/src/remote-tls.js', 'build/src/remote-transport.js',
+    'build/src/pairing-authorization.js', 'build/src/pairing-bootstrap.js',
+    'build/src/pairing-controller.js', 'build/src/pairing-crypto.js',
+    'build/src/pairing-renewal.js', 'build/src/pairing-state-machine.js',
+    'build/src/pairing-store.js', 'build/src/pairing-wire.js',
+    'build/src/opaque-pairing-worker.js', 'build/src/opaque-worker-client.js',
     'build/src/installation-shortcuts.js',
     'build/welcome-preload.js', 'build/src/welcome-renderer.bundle.js',
     'build/src/welcome.html', 'build/src/welcome.css', 'build/src/catalog-import-dialog.css',
@@ -69,7 +78,7 @@ function verifyWindowsBuild(root = path.resolve(__dirname, '..')) {
   ]
   for (const entry of required) if (!entries.has(entry)) fail(`required packaged file is missing: ${entry}`)
   const packagedPackage = JSON.parse(asar.extractFile(appArchive, 'package.json').toString('utf8'))
-  const remoteDependencies = ['multicast-dns', 'selfsigned', 'ws']
+  const remoteDependencies = ['@serenity-kit/opaque', 'multicast-dns', 'selfsigned', 'ws']
   for (const dependency of remoteDependencies) {
     const expectedVersion = pkg.dependencies?.[dependency]
     if (!expectedVersion || packagedPackage.dependencies?.[dependency] !== expectedVersion) {
@@ -77,7 +86,7 @@ function verifyWindowsBuild(root = path.resolve(__dirname, '..')) {
     }
     const dependencyManifest = `node_modules/${dependency}/package.json`
     if (!entries.has(dependencyManifest)) fail(`remote runtime dependency is missing from ASAR: ${dependency}`)
-    const bundled = JSON.parse(asar.extractFile(appArchive, dependencyManifest).toString('utf8'))
+    const bundled = JSON.parse(asar.extractFile(appArchive, asarDependencyManifest(dependency)).toString('utf8'))
     if (bundled.version !== expectedVersion) fail(`bundled remote runtime dependency version mismatch: ${dependency}`)
   }
   for (const entry of entries) {
@@ -163,4 +172,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { verifyWindowsBuild }
+module.exports = { asarDependencyManifest, verifyWindowsBuild }

@@ -1,0 +1,25 @@
+{
+  "queries": [
+    {
+      "package": {
+        "name": "opaque-ke",
+        "ecosystem": "crates.io"
+      },
+      "version": "4.0.0"
+    },
+    {
+      "package": {
+        "name": "@serenity-kit/opaque",
+        "ecosystem": "npm"
+      },
+      "version": "1.1.0"
+    }
+  ],
+  "response": {
+    "results": [
+      {},
+      {}
+    ]
+  },
+  "limit": "two direct versions only; not entire resolved Rust graph or security guarantee"
+}

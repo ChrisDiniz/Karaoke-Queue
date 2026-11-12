@@ -1,0 +1,9 @@
+{
+  "tamperedPayloadRejected": true,
+  "verifier": "sigstore@4.1.0",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "identity": "https://github.com/serenity-kit/opaque/.github/workflows/release.yml@refs/heads/main",
+  "signatureChainCTRekor": "PASS (verifier defaults)",
+  "digestMatches": true,
+  "commit": "ca1cb22f03b9e456159ce367e2975124f87f5ad8"
+}

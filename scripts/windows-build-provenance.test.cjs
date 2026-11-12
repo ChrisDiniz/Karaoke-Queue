@@ -100,6 +100,14 @@ test('packaging keeps official Electron checksum validation without depending on
   assert.ok(electronChecksumOptions(electron.version, official).checksums[`electron-v${electron.version}-win32-x64.zip`])
 })
 
+test('ASAR dependency manifests use the host path separator when extracted on Windows', () => {
+  const { asarDependencyManifest } = require('./verify-windows-build.cjs')
+  assert.equal(asarDependencyManifest('@serenity-kit/opaque', path.posix),
+    'node_modules/@serenity-kit/opaque/package.json')
+  assert.equal(asarDependencyManifest('@serenity-kit/opaque', path.win32),
+    'node_modules\\@serenity-kit\\opaque\\package.json')
+})
+
 test('build supervisor rejects HTTP failures, reset exit codes, unsettled builds and stale output', () => {
   const supervisor = require.resolve('./build-windows-package.cjs')
   for (const [label, body, expected] of [

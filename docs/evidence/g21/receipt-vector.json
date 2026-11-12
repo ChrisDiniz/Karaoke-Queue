@@ -1,0 +1,35 @@
+{
+  "D": "f530be171ef6ceeec783d9d6072d1d45ef6202160c8b7f95434dae692d22f396",
+  "receipts": [
+    {
+      "role": "P",
+      "type": "prepare",
+      "prev": "f530be171ef6ceeec783d9d6072d1d45ef6202160c8b7f95434dae692d22f396",
+      "tag": "37c5219620307ea903b90927085c72fc9b08da6d64298c2c808a0ba690722a32"
+    },
+    {
+      "role": "C",
+      "type": "prepared",
+      "prev": "79e99f75cd8f76c10e0fd5459e1e4cbeef86f4085a486d7bd2a9693d827e4d18",
+      "tag": "6d4cfbde785d7c3e5886c8a10562a4dec295ee5396aec628afe8a0fcc45001ec"
+    },
+    {
+      "role": "P",
+      "type": "committed",
+      "prev": "e6e73e717d43ca49a4e2ca4734d2d088069f0a67819f6841e99e346c8f7dbc30",
+      "tag": "d1508b1710c7abbe0ccbdda15cca3c6ed6c3bd6956975a072b64662ba7b5c957"
+    },
+    {
+      "role": "C",
+      "type": "final",
+      "prev": "65552876e2ffbf223cc2a8422fe0d3b7c6da1f851929039e67c2a37cd1492291",
+      "tag": "9a488be6332ca07b7ba4eb0f743b58e170caeb2e31ea09df72d2afe8409e5f8e"
+    },
+    {
+      "role": "P",
+      "type": "active",
+      "prev": "68bbc95275663cff1c4b99f96c10617f3edb216e9eade2457da14fb5cda5230c",
+      "tag": "99cda72e522601fc1b9b0eaf2d9485e7842f557733c583b5d43cffecee543852"
+    }
+  ]
+}

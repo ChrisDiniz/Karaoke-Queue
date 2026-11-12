@@ -1,0 +1,2 @@
+PASS: Python cryptography 41.0.7 HKDF tree, transcript hash and five receipt MACs equal Node vectors
+PASS: recovery request/answer direction keys, nonce framing and MACs equal Node

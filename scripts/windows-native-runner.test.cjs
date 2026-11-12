@@ -288,6 +288,16 @@ test('focused Windows video-library mode runs only the real library unit and Ele
 test('focused Windows remote infrastructure mode includes DNS-SD cache tests and native Electron safeStorage', () => {
   assert.equal(requiresWindowFocus('--remote-infrastructure'), false)
   assert.deepEqual(selectWindowsTestSuites('--remote-infrastructure').map(suite => suite.script), [
+    'scripts/pairing-opaque-worker.test.cjs',
+    'scripts/pairing-bootstrap-integration.test.cjs',
+    'build/tests/pairing-bootstrap-lifecycle.test.js',
+    'build/tests/pairing-crypto.test.js',
+    'build/tests/pairing-store.test.js',
+    'build/tests/pairing-audit-regressions.test.js',
+    'build/tests/pairing-wire.test.js',
+    'build/tests/pairing-renewal.test.js',
+    'scripts/pairing-process-integration.test.cjs',
+    'scripts/pairing-safe-storage-restart-electron.test.cjs',
     'build/tests/remote-infrastructure.test.js',
     'build/tests/remote-discovery-cache.test.js',
     'build/tests/remote-private-network.test.js',
@@ -534,6 +544,32 @@ test('blocks environment secrets, token/password files, and SQLite journal sidec
       candidate
     )
   }
+})
+
+test('transfers only the exact reviewed safeStorage source content while blocking changes and adjacent secret paths', () => {
+  const sourcePath = 'src/remote-secret-protector.ts'
+  const content = fs.readFileSync(path.join(__dirname, '..', sourcePath), 'utf8')
+  const snapshot = manifestFor([{ path: sourcePath, content }])
+  const adopted = manifestFor([{ path: sourcePath, content: content.replace(/\r?\n/g, '\r\n'), kind: 'adopted' }])
+  const acceptedHashes = [
+    hash(content.replace(/\r\n/g, '\n')),
+    hash(content.replace(/\r?\n/g, '\r\n'))
+  ]
+
+  assert.equal(isSensitivePath(sourcePath), true, 'the general sensitive-name rule remains active')
+  assert.deepEqual(acceptedHashes.sort(), [
+    'e934ab4b948413d2d80aeea717bc2cb18b4e6edade77b7a19c8efac428f53441',
+    'e800e0cc56f23219f55de093a09c509132c00ea9a2cf50203be2fb8bfc4d9a21'
+  ].sort(), 'any source change requires review of the path exception and regression')
+  assert.ok(acceptedHashes.includes(snapshot.files[0].sha256), 'source LF/CRLF checkout forms are hash-pinned')
+  assert.equal(adopted.files[0].kind, 'adopted', 'a clean Windows checkout may adopt the same pinned source bytes')
+  assert.equal(adopted.files[0].sha256, hash(content.replace(/\r?\n/g, '\r\n')),
+    'adoption uses the exact Git for Windows CRLF checkout form')
+  assert.ok(acceptedHashes.includes(adopted.files[0].sha256), 'the CRLF form matches a pinned hash')
+  assert.throws(() => manifestFor([{ path: sourcePath, content: content + '\n' }]), /sensível/,
+    'any source change requires a fresh content review')
+  assert.throws(() => manifestFor([{ path: 'src/another-secret-protector.ts', content }]), /sensível/)
+  assert.throws(() => manifestFor([{ path: sourcePath, content, kind: 'untracked' }]), /sensível/)
 })
 
 test('accepts a directory whose inventory and hashes match the snapshot', t => {

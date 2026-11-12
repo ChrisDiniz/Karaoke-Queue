@@ -1,0 +1,23 @@
+{
+  "suite": "opaque-3dh-ristretto255-sha512-argon2id-m65536-t3-p4",
+  "tests": [
+    "success: PASS",
+    "password: PASS",
+    "certificate: PASS",
+    "nonce: PASS",
+    "generation: PASS",
+    "divergent-confirm: PASS",
+    "altered-controller-confirm: PASS",
+    "replay: PASS",
+    "cancel: PASS",
+    "timeout: PASS",
+    "simultaneous intent reservation model: PASS (not production concurrency proof)"
+  ],
+  "scope": "real OPAQUE and OS processes; no product coordinator/store/IPC UI",
+  "pid": 5,
+  "childrenAtEnd": 0,
+  "runtime": {
+    "node": "v24.22.0",
+    "electron": "45.0.0"
+  }
+}

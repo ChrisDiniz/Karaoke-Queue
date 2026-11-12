@@ -1,0 +1,56 @@
+{
+  "provenance": {
+    "declaredCommit": "ca1cb22f03b9e456159ce367e2975124f87f5ad8",
+    "subjectDigestMatches": true,
+    "signatureVerified": false,
+    "scope": "unverified signed statement retrieved from npm; no signature/root/transparency verification or reproducible WASM build"
+  },
+  "artifacts": [
+    {
+      "name": "@serenity-kit/opaque",
+      "version": "1.1.0",
+      "url": "https://registry.npmjs.org/@serenity-kit/opaque/-/opaque-1.1.0.tgz",
+      "integrity": "sha512-Y6v/+hRMn0MdMEk5+/ArM0vPIiFfFEbdTZc7oAx+cWyvGODGezAQ/sMjXBVogf7NsS9z9EV0Ve5paZCVULuedw==",
+      "sha256": "7ea879bb56cefddf59216a0242936e595ff9310ef4b6efa4111256e6834b94ab",
+      "license": "MIT",
+      "runtimeNpmDependencies": {},
+      "scope": "metadata integrity only; does not attest audited source correspondence"
+    },
+    {
+      "name": "secure-remote-password",
+      "version": "0.3.1",
+      "url": "https://registry.npmjs.org/secure-remote-password/-/secure-remote-password-0.3.1.tgz",
+      "integrity": "sha512-iEp/qLRfb9XYhfKFrPFfdeD7KVreCjhDKSTRP1G1nRIO0Sw1hjnVHD58ymOhiy9Zf5quHbDIbG9cTupji7qwnA==",
+      "sha256": "2bdcb54cba8f91d54cfab55ca1afba344ec51e727ddba5898ed84ab84f111a06",
+      "license": "MIT",
+      "runtimeNpmDependencies": {
+        "jsbn": "^1.1.0",
+        "pad-start": "^1.0.2",
+        "encode-utf8": "^1.0.1",
+        "crypto-random-hex": "^1.0.0",
+        "crypto-digest-sync": "^1.0.0",
+        "array-buffer-to-hex": "^1.0.0",
+        "hex-to-array-buffer": "^1.1.0"
+      },
+      "scope": "metadata integrity only; does not attest audited source correspondence"
+    },
+    {
+      "name": "spake2-wasm",
+      "version": "0.2.0",
+      "url": "https://registry.npmjs.org/spake2-wasm/-/spake2-wasm-0.2.0.tgz",
+      "integrity": "sha512-LKip2GjQIgiHsrGp03OoCYaLp8xHLPbl6n2BSz1U6kFp9FuKXOLCRX4BqdPokqiG+s8dFoEwq1J8hhVyT+Ss0A==",
+      "sha256": "e2691bc7bca064ff6e7eaaafd5f8fca8dc72490206bd5bcfc40ac00b4839d0e2",
+      "license": "MIT",
+      "runtimeNpmDependencies": {},
+      "scope": "metadata integrity only; does not attest audited source correspondence"
+    }
+  ],
+  "spakeSmoke": {
+    "sameProviderMatch": true,
+    "wrongCodeDifferentKeys": true,
+    "messageBytes": 33,
+    "keyBytes": 32,
+    "independentVectors": false,
+    "scope": "one-shot smoke, not provider qualification or key confirmation"
+  }
+}

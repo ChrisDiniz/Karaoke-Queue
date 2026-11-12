@@ -1,0 +1,6 @@
+{
+  "fiveReceipts": "PASS cross-language",
+  "boundRecoveryWithoutPairingId": "PASS cross-language",
+  "prepareDigestAndTamper": "PASS",
+  "scope": "cryptographic bytes/MACs only, no crash/store or product authorization claim"
+}

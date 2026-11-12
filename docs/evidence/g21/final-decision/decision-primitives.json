@@ -1,0 +1,6 @@
+{
+  "independentPrimitives": "Python cryptography HKDF + hashlib/HMAC",
+  "encodingContextTranscript": "PASS",
+  "treeAndBothBindings": "PASS",
+  "scope": "application primitives; not independent OPAQUE AKE"
+}

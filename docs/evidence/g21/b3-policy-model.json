@@ -1,0 +1,14 @@
+{
+  "tests": [
+    "five reservations fence the sixth before expensive work",
+    "restart re-arms conservative 600s monotonic window; expires while running",
+    "duplicate operation does not reserve twice",
+    "failed durable reservation never admits crypto",
+    "crash-inflight reservation stays charged",
+    "wall-clock changes cannot bypass or permanently extend a running monotonic cooldown",
+    "six renewal cuts preserve recoverable bundle; no authority between tombstone and new pairing",
+    "failure before revocation preserves valid old identity/authority",
+    "old identity on disk cannot authorize after tombstone"
+  ],
+  "limits": "pure executable state model: no actual cofre, fsync, NTFS power loss, coordinator, native clock or IPC validation"
+}

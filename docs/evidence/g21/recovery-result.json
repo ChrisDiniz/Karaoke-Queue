@@ -1,0 +1,14 @@
+{
+  "tests": [
+    "restart/lost response after durable stage 0: recovered; revoked cannot reactivate",
+    "restart/lost response after durable stage 1: recovered; revoked cannot reactivate",
+    "restart/lost response after durable stage 2: recovered; revoked cannot reactivate",
+    "restart/lost response after durable stage 3: recovered; revoked cannot reactivate",
+    "restart/lost response after durable stage 4: recovered; revoked cannot reactivate",
+    "restart/lost response after durable stage 5: recovered; revoked cannot reactivate",
+    "restart/lost response after durable stage 6: recovered; revoked cannot reactivate"
+  ],
+  "receiptTamper": "PASS",
+  "recoveryNonceAndDirectionTamper": "PASS",
+  "limits": "model only: no production store, no OS keychain, no power-loss/torn-write claim"
+}
