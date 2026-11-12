@@ -318,3 +318,52 @@ Parecer visual das capturas novas: conteúdo e ações couberam, espaçamento/hi
 ## Atualização descritiva D1–D5
 
 D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida conforme decisão do proprietário. Nenhum frame Doop foi alterado nesta rodada; textos ilustrativos anteriores continuam como referência visual draft e não substituem o contrato vigente. Em especial, “a Gestão poderá determinar a próxima vez” no modal antigo de Avançar última deve ser interpretado pela regra D4: promoção automática pelo Round Robin após cancelamento confirmado. A futura revisão visual deverá explicitar essa regra, o bloqueio de offline ativo e a marca de cadastro offline não verificado. As descrições externas criadas anteriormente não foram sobrescritas; este adendo e o contrato prevalecem até sua sincronização visual autorizada. Aprovação visual continua pendente.
+
+## Inventário futuro — descoberta e pareamento LAN (sem frames criados)
+
+Revisão solicitada pelo proprietário: pareamento normal inteiramente na UI/rede local, sem arquivo, pendrive, QR, IP ou fingerprint. [Complemento T1 LAN](g1-1-t1-lan-pairing.md) é proposta técnica aguardando aprovação; decisões funcionais de autoridade e offline permanecem. Nenhum frame foi criado/modificado nesta rodada e nenhuma descrição externa foi sobrescrita.
+
+Consulta somente leitura aos dois canvas via Doop MCP e às pastas reais `Modo Controller - pareado` / `Modo Player  - Pareado`. Referências relidas: Controller `5booCMOuTE` (1440×920, ready_for_dev), Player `KagjaYNZTB` e `-cYIWa7IlC` (1280×800, ready_for_dev). O HTML Controller contém o sino `data-doop-id="notifications"` dentro de `header`. Esses frames não incluem o novo pareamento; aprovação deles não é aprovação da nova interface.
+
+### Controller — canvas IY_IYI21QW
+
+Referência base `5booCMOuTE`: criar futuramente **nova variante** da barra superior, sem editar original aprovado nesta rodada. Ícone Dispositivos imediatamente **à esquerda do sino**, no mesmo grupo, mantendo o sino e sem reconstruir sidebar/fila. Nome acessível “Dispositivos e conexão”, estado textual acessível e acionamento por teclado; não escolher ícone/cor definitiva sem novo frame autorizado. Painel de dispositivos é aberto por clique/teclado; nenhuma UI fictícia de conexão.
+
+| Frame/variante a criar (ID ainda inexistente) | Objetivo, estado, ações e fechamento | Backlog |
+|---|---|---|
+| Controller — Dispositivos — Buscando | Ícone abre painel; lista vazia em busca real, indicador discreto, Atualizar coalescido, Fechar; não inventar dispositivos | G5.4 |
+| Controller — Dispositivos — Encontrados | Nome amigável escapado, “Encontrado — não verificado”, selecionar Vincular; anúncios não pintam conexão/confiança | G5.4/G2 |
+| Controller — Dispositivos — Vínculos salvos | Separar encontrado agora de “Vinculado, não encontrado agora”; Conectado só após auth; reconectando/reconciliando distintos; selecionar/reconectar ou gerenciar vínculo | G5.4/G4 |
+| Controller — Dispositivos — Nenhum encontrado | Explicar mesma rede/bloqueio possível, Atualizar, Ajuda e Avançado (endereço opcional); sem obrigar técnico no fluxo normal | G5.4 |
+| Controller — Pareamento — Aguardando Player | Pedido enviado, nome ainda não verificado; Cancelar; rejeição/timeout/quota fecham sessão com feedback, não a lista silenciosamente | G5.4/G2 |
+| Controller — Pareamento — Digitar código | “Digite o código mostrado no Player”, 8 dígitos agrupados 4–4; Confirmar/Cancelar; nunca apresentar código como bearer/pin | G5.4/G2 |
+| Controller — Pareamento — Verificando/Salvando | Provas/binding/persistência em andamento, duração limitada; resultado incerto explícito, não “conectado” otimista; consulta da mesma sessão | G5.4/G2 |
+| Controller — Pareamento — Erro/Rejeitado/Expirado | Código incorreto, pedido recusado, timeout, ocupado, tentativas excedidas, confiança inválida e falha de gravação em variantes compreensíveis; Tentar novamente requer nova sessão/consentimento quando apropriado | G5.4/G2 |
+| Controller — Renovar vínculo | Avisos 30/7 dias; seleção do Player, instrução para renovar localmente se certificado venceu, mesmo código/consentimento; não há botão de ignorar certificado | G5.4/G2/G4 |
+| Controller — Conectado — Player offline | Link autenticado ou conciliado sem assumir operação; retorno explícito usa `eghthO89ZV`/takeover `NZdmSCHivT` conforme contrato, sem pareamento repetido | G5/H4.4 |
+
+Nomes iguais não são identificador técnico confiável: pedir confirmação na tela física desejada. Admissão/erro de código vêm de G2/Main; Renderer não calcula provas, não guarda pin/token nem gera autorização por clique.
+
+### Player — canvas wsQwJ7ry4g
+
+Reutilizar palco/footer de `KagjaYNZTB` e estados `-cYIWa7IlC`/`V8JvnGlZ1D`/`ZyDfIbwCB8`/`5xay1Jhkka` onde corresponderem a eventos reais. Novas confirmações são modais locais críticos; nenhuma pausa playback só por abrir. Se houver vez ativa, não aplicar manutenção do vínculo por efeito colateral; política operacional permanece conforme contrato.
+
+| Frame/variante a criar (ID ainda inexistente) | Objetivo, estado, ações e fechamento | Backlog |
+|---|---|---|
+| Player — Permitir descoberta nesta rede | Primeiro consentimento simples para aparecer na rede; Permitir/Agora não; seleção por nome de adaptador só se múltiplas redes ambíguas, sem IP obrigatório | G5.4/G1 |
+| Player — Pedido de vínculo | Nome informado da Gestão explicitamente não verificado, Permitir/Rejeitar; um pedido por vez, quota e Cancelar/Expirar fecham só a sessão correspondente | G5.4/G2 |
+| Player — Código de pareamento | Exibir 8 dígitos 4–4 após permissão; orientar digitar na Gestão, tempo restante de sessão e Cancelar; não anunciar código em mDNS ou log | G5.4/G2 |
+| Player — Confirmando vínculo | Provas/persistência, sem sucesso antes do commit; exibir erro/incerteza com recuperação local segura se necessário | G5.4/G2 |
+| Player — Vínculo concluído | Confirmação real, código deixa de aparecer; estado conectado/aguardando ou conciliando conforme serviço; nenhum autoplay | G5.4/G4 |
+| Player — Vínculo rejeitado/expirado/ocupado/limitado | Mensagem contextual e nova tentativa por consentimento; não trocar o código de sessão já ativa por outro pedido | G5.4/G2 |
+| Player — Renovação necessária/expirada | Avisos locais 30/7 dias, Renovar/Depois; certificado vencido exige renovação local consentida antes de novo bootstrap, sem bypass; 365 dias mantidos | G5.4/G2 |
+| Player — Remover/substituir Gestão | Confirmação local, gravação de revogação antes do sucesso; falha de disco diz que remoção permanente não foi salva. Não apaga fila/journal ou cria outro Controller | G5.4/G2 |
+| Player — Remoto indisponível — Cofre/rede | Explicar recuperação/desbloqueio/multicast/interface de forma simples, local permanece utilizável; não oferecer fallback de segredo em claro | G5.4 |
+
+### Comportamento comum e critérios de handoff
+
+- Cancelar/Esc só cancela a sessão identificada; confirmação tardia não aceita outro peer. Foco inicial seguro e retorno ao gatilho; Tab/Shift+Tab e Enter sem ação destrutiva implícita.
+- Nome/endereço/anúncio são dados não confiáveis; tela só exibe como texto. Vínculo salvo, transporte conectado, reconciliação e controle operacional são estados separados.
+- Reabrir lista não reinicia PAKE nem revoga vínculo. Após vínculo válido, restart/queda não pedem código; G4 reconecta, preservando Player explicitamente offline.
+- Frames e descrições correspondentes só serão criados após autorização. Conteúdo visual, ícone e microcopy acima são planejamento, não aprovação/implementação de interface. Ao implementar, comparar Electron/Doop nas dimensões de referência e testar rede real/IPC/armazenamento e teclado.
+- Nenhum novo ID de frame atribuído nesta revisão. Originais e frames já existentes permanecem intactos; o registro anterior de arquivo/QR na T1 foi substituído pela decisão LAN, não por edição dos designs nesta rodada.

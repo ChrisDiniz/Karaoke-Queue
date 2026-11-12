@@ -891,7 +891,7 @@ function requiresWindowFocus(playbackMode) {
     '--standalone-integration',
     '--player-recovery',
     '--standalone-options',
-    '--standalone-production', '--installation-coordination', '--video-library'
+    '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure'
   ].includes(playbackMode)
 }
 
@@ -900,6 +900,13 @@ function requiresStandaloneProductionMedia(f0StartupOnly, f0RealLibrary = false)
 }
 
 function selectWindowsTestSuites(playbackMode) {
+  if (playbackMode === '--remote-infrastructure') return [
+    { name: 'remote-infrastructure-unit', script: 'build/tests/remote-infrastructure.test.js' },
+    { name: 'remote-discovery-cache-unit', script: 'build/tests/remote-discovery-cache.test.js' },
+    { name: 'remote-private-network', script: 'build/tests/remote-private-network.test.js' },
+    { name: 'remote-discovery-multicast', script: 'build/tests/remote-discovery-multicast.test.js' },
+    { name: 'remote-safe-storage-electron', script: 'scripts/remote-safe-storage-electron.test.cjs' }
+  ]
   if (playbackMode === '--video-library') return [
     { name: 'video-library-index', script: 'build/tests/video-library-index-store.test.js' },
     { name: 'chromium-host', script: 'build/tests/chromium-playback-host.test.js' },
@@ -1542,6 +1549,7 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
     const focusedPlayerRecovery = playbackMode === '--player-recovery'
     const focusedStandaloneOptions = playbackMode === '--standalone-options'
     const focusedStandaloneProduction = playbackMode === '--standalone-production'
+    const focusedRemoteInfrastructure = playbackMode === '--remote-infrastructure'
     if (focusedPlayerPlayback && !process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
       fail('O modo player-playback requer KQ_PLAYER_TEST_MEDIA_DIR com os vídeos de teste de leitura.')
     }
@@ -1608,6 +1616,7 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       : focusedStandaloneIntegration ? 'TEST START isolated Standalone B2/Preload/IPC/Main/Chromium integration with real MP4; no production Main wiring\n'
       : focusedPlayerRecovery ? 'TEST START production Player recovery in isolated Electron processes; Windows desktop\n'
       : focusedStandaloneOptions ? 'TEST START focused C8 options/catalog UI in real Electron + Playwright + SQLite + MP4; Windows paths supplied read-only\n'
+      : focusedRemoteInfrastructure ? 'TEST START HTTPS/WSS and discovery unit suites + real Electron safeStorage; isolated profile\n'
       : focusedStandaloneProduction ? 'TEST START C9 production Standalone Main/Preload/IPC/shutdown with real Electron, MP4 and isolated SQLite\n'
       : 'TEST START Electron real + Playwright + SQLite temporário; sessão gráfica Windows\n')
     if (focusedStandaloneOptions) env.KQ_STANDALONE_C8_ONLY = '1'
@@ -1657,6 +1666,7 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       : focusedStandaloneIntegration ? 'TEST PASS focused Standalone B2/IPC/Chromium/MP4 integration; unrelated Controller/Combined suites not run by request\n'
       : focusedPlayerRecovery ? 'TEST PASS production Player recovery Electron integration; unrelated regression suites not run by request\n'
       : focusedStandaloneOptions ? 'TEST PASS focused C8 options/catalog UI through real Electron, Playwright, IPC, SQLite and MP4; native file-picker window is represented by the test-only dialog port\n'
+      : focusedRemoteInfrastructure ? 'TEST PASS HTTPS/WSS and discovery unit suites + real Electron safeStorage; unrelated regressions not run\n'
       : focusedStandaloneProduction ? 'TEST PASS production C9 Standalone Electron lifecycle with real MP4 and recovery; unrelated Controller/Combined suites not run by request\n'
       : 'TEST PASS database migration, operating-mode, video-library and music-catalog unit; multi-instance, operating-modes, video-library and music-catalog Electron suites\n')
     restorePreviousBuild(root, buildState, manifest)
@@ -1790,7 +1800,7 @@ function powershellManualLauncher(stagePath, runId, profileKind, profileName) {
 
 function powershellLauncher(stagePath, runId, playbackEvaluation = false, playbackMode = null, manualOptions = null, screenshotRoot = null, packageCandidate = false) {
   if (manualOptions) return powershellManualLauncher(stagePath, runId, manualOptions.profileKind, manualOptions.profileName)
-  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library'].includes(playbackMode)) {
+  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure'].includes(playbackMode)) {
     fail('Modo de playback não permitido para o worker Windows.')
   }
   if (screenshotRoot !== null && (typeof screenshotRoot !== 'string' || !/^[A-Za-z]:\\/.test(screenshotRoot) || screenshotRoot.startsWith('\\\\'))) {
@@ -1845,6 +1855,7 @@ function powershellLauncher(stagePath, runId, playbackEvaluation = false, playba
     '    elseif ($payload.playbackMode -eq "--standalone-production") { $workerArgs += "--standalone-production" }',
     '    elseif ($payload.playbackMode -eq "--installation-coordination") { $workerArgs += "--installation-coordination" }',
     '    elseif ($payload.playbackMode -eq "--video-library") { $workerArgs += "--video-library" }',
+    '    elseif ($payload.playbackMode -eq "--remote-infrastructure") { $workerArgs += "--remote-infrastructure" }',
     '    & node.exe $worker @workerArgs',
     '    $workerExit = $LASTEXITCODE',
     '  } finally { Pop-Location }',
@@ -2170,12 +2181,12 @@ async function runOrchestrator() {
     fail('O build candidato não combina com launcher manual, testes ou harnesses.')
   }
   const unexpectedArguments = process.argv.slice(2).filter(argument =>
-    !['--approve-untracked', '--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--manual-launch', '--manual-profile-kind', '--manual-profile-name'].includes(argument) &&
+    !['--approve-untracked', '--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--manual-launch', '--manual-profile-kind', '--manual-profile-name'].includes(argument) &&
     argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName
   )
   if (unexpectedArguments.length) fail('Argumento não permitido: ' + unexpectedArguments.join(' '))
   const playbackModes = process.argv.slice(2).filter(argument =>
-    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library'].includes(argument)
+    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure'].includes(argument)
   )
   if (playbackModes.length > 1) fail('Escolha apenas um modo de avaliação de playback.')
   const playbackEvaluation = process.argv.includes('--playback-evaluation')
@@ -2352,13 +2363,13 @@ async function main() {
       fail('O worker manual requer uma seleção de perfil válida.')
     }
     if (!manualLaunch && (profileKindIndex >= 0 || profileNameIndex >= 0)) fail('Perfil manual sem --manual-launch.')
-    const allowedWorkerArguments = ['--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--manual-launch', '--manual-profile-kind', '--manual-profile-name']
+    const allowedWorkerArguments = ['--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--manual-launch', '--manual-profile-kind', '--manual-profile-name']
     if (workerArguments.some(argument => !allowedWorkerArguments.includes(argument) &&
         argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName)) {
       fail('O worker recebeu argumentos não permitidos.')
     }
     const playbackModes = workerArguments.filter(argument =>
-      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library'].includes(argument)
+      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure'].includes(argument)
     )
     if (playbackModes.length > 1) fail('O worker recebeu modos de playback conflitantes.')
     if (workerArguments.includes('--package-candidate') && (playbackModes.length || workerArguments.includes('--playback-evaluation'))) fail('O worker recebeu build candidato combinado com testes.')

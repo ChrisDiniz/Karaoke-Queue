@@ -1,5 +1,5 @@
 import { WelcomeMediaSetup } from './src/welcome-media-setup'
-import { app, BrowserWindow, clipboard, crashReporter, dialog, ipcMain, protocol, shell } from 'electron'
+import { app, BrowserWindow, clipboard, crashReporter, dialog, ipcMain, protocol, safeStorage, shell } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { performance } from 'node:perf_hooks'
@@ -37,6 +37,7 @@ import { f0DiagnosticMetrics } from './src/f0-diagnostics'
 import { MainStandaloneShutdownCoordinator } from './src/main-standalone-shutdown'
 import { MainManagementCloseCoordinator } from './src/main-management-close'
 import { MainManagementHost } from './src/main-management-host'
+import { MainRemoteRuntime } from './src/main-remote-runtime'
 import { getPackagedInstallationContext, getPackagedInstalledRole } from './src/installed-role-context'
 import { confirmInitialRoleThroughUac } from './src/installation-role-broker'
 import { acquirePackagedInstallationState } from './src/installation-bootstrap'
@@ -98,6 +99,9 @@ let managementQuitDrainRunning = false
 let mainMediaRuntime: MainMediaRuntime | undefined
 let mainCompositionReady = false
 let appReadyLogged = false
+let remoteRuntime: MainRemoteRuntime | undefined
+let remoteRuntimeShutdownComplete = false
+let remoteRuntimeShutdownTask: Promise<void> | undefined
 
 const requirePlayerIpcSender = createMainIpcPolicy({
   getExpectedWebContents: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : undefined,
@@ -886,6 +890,11 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       controllerEnabled: modeCapabilities.controller,
       playerEnabled: modeCapabilities.player
     })
+    remoteRuntime = new MainRemoteRuntime({ mode: operatingMode, userDataDirectory, safeStorage, logger: {
+      info: (event, details) => logger.info('remote', event, event, details),
+      warn: (event, details) => logger.warn('remote', event, event, details),
+      error: (event, details) => logger.error('remote', event, event, undefined, details)
+    } })
   } catch (error: unknown) {
     fatalMainFailure = true
     const detail = error instanceof Error ? error.message : 'Configuração inválida.'
@@ -1132,6 +1141,22 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
 })
 
 if (hasSingleInstanceLock) app.on('before-quit', (event) => {
+  if (remoteRuntime && !remoteRuntimeShutdownComplete) {
+    event.preventDefault()
+    if (!remoteRuntimeShutdownTask) {
+      remoteRuntimeShutdownTask = remoteRuntime.close().then(() => {
+        remoteRuntimeShutdownComplete = true
+        remoteRuntimeShutdownTask = undefined
+        app.quit()
+      }, error => {
+        remoteRuntimeShutdownTask = undefined
+        logger.error('remote', 'REMOTE_SHUTDOWN_FAILED', 'O transporte remoto não confirmou o encerramento seguro.', error)
+        dialog.showErrorBox('Não foi possível encerrar a conexão remota',
+          'As conexões serão mantidas sob proteção. Tente encerrar o aplicativo novamente.')
+      })
+    }
+    return
+  }
   if (welcomeMediaSetup && !welcomeMediaDrained) {
     event.preventDefault()
     if (!welcomeMediaDrain) {

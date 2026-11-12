@@ -1,8 +1,19 @@
 # G/H — Sequência incremental e matriz de validação
 
+## Aceite do proprietário — G1 homologada com limitações — 2026-11-12
+
+O proprietário aceitou a G1 e determinou seu encerramento como **homologada com limitações**, após o parecer técnico independente favorável. G1.2 está concluída; G1.3 foi aceita com as limitações abaixo. Esse aceite substitui o estado anterior de “aguardando aceite final”; os resultados técnicos históricos permanecem preservados e a validação integral de todas as plataformas não é declarada.
+
+- Windows nativo: NOT RUN; o runner oficial bloqueou o arquivo-fonte `src/remote-secret-protector.ts` pela heurística de nome sensível antes da sincronização. A execução nativa continua pendente.
+- Empacotamento: smoke ASAR focado PASS; rebuild limpo pendente por indisponibilidade externa/DNS (`EAI_AGAIN github.com` na tentativa anterior).
+- Multicast real local WSL: PASS; LAN entre computadores e plataformas nativas permanece para G6.
+- E2E audiovisual com MP4: NOT RUN, sem fixture aprovada; não bloqueia o aceite da infraestrutura G1.
+
+A G1 está tecnicamente apta para G2 e seu aceite pelo proprietário está registrado. G2 permanece não iniciada e depende de autorização própria. T2, D2 e os demais gates futuros permanecem vigentes. Nenhum resultado NOT RUN foi convertido em PASS. Este checkpoint não encerra a Fase G inteira.
+
 ## Estado e uso
 
-Planejado / Não iniciado em 2026-11-11. Nenhum comando de teste/aplicativo executado nesta rodada. A sequência é proposta para autorizações futuras, não ordem de execução já autorizada. [Contrato](paired-mode-contract.md), [interfaces](paired-mode-ui-plan.md), [roadmap](standalone-player-roadmap.md). F encerrada, sem alterações nesta tarefa.
+Estado atualizado em 2026-11-12: T1 aprovada com serial X.509 de no mínimo 64 bits de entropia; G1.2-A–D implementadas e G1.3 parcialmente validada. O teste multicast real local passou após corrigir bind/origem; smoke focado do módulo atualizado em ASAR passou. Windows nativo e descoberta entre computadores permanecem pendentes; rebuild limpo foi bloqueado por `EAI_AGAIN github.com`, conforme a [proposta T1](g1-1-t1-secure-transport-proposal.md#18-implementação-g12g13--evidências-e-limites). G2–G6 e H permanecem não iniciadas. [Contrato](paired-mode-contract.md), [interfaces](paired-mode-ui-plan.md), [roadmap](standalone-player-roadmap.md). F encerrada, sem alterações nesta tarefa.
 
 G1–G6 e H1–H8 mantêm IDs e nomes de arquivo. Não foram necessários tickets novos: os novos trabalhos estão em subdivisões estáveis dentro da etapa proprietária. As tabelas abaixo orientam a execução; os tickets detalham pré-requisitos, módulos, contratos, interfaces, riscos, aceite e autonomia por lote.
 
@@ -10,8 +21,8 @@ G1–G6 e H1–H8 mantêm IDs e nomes de arquivo. Não foram necessários ticket
 
 | Ordem | Etapa/lotes | Entrega | Gate para concluir/avançar |
 |---|---|---|---|
-| 1 | G1.1 | Estratégia revisável de confiança/identidade/transporte | Revisão T1; primeira tarefa a autorizar, sem abrir rede |
-| 2 | G1.2–G1.3 | Transporte seguro Main-only e ciclo de vida | Segurança, limites, cleanup Linux/Windows; aprovação G1 |
+| 1 | G1.1 | Estratégia revisável de confiança/identidade/transporte | [T1 aprovada](g1-1-t1-secure-transport-proposal.md); sem abrir rede |
+| 2 | G1.2–G1.3 | Transporte seguro Main-only e ciclo de vida | G1.2-A–D implementadas; G1.3-A/B parcialmente validadas; multicast real local e smoke focado do módulo em ASAR PASS; rebuild limpo pós-correção bloqueado por rede; multicast entre máquinas e Windows nativo pendentes; segunda revisão independente confirmou os achados corrigidos; aceite final antes de concluir G1 |
 | 3 | G2.1–G2.3 | Vínculo de Controller único e autorização | Revogação/restart; UI de confiança desenhada após T1 e aprovada; aprovação G2 |
 | 4 | G3.1 | Schemas executáveis de IDs, pacote, operações, journal e snapshot | Compatibilidade testada com IDs reais; sem regras de fila |
 | 5 | G3.2 | Proposta T2 e store isolado durável | Revisão de store/retention antes de codificar; crash/disco cheio |
@@ -75,9 +86,9 @@ IDs são grupos planejados, não testes já adicionados ou resultados PASS. Cria
 
 Pode-se delegar implementação, testes focados e revisão consecutivos **dentro do lote autorizado**, com ownership exclusivo e sem writes concorrentes em build/perfil/banco. Bons lotes fechados: schemas G3.1 após decisões de G1/G2; store G3.2 após T2; replay G3.4; reconexão técnica G4 após G3; consulta H1.1 segundo D5 aprovada; execução H2 após H1; testes determinísticos independentes e revisão read-only.
 
-Não há autorização automática de avançar entre fases/subfases. Gates do proprietário: T1/T2 nas propostas técnicas; escolha final de descarte/retorno da fila suspensa em D2 antes desses destinos; aprovação visual dos drafts usados; G6/H5/H6 e entrega H7. H8 segue posterior. D1/D3/D4/D5 estão resolvidas; isso não dispensa adaptar os consumidores com testes. Não resolver a parte restante de D2 limpando ou reativando automaticamente a fila local.
+Não há autorização automática de avançar entre fases/subfases. Gates atuais: validações ambientais e aceite final da G1 (a segunda revisão independente das correções G1.3 foi concluída); T2 para store G3; escolha final de descarte/retorno da fila suspensa em D2 antes desses destinos; aprovação visual dos drafts usados; G6/H5/H6 e entrega H7. H8 segue posterior. D1/D3/D4/D5 estão resolvidas; isso não dispensa adaptar os consumidores com testes. Não resolver a parte restante de D2 limpando ou reativando automaticamente a fila local.
 
-Parecer: backlog pronto para começar pela **proposta G1.1**, após autorização. Ainda não está liberado para executar toda G/H autonomamente: os gates acima são explícitos. O contrato funcional aprovado já resolve a antiga pendência ampla de autoridade em G4; D1/D3/D4/D5 estão resolvidas; permanecem a parte final de D2, T1/T2 e aprovações de implementação/visual/homologação.
+Histórico: a proposta T1 e a primeira tentativa de execução foram concluídas antes da decisão do proprietário sobre serial de 64 bits; essa tentativa encontrou um bloqueio e não alterou código. Estado vigente e evidências G1.2/G1.3 constam acima e na [proposta T1](g1-1-t1-secure-transport-proposal.md). T2 e a parte final de D2 permanecem pendentes.
 
 ## Revisão documental desta rodada
 
@@ -88,3 +99,13 @@ Revisados contratos, distribuição G/H, dependências, frames/descrições e di
 O proprietário aprovou D1/D3/D4/D5 e a suspensão da fila local em D2 nesta sessão. Não há mais gates funcionais pendentes sobre rotação de vez mista, saída offline durante vez ativa, promoção automática ou cadastro de mídia comprovadamente inexistente/offline não verificado. D2 permanece parcialmente resolvida: somente descarte definitivo versus retorno da fila suspensa exige escolha posterior; isso não deve impedir os lotes independentes que preservam a suspensão. T1/T2 continuam exigindo revisão técnica. DEC-01–05 são testes previstos, não executados. Sem alteração de código/Doop ou início de G1.
 
 Checkpoint documental autorizado explicitamente pelo proprietário ao encerrar D1–D5: consolidar a arquitetura inicial e o planejamento em commit local, com mensagem em inglês. Essa autorização substitui somente a restrição de commit nesta solicitação; não autoriza push, implementação, edição de frames ou início de G1. O encerramento F preexistente é preservado sem novas mudanças de conteúdo. Testes de aplicação continuam não executados por escopo documental e instrução do proprietário.
+
+## Histórico da análise G1.1 — antes da aprovação T1
+
+A análise detalha opções, threat model, identidade/certificado, confiança inicial G2, autorização deny-all, módulos e lotes G1.2-A–D/G1.3-A–C e testes T1-ID/SECRET/TLS/BOOT/AUTH/FENCE/INPUT/LIMIT/LIFE/BOUNDARY/PACK. Naquela etapa a T1 ainda aguardava aprovação e os testes não foram executados. O estado atual de autorização e bloqueio consta acima; T2 e D2 parcial continuam intactos. Nenhuma implementação/commit ocorreu.
+
+## Histórico da revisão incremental LAN — antes da aprovação T1
+
+[Contrato técnico LAN](g1-1-t1-lan-pairing.md) substitui caminho manual/arquivo/QR. Acrescentar aos lotes sem renumeração: G1.2 contratos/discovery/TLS-bootstrap restrito; G1.3 limites/falsos anúncios/lifecycle; G2.1 perfil SRP/binding e revisão independente; G2.2 fluxo consentido/persistência; G2.3 falhas/revogação/renovação; G4.1 reconexão automática por identidade pinada/backoff; G5.4 UI guiada e H4 integração operacional. G2 testa consentimento via port, G5 monta UI final após G1–G4, sem dependência circular ou pairing de produção com fake UI.
+
+Grupos DISC/PAKE/CONSENT/DURABLE/RECONNECT/RENEW/UI/RESOURCE do complemento integram a matriz futura. Vetores e MITM de PAKE não são substituídos por unitários mockados; multicast/firewall requer dois computadores Windows/Linux quando apropriado. Naquele registro histórico, G1.2/G1.3 estavam autorizadas, mas nenhum teste de aplicação foi executado: a inspeção encontrou o bloqueio do serial X.509 antes do código. O proprietário resolveu depois esse bloqueio e autorizou a implementação; veja o status vigente no início deste plano e na proposta T1. G2.1 continua exigindo revisão de encoding/binding antes de pairing de produção; não alegar biblioteca auditada.

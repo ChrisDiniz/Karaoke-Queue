@@ -1,12 +1,14 @@
 # Arquitetura Remote Player — proposta e status de implementação
 
-> **Planejamento vigente G/H — 2026-11-11:** consultar o [contrato pareado](paired-mode-contract.md), o [plano incremental](paired-mode-execution-plan.md) e as [interfaces/IDs Doop](paired-mode-ui-plan.md). São capacidades planejadas, sem implementação nesta rodada. A Gestão decide fila futura/promoção; Player executa a vez atual e confirma resultados duráveis. Propostas históricas conflitantes abaixo (sincronizar fila inteira, PREVIOUS/STOP na Gestão, countdown pareado ou autoridade de reconexão indefinida) estão superadas por esse contrato. Standalone independente e histórico de implementação permanecem preservados.
+> **G1 — estado atual em 2026-11-12:** [T1](g1-1-t1-secure-transport-proposal.md) aprovada, incluindo serial X.509 positivo/não zero com mínimo de 64 bits de entropia e SHA-256 calculado diretamente do DER. G1.2-A–D implementadas nos módulos Main-only abaixo. G1.3 parcialmente validada: multicast real local passou após corrigir o bind e filtrar origem/subrede; smoke focado do módulo atualizado em ASAR também passou. Windows nativo e descoberta entre computadores permanecem sem validação; rebuild limpo foi bloqueado por indisponibilidade de rede. O status e evidências detalhados estão no [ticket G1](backlog/0007-fase-g-comunicacao-remota-segura/0001-g1-infraestrutura-https-wss.md). G2, pareamento funcional e operação remota não estão implementados.
+
+> **Contrato funcional vigente:** consultar o [contrato pareado](paired-mode-contract.md), o [plano incremental](paired-mode-execution-plan.md) e as [interfaces/IDs Doop](paired-mode-ui-plan.md). A infraestrutura de G1 não implementa as capacidades operacionais futuras. A Gestão decide fila futura/promoção; Player executa a vez aceita e registra resultados duráveis. Propostas históricas conflitantes abaixo estão superadas pelo contrato. Standalone independente e histórico de implementação permanecem preservados.
 
 **Fases:** 1 — arquitetura e decisões funcionais aprovadas; 2 — modos implementados; 3 — biblioteca local implementada; 4 — catálogo CSV e integração catálogo/inventário implementados; 5C — engine Chromium implementada; 5D — playback manual implementado; 5E — recuperação local implementada; 5F-A — sequência local, catálogo isolado Player e resolução de recovery inválida implementados; 5F-B — UI e janela de reprodução implementadas e validadas em Linux e Windows para Player-only; integração Combined, LAN e automação de apresentações permanecem futuras.
 **Branch analisado:** `feature/remote-player-lan-integration`
 **Estado deste documento:** arquitetura histórica até a Phase 5F-B; composição Standalone de produção e shutdown integrados na C9.4. O proprietário declarou C9 e a Fase C concluídas/aprovadas em 2026-11-07; limitações históricas de harness/input descritas abaixo não são gates atuais. Questões funcionais remotas ainda abertas estão listadas em [Decisões ainda abertas](#21-decisões-ainda-abertas). Nenhum frame do Doop foi alterado pela implementação.
 
-Este documento preserva a arquitetura aprovada na Fase 1 e distingue implementação verificada de proposta. Modos, índice local de vídeos, catálogo CSV, engine Chromium, playback manual, recuperação local e UI do Reprodutor isolado estão implementados. No startup Player atual, Main abre o shell Standalone e anexa a superfície Chromium de vídeo existente; a antiga janela de controle Player não substitui essa interface. No Combined, a interface/host Player integrado ainda aguarda as fases H. Transporte LAN, pairing, sincronização remota e orquestração autoritativa de apresentações permanecem planejados. Os detalhes estão em [Player Playback](player-playback.md), [Catálogo musical](music-catalog.md) e [Biblioteca local de vídeos](video-library.md).
+Este documento preserva a arquitetura aprovada na Fase 1 e distingue implementação verificada de proposta. Modos, índice local de vídeos, catálogo CSV, engine Chromium, playback manual, recuperação local e UI do Reprodutor isolado estão implementados. No startup Player atual, Main abre o shell Standalone e anexa a superfície Chromium de vídeo existente; a antiga janela de controle Player não substitui essa interface. G1 acrescentou infraestrutura LAN no Main, sem integração de pairing, fila, playback ou histórico; esses comportamentos permanecem futuros. Os detalhes de playback local estão em [Player Playback](player-playback.md), [Catálogo musical](music-catalog.md) e [Biblioteca local de vídeos](video-library.md).
 
 > **AVISO DE TRANSIÇÃO:** os registros de implementação deste documento continuam sendo referência histórica do código legado. A arquitetura-alvo tem duas funções: Reprodutor (Standalone) e Tudo em um (Combined); Controller independente deixa de ser selecionável, mas seu domínio será preservado para Combined. Conforme a decisão aprovada para a Fase E, a escolha ocorre na primeira abertura do aplicativo, fora da instalação NSIS, pelos frames Welcome aprovados; alteração posterior será exclusivamente pela manutenção do instalador, nunca nas Configurações. A regra aprovada é uma função por computador: E1 audita e obtém aprovação da estratégia; E3 implementa a exclusividade segundo as decisões aprovadas. Propostas antigas de modo, UI e fases estão subordinadas ao [roadmap Standalone/Combined](standalone-player-roadmap.md) e à [especificação V1](standalone-one-screen-player.md). A Fase G entrega a infraestrutura remota; a sequência H integra o domínio de Gestão (H1), Player remoto (H2), autoridade/sincronização operacional (H3), UI pontual (H4), validação (H5), performance (H6) e primeiro release controlado (H7). Playback local integrado ao Combined é H8, posterior e fora do gate de H7. Referências numeradas Phase 5/6/7 neste documento são preservadas como nomenclatura histórica desta proposta.
 
@@ -18,7 +20,7 @@ O lifecycle reconhece os três modos. A biblioteca e o protocolo local de mídia
 
 O Main process deve ser dono de filesystem, SQLite, player engine e serviços LAN. O Renderer continua sendo a interface e, conforme a implementação atual, contém `KaraokeApplication` e `StateRepository`; a futura fronteira de aplicação sem dependência de Renderer é requisito de análise D4.1/D4.2. Serviços nativos apresentam contratos IPC estreitos ao Renderer. Um evento remoto só pode concluir uma apresentação depois de validado e persistido pelo Controller.
 
-Topologia-alvo aprovada, ainda não implementada:
+Topologia-alvo operacional aprovada, ainda não implementada:
 
 ```mermaid
 flowchart LR
@@ -41,6 +43,19 @@ flowchart LR
   CM <-->|HTTPS para pareamento e inventário\nWSS para comandos e eventos| PM
   PE --> VF[Arquivos de vídeo locais]
 ```
+
+### Estado efetivamente implementado em G1.2
+
+- `src/remote-contracts.ts`: interfaces/limites e autorização deny-all.
+- `src/remote-secret-protector.ts` e `src/remote-identity-store.ts`: armazenamento Main-only, proteção nativa fail-closed e persistência atômica da identidade.
+- `src/remote-tls.ts` e `src/remote-clients.ts`: certificado próprio, SAN/serial/algoritmos validados, pin SHA-256 de DER e clientes HTTPS/WSS restritos.
+- `src/remote-discovery.ts`: anúncio DNS-SD do Player e descoberta IPv4 na Gestão; candidatos não autorizados.
+- `src/remote-transport.ts`: HTTPS/WSS com deny-all por padrão, handshake mínimo, cotas, validação e lifecycle sem rotas operacionais registradas.
+- `src/main-remote-runtime.ts` e `main-runtime.ts`: composição lazy e lifecycle explícito. A inicialização comum não abre listener; nenhum segredo/socket é exposto ao Renderer.
+
+O certificado usa `selfsigned@5.5.0`, RSA-2048 e SHA-256; o serial deve ser positivo/não zero e gerado por CSPRNG. O fingerprint é derivado do DER via `node:crypto`; o fingerprint SHA-1 do gerador não é usado. A aprovação de serial de 64 bits não altera as demais garantias T1.
+
+G1 não realiza SRP/PAKE, consentimento, pairing, emissão de bearer, autorização funcional, comandos, eventos G3 ou recovery G4. O canal bootstrap não concede acesso operacional. Evidências e limitações de teste estão em [T1 §18](g1-1-t1-secure-transport-proposal.md#18-implementação-g12g13--evidências-e-limites).
 
 Na arquitetura-alvo local, Combined substitui o `Cliente LAN` pelo adapter local, que chama o serviço Player dentro do processo. Essa composição local corresponde à H8 e vem depois do marco remoto H7. A prioridade atual é a Gestão controlar um Player remoto pelas etapas H2–H7. A Phase 5C já implementa `PlayerPlaybackService` e o adapter Chromium, mas ainda não conecta uma janela de produção nem implementa o adaptador Controller/Player da futura integração de queue; Combined mantém uma única conexão SQLite Controller, sem servidor/socket LAN ou cópia da fila.
 
@@ -93,7 +108,7 @@ flowchart LR
 
 **Correção de playback Main real — 2026-11-06:** a sequência Standalone no Main já reproduzia o vídeo pelo mesmo `PlayerVideoWindow`, mas seu ramo não atualizava o estado do overlay hospedado em `player-playback.html`. Esse host permanecia em `idle` e exibia “Aguardando música” sobre vídeo ativo. Main agora propaga `PlayerPlaybackService.state-changed` para o host e remove a subscription em `will-quit`; a regressão captura a própria `WebContentsView` e confirma painel oculto em reprodução e pausa. O ticket C9 registra testes Linux/Windows, fingerprint e capturas.
 
-**Planejado/não implementado:** transporte HTTP/WebSocket, pairing/autenticação de dispositivos, sincronização remota, UI/host de playback integrado no Combined, interface Controller integrada e reconciliação autoritativa de apresentações. Recuperação remota ainda não existe; recuperação local está implementada. A sequência Standalone é local, volátil e só autoavança em Player-only. Reconhecer extensão ou indexar nomes não comprova compatibilidade de codec. A navegação de reprodução em `src/index.html` continua desativada; a UI Player-only de produção é o shell dedicado `standalone-player.html`.
+**Infraestrutura implementada em G1.2:** transporte HTTPS/WSS Main-only, identidade/certificado pinado, descoberta LAN e lifecycle explícito, sem pairing nem endpoints operacionais. **Ainda planejado/não implementado:** autorização de dispositivos e pairing (G2), sincronização remota, UI/host de playback integrado no Combined, interface Controller integrada e reconciliação autoritativa de apresentações. Recuperação remota ainda não existe; recuperação local está implementada. A sequência Standalone é local, volátil e só autoavança em Player-only. Reconhecer extensão ou indexar nomes não comprova compatibilidade de codec. A navegação de reprodução em `src/index.html` continua desativada; a UI Player-only de produção é o shell dedicado `standalone-player.html`.
 
 ### 2.3 Garantias e limitações atuais relevantes
 
@@ -177,7 +192,7 @@ Os módulos abaixo mostram fronteiras existentes e futuras. `main.ts` coordena l
 | `main.ts` | Composição e shutdown de protocolo/serviços conforme modo | **Implementado:** cria serviços Player em Player/Combined; em Player, compõe a UI Standalone e coordena shutdown com confirmação, recovery verificado e cleanup Main-owned; Combined preserva sua UI atual. `before-quit` encaminha a confirmação Standalone e só autoriza quit após coordenação Main-side; Combined preserva o lifecycle existente. |
 | Contratos de protocolo | Tipos, versão e validação de mensagens | Fonte única compartilhada por transporte e máquina de estados. |
 | Pairing/autorização | Identidade, credenciais, permissão, rotação e revogação | Responsabilidade de segurança separada de sockets e fila. |
-| Transporte LAN | Servidor HTTPS/WSS no Player e cliente no Controller | Possui ciclo de vida e falhas de rede; opera somente no Main. |
+| Transporte LAN | Servidor HTTPS/WSS no Player e cliente na Gestão, implementados em G1.2 | Main-only e explicitamente ativados; G1 não autoriza dispositivo nem expõe rotas de negócio sem G2. |
 | PlaybackEngine genérico | Interface intercambiável de engines | **Não implementado:** a Fase 5C usa diretamente o adapter Chromium; não foi criado framework de plugins. |
 | `ManualPlaybackService` local | Validar/canonicalizar código, chamar playback local e navegar sequência explícita | **Implementado nas Fases 5D/5F-A/5F-B:** serviço Main-side sem state machine/fila própria; sequência volátil com add/remove/reorder/clear e auto-advance somente em Player-only após EOF válido. UI conectada; persistência, adaptação remota e orquestração Controller permanecem futuras. |
 | Orquestrador de playback do Controller | Liga apresentação, comandos, eventos e persistência | Mantém autoridade no fluxo serializado de `KaraokeApplication`; não reimplementa regras de fila. |
@@ -188,7 +203,7 @@ Os módulos abaixo mostram fronteiras existentes e futuras. `main.ts` coordena l
 
 ## 5. HTTP e WebSocket
 
-O Player expõe o serviço; o Controller inicia a conexão. Os dois lados mantêm comunicação bidirecional autenticada. Endereços podem ser inseridos pelo operador na primeira versão; descoberta automática/mDNS fica fora do necessário inicial.
+O Player anuncia serviço DNS-SD e expõe HTTPS/WSS; a Gestão pode descobrir candidatos IPv4 na LAN. Descoberta não autentica nem autoriza. Entrada manual de endereço permanece alternativa avançada para redes que bloqueiem multicast e também não substitui pairing/validação de pin.
 
 ### 5.1 Responsabilidades por transporte
 
@@ -682,7 +697,7 @@ Sem streaming/transferência de vídeo, catálogos online, descoberta automátic
 
 ## 21. Decisões remotas — estado atual do planejamento
 
-O modelo funcional de autoridade e reconexão foi aprovado em 2026-11-11 no [contrato pareado](paired-mode-contract.md). Só a vez atual é enviada; o Player é fonte dos resultados duráveis e a Gestão mantém fila/promoção e histórico administrativo. Não há controle remoto automático ao reconectar. D1/D3/D4/D5 estão resolvidas: preservar rotação existente, offline só após terminal ou Stop All explícito confirmado, promoção automática pelo Round Robin após EOF/Avançar da última (exceto Stop All) e cadastro conectado sem inexistentes comprovadas/offline não verificado. D2 está parcialmente resolvida: suspender fila local sem importar/executar; descarte definitivo versus retorno permanece aberto. T1/T2 (confiança/store) preservam seus gates. Não são capacidades implementadas.
+O modelo funcional de autoridade e reconexão foi aprovado em 2026-11-11 no [contrato pareado](paired-mode-contract.md). Só a vez atual é enviada; o Player é fonte dos resultados duráveis e a Gestão mantém fila/promoção e histórico administrativo. Não há controle remoto automático ao reconectar. D1/D3/D4/D5 estão resolvidas; D2 está parcialmente resolvida conforme descrito no contrato. T1 foi aprovada e sua infraestrutura G1.2 implementada; a segunda revisão independente das correções G1.3 confirmou os achados resolvidos. Permanecem validações ambientais e aceite final da G1. O contrato G2 de identidade/confiabilidade operacional e o store T2 de G3 permanecem pendentes. Nenhum comportamento pareado de negócio está implementado por G1.
 
 ### Registro anterior de decisões abertas (histórico)
 

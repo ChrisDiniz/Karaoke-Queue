@@ -45,3 +45,17 @@ for (const suite of suites) {
     break
   }
 }
+
+if (process.exitCode === undefined) {
+  console.log('\n=== Electron E2E: remote safeStorage native API ===')
+  const result = spawnSync('xvfb-run', ['-a', process.execPath, 'scripts/remote-safe-storage-electron.test.cjs'], {
+    cwd: root,
+    env,
+    stdio: 'inherit'
+  })
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    process.exitCode = result.status || 1
+    console.error('Electron E2E failed: remote safeStorage native API')
+  }
+}

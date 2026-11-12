@@ -139,9 +139,13 @@ Atualização documental por decisão explícita do proprietário nesta sessão.
 
 As regras aprovadas não autorizam descartar evidências, alterar invariantes existentes, executar fila suspensa ou iniciar implementação. T1/T2 permanecem intactos:
 
-| ID | Decisão técnica pendente | Gate afetado |
+| ID | Decisão técnica ou gate | Gate afetado |
 |---|---|---|
-| T1 | Modelo de confiança/certificados, descoberta/endereço e rotação/revogação, persistência segura de segredos | Proposta G1.1 antes de abrir transporte; decisão técnica a revisar |
+| T1 | Modelo de confiança/certificados, descoberta/endereço e rotação/revogação, persistência segura de segredos | [Proposta G1.1 aprovada](g1-1-t1-secure-transport-proposal.md); G1.2-A–D implementadas. G1.3 permanece parcialmente validada: multicast real local passou após correção do bind; smoke focado do módulo discovery em ASAR passou. Windows nativo e LAN física entre computadores seguem pendentes; rebuild limpo posterior foi bloqueado por indisponibilidade de rede. Ver resultados e justificativas na proposta e no ticket G1. |
 | T2 | Store isolado do journal, retenção/compactação, quotas e backup/recovery; prazo/capacidade suportados de replay | Design G3.2 antes de implementar persistência |
 
-Novos frames ficam draft, revisáveis pelo proprietário; não são aprovação visual presumida nem autorização de código. G1.1 pode ser a primeira tarefa após autorização, sem depender de D1–D5. Demais gates e [sequência](paired-mode-execution-plan.md) impedem dependências circulares.
+Novos frames ficam draft, revisáveis pelo proprietário; não são aprovação visual presumida nem autorização de código. T1 está aprovada. G1.2 foi implementada e G1.3 está em validação parcial; G2 permanece não iniciada. Demais gates e [sequência](paired-mode-execution-plan.md) impedem dependências circulares.
+
+## Interface técnica LAN — proposta T1 revisada
+
+O proprietário definiu o fluxo normal integral na UI/LAN: descoberta automática, seleção, confirmação segura e reconexão, sem arquivo/QR/IP/fingerprint obrigatório. A [proposta técnica LAN](g1-1-t1-lan-pairing.md) define DiscoveryCandidate não autorizado em G1, SRP-6a/binding de certificado e vínculo único em G2, reconexão automática em G4 e UI G5. Só provas/consentimento/persistência criam TrustedPeer; TXT mDNS não concede autoridade. Transporte reconectado não retoma Player explicitamente offline. T1 foi aprovada; G2.1 mantém revisão criptográfica antes de pairing em produção. G1.2 está implementada, sem pairing; G1.3 está parcialmente validada conforme proposta e ticket G1. Nenhum esquema operacional, D1–D5, T2 ou registro durável é redefinido.

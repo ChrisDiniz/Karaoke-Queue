@@ -60,3 +60,9 @@ Implementação apenas com autorização específica do proprietário. Uma autor
 ## Histórico preservado
 
 O ticket anterior era exclusivamente planejado, sem implementação ou validação. A revisão atual detalha esse escopo mantendo ID e posição canônica. A antiga decisão aberta de autoridade em G4 foi resolvida funcionalmente pelo proprietário no contrato pareado; D1–D5 foram posteriormente revisadas pelo proprietário: D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida, conforme o contrato vigente. Não há resultados de testes novos nesta atualização documental.
+
+## Revisão T1 — descoberta/pareamento integral LAN (planejado)
+
+G2.1: fixar/revisar biblioteca fast-srp-hap, perfil SRP-6a, transcript/binding autenticado do certificado, formato e vetores, com revisão independente antes de produção. Não implementar primitivas próprias. G2.2: consentimento local, código 8 dígitos 120 s/3 tentativas, quota global, sessão única, provas mútuas, persistência de trust/bearer e revogação confirmada. G2.3: MITM/relay de provas com certificado diferente, cancelamento/replay/timeout, duas Gestões, crash de cada commit e recuperação anual sem token antigo em TLS não confiado. Sem arquivos/QR/IP no fluxo normal. Pairing tem port de apresentação testável; G5 integra UI final sem ciclo G2→G5→G4→G2. Nenhuma exposição em produção antes da apresentação local restrita aprovada. G2 continua não iniciada.
+
+Referência técnica: [complemento T1 LAN](../../g1-1-t1-lan-pairing.md), ainda aguardando aprovação. Nenhuma implementação/teste de aplicação, alteração Doop ou início automático autorizado. T2/D2 e decisões funcionais aprovadas preservados.

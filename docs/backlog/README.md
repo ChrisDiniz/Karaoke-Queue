@@ -1,5 +1,16 @@
 # Backlog operacional do Karaoke Queue
 
+## Aceite do proprietário — G1 homologada com limitações — 2026-11-12
+
+O proprietário aceitou a G1 e determinou seu encerramento como **homologada com limitações**, após o parecer técnico independente favorável. G1.2 está concluída; G1.3 foi aceita com as limitações abaixo. Esse aceite substitui o estado anterior de “aguardando aceite final”; os resultados técnicos históricos permanecem preservados e a validação integral de todas as plataformas não é declarada.
+
+- Windows nativo: NOT RUN; o runner oficial bloqueou o arquivo-fonte `src/remote-secret-protector.ts` pela heurística de nome sensível antes da sincronização. A execução nativa continua pendente.
+- Empacotamento: smoke ASAR focado PASS; rebuild limpo pendente por indisponibilidade externa/DNS (`EAI_AGAIN github.com` na tentativa anterior).
+- Multicast real local WSL: PASS; LAN entre computadores e plataformas nativas permanece para G6.
+- E2E audiovisual com MP4: NOT RUN, sem fixture aprovada; não bloqueia o aceite da infraestrutura G1.
+
+A G1 está tecnicamente apta para G2 e seu aceite pelo proprietário está registrado. G2 permanece não iniciada e depende de autorização própria. T2, D2 e os demais gates futuros permanecem vigentes. Nenhum resultado NOT RUN foi convertido em PASS. Este checkpoint não encerra a Fase G inteira.
+
 **Encerramento vigente — 2026-11-11: Fase F CONCLUÍDA E VALIDADA pelo proprietário**, conforme declaração explícita nesta sessão, abrangendo F0–F4. [Registro consolidado, evidências e limitações](../fase-f-encerramento.md). Estados anteriores de F aberta/não homologada e F1–F4 não iniciadas são históricos e estão superados por este aceite; resultados PARTIAL/NOT RUN permanecem intactos. G/H aguardam planejamento e autorização específica.
 
 **Encerramento — 2026-11-09: Fase E CONCLUÍDA por decisão explícita do proprietário nesta sessão.** Este registro substitui os status anteriores de revisão/aceite pendente para o encerramento da fase e de E1–E5. E0 mantém sua aprovação de 2026-11-08. A solicitação de encerramento não é evidência de execução de testes adicionais: S1 permanece historicamente PARTIAL, e cenários registrados como NOT RUN não foram convertidos em PASS. Evidências, riscos e limitações anteriores ficam preservados. Fase F não iniciada nem autorizada por este encerramento.
@@ -26,7 +37,7 @@ O roadmap continua sendo a fonte autoritativa da direção, escopo, dependência
 | `0004` | D — Auditoria, limpeza e modularização do Main | [0004-fase-d-modularizacao-limpeza-legado](0004-fase-d-modularizacao-limpeza-legado/) | **Fase D concluída e aprovada pelo proprietário em 2026-11-07.** D1–D3 concluídas; D4.1 concluída, D4.2 aprovada, D4.3 concluída nos oito lotes; D5 automatizada PASS e validação manual global aprovada. Limites específicos anteriormente `NOT RUN` permanecem identificados como tais nos tickets. |
 | `0005` | E — Consolidação de funções, instalador e gerenciamento | [0005-fase-e-instalador-gerenciamento-funcoes](0005-fase-e-instalador-gerenciamento-funcoes/) | Concluída — encerramento explícito pelo proprietário em 2026-11-09; E0–E5 encerradas. Evidências e limitações históricas preservadas; F ainda não havia iniciado naquele encerramento. |
 | `0006` | F — Regressão e estabilização pós-instalação | [0006-fase-f-regressao-estabilizacao-pos-instalacao](0006-fase-f-regressao-estabilizacao-pos-instalacao/) | Concluída e validada pelo proprietário em 2026-11-11, incluindo F0–F4. [Encerramento e limites das evidências](../fase-f-encerramento.md). |
-| `0007` | G — Comunicação remota segura | [0007-fase-g-comunicacao-remota-segura](0007-fase-g-comunicacao-remota-segura/) | Planejada, não iniciada. Modelo pareado definido; mecanismos em G1–G6, gates técnicos T1/T2 e integração operacional em H. |
+| `0007` | G — Comunicação remota segura | [0007-fase-g-comunicacao-remota-segura](0007-fase-g-comunicacao-remota-segura/) | T1 aprovada. G1 homologada com limitações pelo proprietário em 2026-11-12; G1.2 concluída e G1.3 aceita com pendências ambientais. Multicast local WSL e smoke ASAR focado PASS; Windows nativo e rebuild limpo pendentes. G2–G6 não iniciadas; T2 e integração operacional H permanecem em seus gates. |
 | `0008` | H — Integração operacional Gestão + Player | [0008-fase-h-integracao-operacional-gestao-player](0008-fase-h-integracao-operacional-gestao-player/) | Planejada, não iniciada. |
 
 **Estado E vigente — 2026-11-09:** primeiro CI integral PASS, run 42622477298, HEAD b92e950, artifact NSIS baixado e hash verificado. [Evidência e limites](../fase-e-revisao-independente.md#24-primeiro-ci-integral-pass-e-artifact--2026-11-09). S1 PARTIAL; E1–E5 sem homologação/aprovação, UAC interativo/contas/sessões/legado/manutenção/aceite humano pendentes. Registros anteriores abaixo são históricos.
@@ -84,6 +95,14 @@ O ticket pai 0006 contém o filho [0006/0000 — F0](0006-fase-f-regressao-estab
 
 **Decisões e escopo F0:** P1 (idle seguro no restart), P2 (recuperação runtime com contenção confirmada) e P3 (JSON Main-only e consistência eventual com revalidação seletiva) estão aprovadas. A autorização global cobre F0-01–07 e avanço automático pelos gates. A matriz de 31 grupos e INS-01–03 foi executada conforme pré-requisitos; nenhuma variante de HD/instalação foi convertida em PASS. Aprovação final F0 pertence ao proprietário e precede F1–F4.
 
-## Planejamento pareado G/H — 2026-11-11
+## Histórico do planejamento pareado G/H — antes da aprovação T1
 
-G1–G6 e H1–H8 revisadas, sem novos IDs ou renumeração. Novas responsabilidades estão subdivididas nos tickets existentes. [Contrato](../paired-mode-contract.md), [sequência, autonomia e testes](../paired-mode-execution-plan.md), [Doop/IDs e descrições](../paired-mode-ui-plan.md). Status de G/H: Planejado / Não iniciado. Primeira tarefa proposta: G1.1, estratégia técnica de confiança/transporte, mediante autorização. Nenhum código, teste funcional, workflow ou dado operacional alterado; F preservada.
+G1–G6 e H1–H8 foram revisadas sem novos IDs ou renumeração. Naquele estado, G/H permaneciam planejadas e G1.1 era a próxima análise proposta. A decisão e o status atuais constam no resumo acima; nenhum código, teste funcional, workflow ou dado operacional foi alterado. F preservada.
+
+## Histórico G1.1 — proposta técnica T1 antes da aprovação
+
+Naquele registro, a análise G1.1 estava concluída e T1 aguardava aprovação. Estado atual: [proposta T1](../g1-1-t1-secure-transport-proposal.md) aprovada em 2026-11-11. O bloqueio inicial de serial foi resolvido pelo proprietário: mínimo de 64 bits de entropia com `selfsigned@5.5.0`. G1.2-A–D estão implementadas; G1.3 segue parcialmente validada, conforme evidências e NOT RUN na proposta e ticket G1. T2 permanece pendente.
+
+## Histórico da revisão T1 — descoberta e vínculo LAN (antes da aprovação)
+
+O proprietário definiu o caminho normal pela UI/LAN sem arquivo/QR/IP/fingerprint obrigatório. O [complemento T1 LAN](../g1-1-t1-lan-pairing.md) recomenda mDNS/DNS-SD, SRP-6a com binding autenticado e consentimento bilateral, reconexão automática G4 e interfaces futuras G5/H4. G1/G2/G4/G5 e plano foram atualizados sem renumeração. Naquele registro, T1 aguardava aprovação; depois foi aprovada. A composição criptográfica exige gate específico G2.1 antes de pairing em produção. A execução ficou bloqueada pelo serial até a decisão posterior do proprietário. O status e os resultados atuais de G1.2/G1.3 estão no resumo desta página e no ticket G1; esse registro histórico não afirma o estado presente.

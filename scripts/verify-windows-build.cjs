@@ -57,6 +57,10 @@ function verifyWindowsBuild(root = path.resolve(__dirname, '..')) {
     'build/src/installed-role-context.js', 'build/src/welcome-setup.js',
     'build/src/installation-runtime-gate.js',
     'build/src/windows-function-identity.js',
+    'build/src/main-remote-runtime.js', 'build/src/remote-clients.js',
+    'build/src/remote-contracts.js', 'build/src/remote-discovery.js',
+    'build/src/remote-identity-store.js', 'build/src/remote-secret-protector.js',
+    'build/src/remote-tls.js', 'build/src/remote-transport.js',
     'build/src/installation-shortcuts.js',
     'build/welcome-preload.js', 'build/src/welcome-renderer.bundle.js',
     'build/src/welcome.html', 'build/src/welcome.css', 'build/src/catalog-import-dialog.css',
@@ -64,6 +68,18 @@ function verifyWindowsBuild(root = path.resolve(__dirname, '..')) {
     'build/src/license-service.js', 'build/src/licensing.js', 'build/src/assets/karaoke-logo.png'
   ]
   for (const entry of required) if (!entries.has(entry)) fail(`required packaged file is missing: ${entry}`)
+  const packagedPackage = JSON.parse(asar.extractFile(appArchive, 'package.json').toString('utf8'))
+  const remoteDependencies = ['multicast-dns', 'selfsigned', 'ws']
+  for (const dependency of remoteDependencies) {
+    const expectedVersion = pkg.dependencies?.[dependency]
+    if (!expectedVersion || packagedPackage.dependencies?.[dependency] !== expectedVersion) {
+      fail(`remote runtime dependency is missing or version-mismatched in packaged package.json: ${dependency}`)
+    }
+    const dependencyManifest = `node_modules/${dependency}/package.json`
+    if (!entries.has(dependencyManifest)) fail(`remote runtime dependency is missing from ASAR: ${dependency}`)
+    const bundled = JSON.parse(asar.extractFile(appArchive, dependencyManifest).toString('utf8'))
+    if (bundled.version !== expectedVersion) fail(`bundled remote runtime dependency version mismatch: ${dependency}`)
+  }
   for (const entry of entries) {
     if (/^(tests|docs|build-resources)\//i.test(entry) || /(^|\/)(?:[^/]+\.test\.js|[^/]+\.spec\.js)$/i.test(entry)) {
       fail(`development or test file leaked into the application archive: ${entry}`)

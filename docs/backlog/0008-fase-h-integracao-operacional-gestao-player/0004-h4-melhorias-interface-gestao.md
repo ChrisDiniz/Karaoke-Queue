@@ -72,3 +72,9 @@ O ticket anterior era exclusivamente planejado, sem implementação ou validaç�
 ## Aceite adicional — decisões funcionais aprovadas
 
 Aplicar os cenários DEC-01–05 da [matriz](../../paired-mode-execution-plan.md) conforme o impacto deste ticket: resultados mistos não alteram rodadas/rotação; takeover suspende a fila local, sem importação ou execução automática; vez ativa impede offline até conclusão ou Stop All explicitamente confirmado; EOF/Avançar da última promovem automaticamente uma vez, Stop All não promove; cadastro inexistente comprovado é bloqueado conectado, e offline aceita registro não verificado com revalidação antes do playback. D1/D3/D4/D5 resolvidas, D2 parcialmente resolvida. Preservar a pendência final de descarte versus retorno da fila suspensa. Testes apenas planejados, sem execução nesta atualização.
+
+## Revisão T1 — descoberta/pareamento integral LAN (planejado)
+
+H4 reutiliza o ícone/pareamento e estados G5; não implementa descoberta ou segundo fluxo de vínculo. H4.4 distingue transporte autenticado/reconciliando de retorno operacional ao pareado: offline explícito exige confirmação/takeover conforme contrato, mesmo após reconexão automática. Comparação Electron/Doop e testes teclado/controle só na futura implementação. Inventário LAN lista frames a criar posteriormente, sem IDs inventados nem alterações nos atuais.
+
+Referência técnica: [complemento T1 LAN](../../g1-1-t1-lan-pairing.md), ainda aguardando aprovação. Nenhuma implementação/teste de aplicação, alteração Doop ou início automático autorizado. T2/D2 e decisões funcionais aprovadas preservados.

@@ -64,3 +64,9 @@ Implementação apenas com autorização específica do proprietário. Uma autor
 ## Histórico preservado
 
 O ticket anterior era exclusivamente planejado, sem implementação ou validação. A revisão atual detalha esse escopo mantendo ID e posição canônica. A antiga decisão aberta de autoridade em G4 foi resolvida funcionalmente pelo proprietário no contrato pareado; D1–D5 foram posteriormente revisadas pelo proprietário: D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida, conforme o contrato vigente. Não há resultados de testes novos nesta atualização documental.
+
+## Revisão T1 — descoberta/pareamento integral LAN (planejado)
+
+G4.1 acrescenta reconexão automática por vínculo salvo: descoberta/último endpoint como pistas, TLS pinado+bearer antes de confirmar endereço. Um scheduler por peer, backoff 1/2/4/8/16/30 s com jitter e relógio/RNG controlados; cancelar no shutdown e coalescer eventos de rede/Atualizar. Mudança de IP não requer pairing se identidade/certificado permanecem; pin diferente exige UI G2, nunca troca automática. G4.4 cobre resume/DHCP/busy, mensagem antiga e reconstrução de snapshot/eventos/operationId antes de liberar controle. Transporte pode reconectar com Player offline, mas modo/autoridade não mudam automaticamente. Testar queda durante vez, anúncios falsos e recuperação anual.
+
+Referência técnica: [complemento T1 LAN](../../g1-1-t1-lan-pairing.md), ainda aguardando aprovação. Nenhuma implementação/teste de aplicação, alteração Doop ou início automático autorizado. T2/D2 e decisões funcionais aprovadas preservados.

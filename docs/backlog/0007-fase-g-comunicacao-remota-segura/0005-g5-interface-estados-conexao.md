@@ -60,3 +60,9 @@ Implementação apenas com autorização específica do proprietário. Uma autor
 ## Histórico preservado
 
 O ticket anterior era exclusivamente planejado, sem implementação ou validação. A revisão atual detalha esse escopo mantendo ID e posição canônica. A antiga decisão aberta de autoridade em G4 foi resolvida funcionalmente pelo proprietário no contrato pareado; D1–D5 foram posteriormente revisadas pelo proprietário: D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida, conforme o contrato vigente. Não há resultados de testes novos nesta atualização documental.
+
+## Revisão T1 — descoberta/pareamento integral LAN (planejado)
+
+Acrescentar G5.4 — pareamento/renovação guiados: ícone Dispositivos imediatamente à esquerda do sino, lista real mDNS (buscando, vazio, encontrado não verificado, vínculo salvo, conectado confirmado, indisponível), Atualizar e Avançado. Solicitação Player, aceite/rejeição, código SRP 8 dígitos, verificação/persistência, cancelamento/timeout/quota, falha de confiança e renovação 30/7 dias. G5 usa ports G1/G2/G4, sem matemática/autorização no Renderer. Critérios: nunca confiar em TXT, mostrar nome como informado/não verificado, segredo permanente não exposto, código efêmero sem log, conexão/reconciliação/offline distintos. Frames novos ainda não criados; consultar inventário e aguardar autorização visual. G5 permanece dependente G1–G4 para integração final; G2 testa apresentação por port isolado.
+
+Referência técnica: [complemento T1 LAN](../../g1-1-t1-lan-pairing.md), ainda aguardando aprovação. Nenhuma implementação/teste de aplicação, alteração Doop ou início automático autorizado. T2/D2 e decisões funcionais aprovadas preservados.

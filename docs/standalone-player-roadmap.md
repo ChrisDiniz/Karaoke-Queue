@@ -1,5 +1,16 @@
 # Roadmap de migração — Standalone e Combined
 
+## Aceite do proprietário — G1 homologada com limitações — 2026-11-12
+
+O proprietário aceitou a G1 e determinou seu encerramento como **homologada com limitações**, após o parecer técnico independente favorável. G1.2 está concluída; G1.3 foi aceita com as limitações abaixo. Esse aceite substitui o estado anterior de “aguardando aceite final”; os resultados técnicos históricos permanecem preservados e a validação integral de todas as plataformas não é declarada.
+
+- Windows nativo: NOT RUN; o runner oficial bloqueou o arquivo-fonte `src/remote-secret-protector.ts` pela heurística de nome sensível antes da sincronização. A execução nativa continua pendente.
+- Empacotamento: smoke ASAR focado PASS; rebuild limpo pendente por indisponibilidade externa/DNS (`EAI_AGAIN github.com` na tentativa anterior).
+- Multicast real local WSL: PASS; LAN entre computadores e plataformas nativas permanece para G6.
+- E2E audiovisual com MP4: NOT RUN, sem fixture aprovada; não bloqueia o aceite da infraestrutura G1.
+
+A G1 está tecnicamente apta para G2 e seu aceite pelo proprietário está registrado. G2 permanece não iniciada e depende de autorização própria. T2, D2 e os demais gates futuros permanecem vigentes. Nenhum resultado NOT RUN foi convertido em PASS. Este checkpoint não encerra a Fase G inteira.
+
 **Encerramento vigente — 2026-11-11: Fase F CONCLUÍDA E VALIDADA pelo proprietário**, conforme declaração explícita nesta sessão, abrangendo F0–F4. [Registro consolidado, evidências e limitações](fase-f-encerramento.md). Estados anteriores de F aberta/não homologada e F1–F4 não iniciadas são históricos e estão superados por este aceite; resultados PARTIAL/NOT RUN permanecem intactos. G/H aguardam planejamento e autorização específica.
 
 **Encerramento — 2026-11-09: Fase E CONCLUÍDA por decisão explícita do proprietário nesta sessão.** Este registro substitui os status anteriores de revisão/aceite pendente para o encerramento da fase e de E1–E5. E0 mantém sua aprovação de 2026-11-08. A solicitação de encerramento não é evidência de execução de testes adicionais: S1 permanece historicamente PARTIAL, e cenários registrados como NOT RUN não foram convertidos em PASS. Evidências, riscos e limitações anteriores ficam preservados. Fase F não iniciada nem autorizada por este encerramento.
@@ -508,7 +519,9 @@ Antes de criar CI, auditar `.github/workflows/` e reutilizar o build Windows/NSI
 
 ### Fase G — Comunicação remota segura ([ticket pai 0007](backlog/0007-fase-g-comunicacao-remota-segura/))
 
-Corresponde à antiga Fase F. **Planejamento pareado atualizado em 2026-11-11; G/H não iniciadas.** O [contrato funcional aprovado](paired-mode-contract.md), o [plano incremental e matriz de testes](paired-mode-execution-plan.md) e o [inventário Doop/descrições](paired-mode-ui-plan.md) passam a reger estas fases. F permanece encerrada. A Gestão mantém fila futura/Round Robin/promoção; o Player executa somente a vez atual aceita (1–2 músicas) e registra resultados duráveis. Sem sincronização de fila inteira. Queda de rede mantém a vez aceita; offline e retorno ao pareado são explícitos. A antiga pendência ampla de autoridade está resolvida por esse modelo; D1/D3/D4/D5 estão resolvidas; D2 parcialmente resolvida determina suspensão local e mantém pendente só descarte definitivo versus retorno. T1/T2 permanecem como gates técnicos no contrato. Nenhuma implementação autorizada nesta rodada.
+**G1.1 — T1 aprovada pelo proprietário em 2026-11-11, com revisão pontual do serial aprovada na retomada.** G1.2-A–D implementadas: contratos, identidade/cofre fail-closed, HTTPS/WSS, TLS pinado e descoberta mDNS no Main. O serial X.509 é positivo/não zero, gerado por CSPRNG com mínimo de 64 bits; SHA-256 é calculado diretamente do DER. G1.3 está parcialmente validada: testes unitários, integração local, Electron Linux e multicast real local passaram; Windows nativo e descoberta entre computadores permanecem pendentes. Smoke focado do módulo discovery corrigido em ASAR passou, enquanto o rebuild limpo foi bloqueado por indisponibilidade de rede. A segunda revisão do Sol confirmou as correções P1/P2 sem novo defeito nesse escopo; faltam validações ambientais e aceite final da G1. As evidências estão no [ticket G1](backlog/0007-fase-g-comunicacao-remota-segura/0001-g1-infraestrutura-https-wss.md) e na [proposta T1](g1-1-t1-secure-transport-proposal.md). G2 não iniciada e T2 permanece pendente.
+
+Corresponde à antiga Fase F. **Planejamento pareado atualizado em 2026-11-11;** o [contrato funcional aprovado](paired-mode-contract.md), o [plano incremental e matriz de testes](paired-mode-execution-plan.md) e o [inventário Doop/descrições](paired-mode-ui-plan.md) regem estas fases. F permanece encerrada. A Gestão mantém fila futura/Round Robin/promoção; o Player executa somente a vez atual aceita (1–2 músicas) e registra resultados duráveis. Sem sincronização de fila inteira. Queda de rede mantém a vez aceita; offline e retorno ao pareado são explícitos. D1/D3/D4/D5 estão resolvidas; D2 mantém pendente só descarte definitivo versus retorno da fila suspensa. G1.2 está implementada e G1.3 em validação parcial conforme o estado acima; T2 permanece gate técnico G3. G2 não iniciou.
 
 - **G1 — Infraestrutura HTTPS/WSS:** identidade, autenticação/autorização, certificados/confiança, transporte e contratos versionados. [Ticket G1](backlog/0007-fase-g-comunicacao-remota-segura/0001-g1-infraestrutura-https-wss.md)
 - **G2 — Pareamento:** autorizar e revogar vínculos entre dispositivos, com consentimento e segurança aprovados. [Ticket G2](backlog/0007-fase-g-comunicacao-remota-segura/0002-g2-pareamento-dispositivos.md)
@@ -551,3 +564,7 @@ Não existe Fase I. A campanha extensa de performance está em H6; F0 mede apena
 - Não iniciar a subetapa seguinte automaticamente; cumprir critérios de entrada e obter a autorização aplicável.
 - Registrar escopo, arquivos, testes executados/omitidos, riscos, documentação e critério de conclusão.
 - Nenhuma reorganização autoriza remoção de dados ou serviços necessários ao Combined, alteração da V1 ou aprovação humana presumida.
+
+## Revisão T1 — descoberta e vínculo LAN (histórico da proposta antes da aprovação)
+
+O proprietário definiu o caminho normal pela UI/LAN sem arquivo/QR/IP/fingerprint obrigatório. O [complemento T1 LAN](g1-1-t1-lan-pairing.md) recomenda mDNS/DNS-SD, SRP-6a com binding autenticado e consentimento bilateral, reconexão automática G4 e interfaces futuras G5/H4. G1/G2/G4/G5 e plano foram atualizados sem renumeração. Naquela revisão, T1 aguardava aprovação; depois foi aprovada em 2026-11-11. A composição criptográfica mantém o gate G2.1 antes de produção. A execução G1.2/G1.3 autorizada foi bloqueada antes do código pelo requisito do serial X.509 descrito na proposta T1 e no ticket G1. Nenhum código, porta, certificado, Doop, F ou teste de aplicação foi executado.

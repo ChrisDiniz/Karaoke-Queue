@@ -89,6 +89,7 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   const standaloneOptions = powershellLauncher('C:\\stage', 'run-standalone-options', false, '--standalone-options')
   const standaloneProduction = powershellLauncher('C:\\stage', 'run-standalone-production', false, '--standalone-production')
   const videoLibrary = powershellLauncher('C:\\stage', 'run-video-library', false, '--video-library')
+  const remoteInfrastructure = powershellLauncher('C:\\stage', 'run-remote-infrastructure', false, '--remote-infrastructure')
   const packageCandidate = powershellLauncher('C:\\stage', 'run-package-candidate', false, null, null, null, true)
   const screenshots = powershellLauncher('C:\\stage', 'run-screenshots', false, null, null,
     'E:\\KaraokeQueue\\e1-03-validation\\ui-screenshots')
@@ -104,6 +105,7 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.equal(launcherPayload(standaloneOptions).playbackMode, '--standalone-options')
   assert.equal(launcherPayload(standaloneProduction).playbackMode, '--standalone-production')
   assert.equal(launcherPayload(videoLibrary).playbackMode, '--video-library')
+  assert.equal(launcherPayload(remoteInfrastructure).playbackMode, '--remote-infrastructure')
   assert.equal(launcherPayload(packageCandidate).packageCandidate, true)
   assert.equal(launcherPayload(screenshots).screenshotRoot, 'E:\\KaraokeQueue\\e1-03-validation\\ui-screenshots')
   assert.match(evaluation, /\$workerArgs \+= "--playback-evaluation"/)
@@ -116,6 +118,7 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.match(standaloneOptions, /\$workerArgs \+= "--standalone-options"/)
   assert.match(standaloneProduction, /\$workerArgs \+= "--standalone-production"/)
   assert.match(videoLibrary, /\$workerArgs \+= "--video-library"/)
+  assert.match(remoteInfrastructure, /\$workerArgs \+= "--remote-infrastructure"/)
   assert.match(packageCandidate, /\$workerArgs \+= "--package-candidate"/)
   assert.match(screenshots, /\$env:KQ_PLAYER_SCREENSHOT_DIR = \$screenshotRoot/)
   assert.match(screenshots, /não pode ficar dentro do checkout Windows/)
@@ -279,6 +282,17 @@ test('focused Windows video-library mode runs only the real library unit and Ele
     'build/tests/storage-resilience-electron.js',
     'scripts/usb-campaign.test.cjs',
     'build/tests/usb-campaign-electron.js'
+  ])
+})
+
+test('focused Windows remote infrastructure mode includes DNS-SD cache tests and native Electron safeStorage', () => {
+  assert.equal(requiresWindowFocus('--remote-infrastructure'), false)
+  assert.deepEqual(selectWindowsTestSuites('--remote-infrastructure').map(suite => suite.script), [
+    'build/tests/remote-infrastructure.test.js',
+    'build/tests/remote-discovery-cache.test.js',
+    'build/tests/remote-private-network.test.js',
+    'build/tests/remote-discovery-multicast.test.js',
+    'scripts/remote-safe-storage-electron.test.cjs'
   ])
 })
 
