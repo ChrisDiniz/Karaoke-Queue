@@ -1,11 +1,13 @@
 # 0006/0001 — F1: Regressão geral após limpeza e instalador
 
+**Status vigente — 2026-11-11: Concluído e validado pelo proprietário.** O aceite global da Fase F nesta sessão abrange esta etapa e suas subdivisões. [Encerramento consolidado e limites das evidências](../../fase-f-encerramento.md). O conteúdo abaixo preserva o planejamento e os checkpoints históricos; referências a não início ou homologação pendente estão superadas para acompanhamento, sem converter PARTIAL/NOT RUN/FAIL em PASS.
+
 ## Identificação
 
 - Ticket: 0006/0001
 - Ticket pai: 0006 — Fase F: Regressão e estabilização pós-instalação
 - Etapa canônica: F1
-- Status: Planejado / Não iniciado
+- Status: Concluído e validado pelo proprietário (2026-11-11)
 - Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
 
 ## Objetivo
@@ -51,6 +53,6 @@ Ticket criado nesta reorganização documental. Nenhuma regressão pós-instalad
 - [SQLite persistence safety](../../sqlite-persistence-safety.md)
 - [Remote player architecture](../../remote-player-architecture.md)
 
-## Dependência F0 — atualização de 2026-11-10
+## Dependência F0 — registro histórico de 2026-11-10
 
 A [F0](0000-f0-estabilizacao-critica-standalone.md) deve estar concluída e aprovada antes da execução geral de F1–F4. Esta atualização não inicia nem renumera esta etapa; as dependências sequenciais e autorizações individuais permanecem. E está encerrada por declaração do proprietário, sem converter limitações históricas em PASS.

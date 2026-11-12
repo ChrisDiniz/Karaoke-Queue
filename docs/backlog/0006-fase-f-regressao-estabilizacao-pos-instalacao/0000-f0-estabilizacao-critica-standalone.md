@@ -1,5 +1,7 @@
 # 0006/0000 — F0: Estabilização crítica do Standalone: biblioteca, inicialização, playback e recovery
 
+**Status vigente — 2026-11-11: Concluído e validado pelo proprietário.** O aceite global da Fase F nesta sessão abrange esta etapa e suas subdivisões. [Encerramento consolidado e limites das evidências](../../fase-f-encerramento.md). O conteúdo abaixo preserva o planejamento e os checkpoints históricos; referências a não início ou homologação pendente estão superadas para acompanhamento, sem converter PARTIAL/NOT RUN/FAIL em PASS.
+
 > **Correção estrutural vigente:** gate T2, revogação do protocolo e duas corridas de scan corrigidos e validados em fixtures Linux/Windows. Acervo real não acessado nesta correção; sua campanha anterior permanece histórica. F0 não homologada. Ver adendo final e evidências estruturais.
 
 Status da campanha real anterior: **T5 corrigido; playback real T4 passou tecnicamente, mas a campanha T4 é PARTIAL por risco não verificável de LastAccessTime; T2 PARTIAL pelo `readdir` de 9.311 nomes concluído antes da UI; F0 não homologada.** O FAIL histórico de F0-02 foi sucedido pela correção documentada. A medição T1 real foi recuperada do registro progressivo: 9.311 arquivos, scan único de 6,41 s, sem leitura de bytes de vídeo. Ver adendo final de 2026-11-10; históricos anteriores preservados.

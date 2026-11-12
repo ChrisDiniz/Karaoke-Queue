@@ -1,42 +1,62 @@
 # 0007/0002 — G2: Pareamento de dispositivos
 
-## Identificação
+## Identificação e estado
 
 - Ticket: 0007/0002
-- Ticket pai: 0007 — Fase G: Comunicação remota segura
-- Etapa canônica: G2
-- Status: Planejado
-- Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
+- Etapa canônica: G2; pai 0007 — Comunicação remota segura.
+- Status: Planejado / Não iniciado. Atualização de planejamento em 2026-11-11; sem autorização de implementação nesta rodada.
+- [Roadmap](../../standalone-player-roadmap.md), [contrato funcional](../../paired-mode-contract.md), [sequência e matriz de testes](../../paired-mode-execution-plan.md), [interfaces/IDs](../../paired-mode-ui-plan.md).
 
-## Objetivo
+## Objetivo e limite
 
-Autorizar e gerenciar a relação entre Gestão e Reprodutor.
+Autorizar um Controller por Player, com consentimento e revogação verificáveis.
 
-## Escopo
+## Pré-requisitos e dependências
 
-- Identificar dispositivos; obter consentimento; criar, gerenciar e revogar pareamento.
+G1 aprovada; T1 fechada; contrato de controlEpoch G3.1 descrito no plano, sem depender de integração H.
 
-## Decisões aprovadas
+## Módulos envolvidos
 
-- Somente dispositivos autorizados podem estabelecer a relação.
+Identidades/adapter G1; futuros pairing store/authorization Main; src/main-ipc-policy.ts. São pontos existentes ou responsabilidades futuras, não alegação de arquivos novos já implementados. Conferir consumidores antes de editar.
 
-## Pendências
+## Lotes incrementais
 
-- Experiência de confiança/certificados deve seguir decisões G1 aprovadas.
+### G2.1
 
-## Riscos
+Definir vínculo único, concessão de confiança, escopos e credenciais; autenticação não transfere automaticamente controle operacional.
 
-- Pareamento por código/IP sem autenticação não comprova identidade.
+### G2.2
 
-## Histórico de execução
+Implementar consentimento, revogação e fencing de geração de vínculo; recusar Controller concorrente e mensagens do vínculo revogado.
 
-Planejado. Nenhuma implementação iniciada.
+### G2.3
 
-## Validação
+Testar restart, revogação concorrente e recuperação da configuração; documentar o fluxo de confiança e suas interfaces após T1.
 
-E2E de autorização, revogação, reinício e tentativas não autorizadas em dois computadores de teste.
+## Critérios de aceite
 
-## Referências
+Só peer vinculado pode consultar/controlar capacidades concedidas; revogação impede novos comandos sem fabricar EOF; segundo Controller não assume silenciosamente.
 
-- [standalone-player-roadmap.md](../../standalone-player-roadmap.md)
-- [remote-player-architecture.md](../../remote-player-architecture.md)
+Cada lote entrega diff revisado, testes por impacto e documentação/evidências. Persistência exige preparar → gravar → publicar; sem enfraquecer invariantes ou assertions. Registrar NOT RUN e motivo; PASS técnico não presume aprovação do proprietário.
+
+## Testes obrigatórios
+
+Dispositivo não autorizado, dois Controllers simultâneos, credencial revogada, retry de pairing e restart com vínculo persistido. Integração Main/IPC e dois peers reais em G6.
+
+Usar relógios/barreiras determinísticos, rede sintética controlada, perfis/bancos isolados e runner Windows oficial quando aplicável. Nenhum sleep arbitrário como sincronização. CI existente recebe somente cenários determinísticos; campanhas físicas/duas máquinas ficam explícitas.
+
+## Interfaces relacionadas
+
+Não existem frames de provisionamento T1 entre os 13 originais; desenhar complemento após a estratégia técnica, sem usar takeover como pairing.
+
+## Riscos e decisões pendentes
+
+Confundir consentimento de vínculo com takeover ou com seleção de função instalada. D1/D3/D4/D5 resolvidas; D2 parcialmente resolvida (somente descarte definitivo versus retorno da fila suspensa pendente). T1/T2 preservados no contrato; não recriar decisões já aprovadas de autoridade/EOF/pacote.
+
+## Autonomia e conclusão
+
+Implementação apenas com autorização específica do proprietário. Uma autorização de fase não autoriza a próxima. Dentro do lote autorizado, tarefas mecânicas e testes podem ser delegados consecutivamente com ownership exclusivo; parar no gate de decisão técnica/funcional/visual indicado, sem inventar política. Nenhuma etapa foi iniciada por este planejamento.
+
+## Histórico preservado
+
+O ticket anterior era exclusivamente planejado, sem implementação ou validação. A revisão atual detalha esse escopo mantendo ID e posição canônica. A antiga decisão aberta de autoridade em G4 foi resolvida funcionalmente pelo proprietário no contrato pareado; D1–D5 foram posteriormente revisadas pelo proprietário: D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida, conforme o contrato vigente. Não há resultados de testes novos nesta atualização documental.

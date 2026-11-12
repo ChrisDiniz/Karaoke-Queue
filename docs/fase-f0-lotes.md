@@ -1,5 +1,7 @@
 # F0 — Lotes executáveis
 
+> **Encerramento vigente — 2026-11-11:** Fase F, incluindo F0 e suas subdivisões, concluída e validada pelo proprietário. [Registro consolidado](fase-f-encerramento.md). Este documento preserva contratos, planejamento e evidências históricas; menções a homologação pendente ou F1–F4 não iniciadas estão superadas pelo aceite. Classificações técnicas e lacunas de evidência permanecem inalteradas. Prompts e gates históricos não autorizam novas execuções.
+
 P1/P2/P3 estão aprovadas. O proprietário autorizou executar F0-01→F0-07 em sequência, com avanço automático após os gates técnicos; não é necessária confirmação entre lotes. Novos elementos visuais e pré-requisitos externos continuam sujeitos aos gates específicos. Contratos completos no [diagnóstico](fase-f0-diagnostico-arquitetura.md), oráculos e comandos na [matriz](fase-f0-testes.md). A matriz é canônica; as referências abaixo selecionam o recorte por lote, não todos os oráculos futuros.
 
 ## F0-01 — Instrumentação e baseline

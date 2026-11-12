@@ -1,5 +1,7 @@
 # F0 — Handoff consolidado para o implementador
 
+> **Encerramento vigente — 2026-11-11:** Fase F, incluindo F0 e suas subdivisões, concluída e validada pelo proprietário. [Registro consolidado](fase-f-encerramento.md). Este documento preserva contratos, planejamento e evidências históricas; menções a homologação pendente ou F1–F4 não iniciadas estão superadas pelo aceite. Classificações técnicas e lacunas de evidência permanecem inalteradas. Prompts e gates históricos não autorizam novas execuções.
+
 **P1/P2/P3 aprovadas explicitamente pelo proprietário.** A autorização vigente cobre a execução autônoma sequencial de F0-01 a F0-07, com avanço automático após cada gate técnico aprovado; não perguntar novamente entre esses lotes. Aplicar as políticas do [diagnóstico](fase-f0-diagnostico-arquitetura.md), sem redesenhar a arquitetura. A aprovação final da F0 continua reservada ao proprietário e não autoriza F1–F4/G/H.
 
 Leia AGENTS.md, seção F0 do roadmap, ticket 0006/0000, diagnóstico, [lote autorizado](fase-f0-lotes.md) e [matriz canônica](fase-f0-testes.md). Não recomeçar auditoria completa: conferir Git/HEAD e divergências reais nos módulos do lote basta. V1 e contratos da Gestão/SQLite preservados. Dados/profile/fixtures isolados; nunca apagar AppData ou recovery real, retirar guardas ou mascarar erro com sleep/retry.

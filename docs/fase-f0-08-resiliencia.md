@@ -1,5 +1,7 @@
 # F0-08 — Resiliência do Standalone Player à indisponibilidade da biblioteca durante uma sessão
 
+> **Encerramento vigente — 2026-11-11:** Fase F, incluindo F0 e suas subdivisões, concluída e validada pelo proprietário. [Registro consolidado](fase-f-encerramento.md). Este documento preserva contratos, planejamento e evidências históricas; menções a homologação pendente ou F1–F4 não iniciadas estão superadas pelo aceite. Classificações técnicas e lacunas de evidência permanecem inalteradas. Prompts e gates históricos não autorizam novas execuções.
+
 Subdivisão autorizada do ticket F0 0006/0000, posterior à infraestrutura T3 e anterior à homologação F0/F1–F4. O proprietário autorizou implementação integral e o modal diretamente no código, sem consulta/alteração Doop. Essa exceção é específica do modal F0-08. P1/P2/P3 permanecem aprovadas. Não há persistência nova da fila entre processos.
 
 ## Diagnóstico e contrato

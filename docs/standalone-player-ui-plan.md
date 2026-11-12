@@ -1,5 +1,7 @@
 # Fase C — Planejamento da interface Standalone
 
+> **Planejamento vigente G/H — 2026-11-11:** consultar o [contrato pareado](paired-mode-contract.md), o [plano incremental](paired-mode-execution-plan.md) e as [interfaces/IDs Doop](paired-mode-ui-plan.md). São capacidades planejadas, sem implementação nesta rodada. A Gestão decide fila futura/promoção; Player executa a vez atual e confirma resultados duráveis. Propostas históricas conflitantes abaixo (sincronizar fila inteira, PREVIOUS/STOP na Gestão, countdown pareado ou autoridade de reconexão indefinida) estão superadas por esse contrato. Standalone independente e histórico de implementação permanecem preservados.
+
 **Estado atualizado em 2026-11-07:** C1–C7 concluídas conforme o histórico; C1–C6 aprovadas pelo proprietário e correção textual C7 informada como concluída. C8 implementada, corrigida e aprovada manualmente no Windows. C9 concluída/resolvida e aprovada pelo proprietário como parte do checkpoint da Fase C. C10 encerrada: C10.1–C10.4 concluídas tecnicamente e C10.5 aprovada explicitamente em 2026-11-06. C11 concluída e aprovada manualmente em 2026-11-07, após validação técnica Linux/Windows. **A Fase C está concluída e aprovada.** Os registros de limitações físicas/visuais de C9 abaixo são históricos de cobertura e não são bloqueios nem exigem novos testes.
 **Escopo original:** inventário, comparação funcional e proposta das nove rodadas. O registro de execução da C1 foi acrescentado abaixo sem alterar a especificação V1.
 

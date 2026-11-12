@@ -1,5 +1,7 @@
 # Arquitetura Remote Player — proposta e status de implementação
 
+> **Planejamento vigente G/H — 2026-11-11:** consultar o [contrato pareado](paired-mode-contract.md), o [plano incremental](paired-mode-execution-plan.md) e as [interfaces/IDs Doop](paired-mode-ui-plan.md). São capacidades planejadas, sem implementação nesta rodada. A Gestão decide fila futura/promoção; Player executa a vez atual e confirma resultados duráveis. Propostas históricas conflitantes abaixo (sincronizar fila inteira, PREVIOUS/STOP na Gestão, countdown pareado ou autoridade de reconexão indefinida) estão superadas por esse contrato. Standalone independente e histórico de implementação permanecem preservados.
+
 **Fases:** 1 — arquitetura e decisões funcionais aprovadas; 2 — modos implementados; 3 — biblioteca local implementada; 4 — catálogo CSV e integração catálogo/inventário implementados; 5C — engine Chromium implementada; 5D — playback manual implementado; 5E — recuperação local implementada; 5F-A — sequência local, catálogo isolado Player e resolução de recovery inválida implementados; 5F-B — UI e janela de reprodução implementadas e validadas em Linux e Windows para Player-only; integração Combined, LAN e automação de apresentações permanecem futuras.
 **Branch analisado:** `feature/remote-player-lan-integration`
 **Estado deste documento:** arquitetura histórica até a Phase 5F-B; composição Standalone de produção e shutdown integrados na C9.4. O proprietário declarou C9 e a Fase C concluídas/aprovadas em 2026-11-07; limitações históricas de harness/input descritas abaixo não são gates atuais. Questões funcionais remotas ainda abertas estão listadas em [Decisões ainda abertas](#21-decisões-ainda-abertas). Nenhum frame do Doop foi alterado pela implementação.
@@ -678,7 +680,11 @@ Sem streaming/transferência de vídeo, catálogos online, descoberta automátic
 - `src/app.ts`, `src/application.ts`, `src/state-repository.ts`, `src/app-state-validation.ts`, regras em `src/*-rules.ts`, `src/ui/`.
 - `tests/persistence.test.ts`, `tests/persistence-electron.ts`, `tests/ipc-validation-electron.ts`, `tests/multi-instance-electron.ts`, testes de queue/session e `scripts/run-windows-native-tests.cjs`.
 
-## 21. Decisões ainda abertas
+## 21. Decisões remotas — estado atual do planejamento
+
+O modelo funcional de autoridade e reconexão foi aprovado em 2026-11-11 no [contrato pareado](paired-mode-contract.md). Só a vez atual é enviada; o Player é fonte dos resultados duráveis e a Gestão mantém fila/promoção e histórico administrativo. Não há controle remoto automático ao reconectar. D1/D3/D4/D5 estão resolvidas: preservar rotação existente, offline só após terminal ou Stop All explícito confirmado, promoção automática pelo Round Robin após EOF/Avançar da última (exceto Stop All) e cadastro conectado sem inexistentes comprovadas/offline não verificado. D2 está parcialmente resolvida: suspender fila local sem importar/executar; descarte definitivo versus retorno permanece aberto. T1/T2 (confiança/store) preservam seus gates. Não são capacidades implementadas.
+
+### Registro anterior de decisões abertas (histórico)
 
 As decisões funcionais aprovadas nas Fases 1–4 estão incorporadas: bloqueio de troca de sessão com playback ativo/incerto; matching `CatalogCode`/`MediaCode`; vídeo sem metadados continua consultável pelo código; somente fim natural correlacionado conta como cantado; apresentações de duas faixas exigem dois fins naturais; controles sem seeking; preferência futura de avanço automático com padrão Automatic; importação CSV substitutiva e atômica; busca apenas para descobrir código/disponibilidade, sem enfileirar; e inclusão na fila pelo fluxo existente baseado em código.
 

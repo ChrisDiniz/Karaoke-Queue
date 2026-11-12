@@ -74,3 +74,16 @@ Transferido da campanha antiga C11.2–C11.6. Performance não pertence mais à 
 - [Reprodução local Chromium](../../player-playback.md)
 - [Remote player architecture](../../remote-player-architecture.md)
 - [Windows native testing](../../windows-native-testing.md)
+
+## Complemento do planejamento pareado — 2026-11-11
+
+Status mantido: Planejado / Não iniciado. [Contrato](../../paired-mode-contract.md), [sequência](../../paired-mode-execution-plan.md) e [interfaces](../../paired-mode-ui-plan.md) passam a integrar a referência desta etapa. F permanece encerrada; nenhum teste iniciado.
+
+- Lotes: H6.1–H6.5 existentes preservadas.
+- Escopo adicional diretamente relacionado: Incluir journal/outbox, eventos/replay, cursores, compactação/tombstones, listeners, reconnects e timers de apresentação/celebração no baseline. Medir backlog durável durante desconexão e custo de conciliação; nenhuma otimização pode remover evidência incerta ou reexecutar operação.
+- Testes e aceite adicionais: Testar retenção e limites definidos em G3.2 sob carga e reconexões; preservar 8/12/24h, 200 reproduções e 200 trocas, acervos/telemetria existentes.
+- Módulos: adapters/serviços Main de playback, journal/outbox G3, aplicação e projeções Gestão, scripts oficiais de teste/build quando afetados.
+- Dependências: H1–H5 antes de H6; H6.1 antes de metas/otimizações; H6 antes de H7.
+- Riscos: crescimento do ledger/compatibilidade e regressões não podem ser ocultados por limpeza de dados ou enfraquecimento de teste.
+- Interfaces: reutilizar referências aprovadas; qualquer variante ainda ausente deve ser desenhada/revisada antes do lote visual.
+- Autonomia: executar apenas o lote autorizado; decisões de produto/visual e homologação são do proprietário. Testes por impacto podem ser delegados com ownership isolado; não avançar fase automaticamente.

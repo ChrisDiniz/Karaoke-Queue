@@ -1,69 +1,74 @@
 # 0008/0004 — H4: Melhorias da interface de Gestão
 
-## Identificação
+## Identificação e estado
 
 - Ticket: 0008/0004
-- Ticket pai: 0008 — Fase H: Integração operacional Gestão + Player
-- Etapa canônica: H4
-- Status: Planejado / Não iniciado
-- Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
+- Etapa canônica: H4; pai 0008 — Integração operacional Gestão + Player.
+- Status: Planejado / Não iniciado. Atualização de planejamento em 2026-11-11; sem autorização de implementação nesta rodada.
+- [Roadmap](../../standalone-player-roadmap.md), [contrato funcional](../../paired-mode-contract.md), [sequência e matriz de testes](../../paired-mode-execution-plan.md), [interfaces/IDs](../../paired-mode-ui-plan.md).
 
-## Objetivo
+## Objetivo e limite
 
-Adaptar pontualmente a interface existente de Gestão para operar com o Player remoto, preservando amplamente a UI atual da fila.
+Integrar UI Gestão/Player pareados aos contratos operacionais reais, sem reconstruir fila.
 
-## Escopo
+## Pré-requisitos e dependências
 
-- Ajustes aprovados na tela “Vez atual”.
-- Informações de música, artista e outros metadados somente conforme os frames e os dados disponíveis no catálogo opcional.
-- Controles de reprodução, informações adicionais em itens da fila e estados reais de playback conforme o design aprovado.
-- Reutilizar componentes existentes quando não houver mudança aprovada.
-- Não reconstruir a interface da Gestão nem inventar layout, metadados, controles ou comportamentos.
+H2/H3 por lote; G5 pronta; frames draft precisam revisão humana antes de implementar; autorização H4.
 
-## Dependências
+## Módulos envolvidos
 
-- Contratos de comandos/eventos e estados de H2/H3 definidos e aprovados.
-- Frames correspondentes existentes no Doop identificados, com descrições e referências aprovadas para os estados implementados.
-- Autorização explícita do proprietário para iniciar H4.
+src/ui; src/standalone-player-renderer.ts; HTML/CSS; Preloads/IPC restritos. São pontos existentes ou responsabilidades futuras, não alegação de arquivos novos já implementados. Conferir consumidores antes de editar.
 
-## Decisões aprovadas
+## Lotes incrementais
 
-- A UI atual da fila será amplamente preservada; o escopo é de melhorias pontuais.
-- Doop e suas descrições aprovadas são a fonte de verdade visual.
-- Catálogo é opcional; não presumir título/artista para todas as músicas.
-- Não implementar parte cujo frame esteja ausente, ambíguo ou sem aprovação; solicitar a referência.
+### H4.1
 
-## Pendências
+Gestão: cadastro/metadados opcionais, cantada/cancelada, edição administrativa e comandos Play/Pause, Recomeçar, Avançar, sem Voltar/Parar.
 
-- Identificar no Doop, no início da implementação, os frames específicos de Vez atual, controles, itens de fila e estados remotos aplicáveis.
-- Confirmar quais metadados e estados cada frame cobre; lacunas permanecem fora da implementação até aprovação.
+### H4.2
 
-## Riscos
+Integrar confirmação Recomeçar/Avançar primeira/última e troca com token obsoleto; nenhuma janela pausa música. Criar variantes pendentes da matriz antes de implementar.
 
-- Expandir o escopo funcional a partir de uma lista descritiva sem suporte no Doop.
-- Alterar composição/comportamento da fila aprovada ou exibir metadados não disponíveis.
-- Divergência visual entre Electron renderizado e Doop apesar de equivalência estrutural do DOM/CSS.
+### H4.3
 
-## Critérios de conclusão
+Player: apresentação de 5 s, idle existente, erro/recuperação e comandos locais confirmados; sem entrada pareada. Espera não tem timeout fixo nem modal automático.
 
-- Somente diferenças previstas em frames/descrições aprovados foram implementadas.
-- Componentes e comportamentos sem alteração de design permanecem preservados.
-- Estados e controles refletem contratos reais de H2/H3.
-- Comparação visual renderizada Electron × Doop e regressões funcionais foram registradas separadamente.
-- Aprovação visual manual do proprietário permanece um gate explícito.
+### H4.4
 
-## Validação prevista
+Integrar offline/retorno/takeover/divergência e impedir reassunção por toast; aplicar suspensão D2 e restrição de offline D3 já aprovadas; não oferecer descarte definitivo/retorno automático da fila suspensa sem decisão posterior.
 
-Identificar e rever frames/descrições e HTML editável no Doop; comparar screenshots reais do Electron e Doop em 1280×800 ou dimensão de referência; testar interação, estados, comandos, metadados ausentes/disponíveis e regressões da fila. Aprovação manual do proprietário.
+### H4.5
 
-## Histórico de execução
+Comparar render Electron com Doop nas dimensões corretas; foco, Tab/Esc/Enter, alvo atualizado e mensagens de erro; aprovação visual humana separada de testes.
 
-Ticket planejado. Os frames correspondentes foram informados como existentes, mas não foram identificados nem validados para implementação nesta reorganização documental. Nenhuma implementação começou.
+## Critérios de aceite
 
-## Referências
+HTML/controles não divergem da autoridade Main; bloqueio em apresentação/loading/transição, exceção de erro loading. Tela não exibe Substituída permanente. Metadados ausentes não bloqueiam código. Frames aprovados originais preservados.
 
-- [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
-- [Standalone player UI plan](../../standalone-player-ui-plan.md)
-- [Remote player architecture](../../remote-player-architecture.md)
-- [Player playback](../../player-playback.md)
-- [Music catalog](../../music-catalog.md)
+Cada lote entrega diff revisado, testes por impacto e documentação/evidências. Persistência exige preparar → gravar → publicar; sem enfraquecer invariantes ou assertions. Registrar NOT RUN e motivo; PASS técnico não presume aprovação do proprietário.
+
+## Testes obrigatórios
+
+Electron real Linux/Windows, teclado/foco/zoom conforme dimensões suportadas; screenshots 1440×920 Gestão e 1280×800 Player; modal aberto×EOF, erro de consulta, comando incerto e perda de rede; regressões fila e Standalone independente.
+
+Usar relógios/barreiras determinísticos, rede sintética controlada, perfis/bancos isolados e runner Windows oficial quando aplicável. Nenhum sleep arbitrário como sincronização. CI existente recebe somente cenários determinísticos; campanhas físicas/duas máquinas ficam explícitas.
+
+## Interfaces relacionadas
+
+Todos os IDs e estados em paired-mode-ui-plan.md; não duplicar implementação dos avisos de protocolo de G5.
+
+## Riscos e decisões pendentes
+
+Rascunho não é aprovação visual; frames originais têm três conflitos descritos na matriz e não autorizam comportamento antigo. D1/D3/D4/D5 resolvidas; D2 parcialmente resolvida (somente descarte definitivo versus retorno da fila suspensa pendente). T1/T2 preservados no contrato; não recriar decisões já aprovadas de autoridade/EOF/pacote.
+
+## Autonomia e conclusão
+
+Implementação apenas com autorização específica do proprietário. Uma autorização de fase não autoriza a próxima. Dentro do lote autorizado, tarefas mecânicas e testes podem ser delegados consecutivamente com ownership exclusivo; parar no gate de decisão técnica/funcional/visual indicado, sem inventar política. Nenhuma etapa foi iniciada por este planejamento.
+
+## Histórico preservado
+
+O ticket anterior era exclusivamente planejado, sem implementação ou validação. A revisão atual detalha esse escopo mantendo ID e posição canônica. A antiga decisão aberta de autoridade em G4 foi resolvida funcionalmente pelo proprietário no contrato pareado; D1–D5 foram posteriormente revisadas pelo proprietário: D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida, conforme o contrato vigente. Não há resultados de testes novos nesta atualização documental.
+
+## Aceite adicional — decisões funcionais aprovadas
+
+Aplicar os cenários DEC-01–05 da [matriz](../../paired-mode-execution-plan.md) conforme o impacto deste ticket: resultados mistos não alteram rodadas/rotação; takeover suspende a fila local, sem importação ou execução automática; vez ativa impede offline até conclusão ou Stop All explicitamente confirmado; EOF/Avançar da última promovem automaticamente uma vez, Stop All não promove; cadastro inexistente comprovado é bloqueado conectado, e offline aceita registro não verificado com revalidação antes do playback. D1/D3/D4/D5 resolvidas, D2 parcialmente resolvida. Preservar a pendência final de descarte versus retorno da fila suspensa. Testes apenas planejados, sem execução nesta atualização.

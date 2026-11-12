@@ -77,3 +77,16 @@ Ticket novo, planejado e não iniciado. Nenhuma build, publicação, distribuiç
 - [Windows release process](../../windows-release-process.md)
 - [Windows native testing](../../windows-native-testing.md)
 - [Remote player architecture](../../remote-player-architecture.md)
+
+## Complemento do planejamento pareado — 2026-11-11
+
+Status mantido: Planejado / Não iniciado. [Contrato](../../paired-mode-contract.md), [sequência](../../paired-mode-execution-plan.md) e [interfaces](../../paired-mode-ui-plan.md) passam a integrar a referência desta etapa. F permanece encerrada; nenhum teste iniciado.
+
+- Lotes: H7.1 — Revisão; H7.2 — entrega autorizada; H7.3 — operação pelo proprietário.
+- Escopo adicional diretamente relacionado: Revisar compatibilidade dos schemas/journals/epochs, instruções de offline/retorno/takeover, retenção, D1/D3/D4/D5 resolvidas e suspensão D2 verificada. Descarte definitivo ou retorno da fila suspensa só podem ser habilitados após escolha explícita da parte restante de D2. H8 permanece posterior; nenhuma publicação ou instalação automática.
+- Testes e aceite adicionais: Smoke/update/instalação conforme processo existente e autorização; dois dispositivos e homologação do proprietário. Build, distribuição e release mantêm gates específicos.
+- Módulos: adapters/serviços Main de playback, journal/outbox G3, aplicação e projeções Gestão, scripts oficiais de teste/build quando afetados.
+- Dependências: H1–H6/G aprovadas e autorizações específicas de entrega.
+- Riscos: crescimento do ledger/compatibilidade e regressões não podem ser ocultados por limpeza de dados ou enfraquecimento de teste.
+- Interfaces: reutilizar referências aprovadas; qualquer variante ainda ausente deve ser desenhada/revisada antes do lote visual.
+- Autonomia: executar apenas o lote autorizado; decisões de produto/visual e homologação são do proprietário. Testes por impacto podem ser delegados com ownership isolado; não avançar fase automaticamente.

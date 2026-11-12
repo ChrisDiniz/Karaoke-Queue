@@ -1,5 +1,7 @@
 # F0 — Relatório da auditoria documental
 
+> **Encerramento vigente — 2026-11-11:** Fase F, incluindo F0 e suas subdivisões, concluída e validada pelo proprietário. [Registro consolidado](fase-f-encerramento.md). Este documento preserva contratos, planejamento e evidências históricas; menções a homologação pendente ou F1–F4 não iniciadas estão superadas pelo aceite. Classificações técnicas e lacunas de evidência permanecem inalteradas. Prompts e gates históricos não autorizam novas execuções.
+
 > **Correção estrutural vigente:** gate T2, revogação do protocolo e duas corridas de scan corrigidos e validados em fixtures Linux/Windows. Acervo real não acessado nesta correção; sua campanha anterior permanece histórica. F0 não homologada. Ver adendo final e evidências estruturais.
 
 > **Registro histórico (2026-11-10; sucedido pelos adendos abaixo):** T2 reutilizou o índice real e tornou a UI utilizável antes do fim da reconciliação, mas é **PARTIAL** porque `readdir` já havia retornado 9.311 nomes antes da UI. As assertions de playback T4 passaram com um MP4 real; a classificação geral T4 é **PARTIAL** porque a política Windows permite atualização automática de LastAccessTime e não houve baseline por arquivo. T3 físico, A/V humano e pacote instalado permanecem pendentes; F0 não está homologada. Consulte o adendo final “Campanha Windows real — T2 e T4”.

@@ -1,5 +1,7 @@
 # Backlog operacional do Karaoke Queue
 
+**Encerramento vigente — 2026-11-11: Fase F CONCLUÍDA E VALIDADA pelo proprietário**, conforme declaração explícita nesta sessão, abrangendo F0–F4. [Registro consolidado, evidências e limitações](../fase-f-encerramento.md). Estados anteriores de F aberta/não homologada e F1–F4 não iniciadas são históricos e estão superados por este aceite; resultados PARTIAL/NOT RUN permanecem intactos. G/H aguardam planejamento e autorização específica.
+
 **Encerramento — 2026-11-09: Fase E CONCLUÍDA por decisão explícita do proprietário nesta sessão.** Este registro substitui os status anteriores de revisão/aceite pendente para o encerramento da fase e de E1–E5. E0 mantém sua aprovação de 2026-11-08. A solicitação de encerramento não é evidência de execução de testes adicionais: S1 permanece historicamente PARTIAL, e cenários registrados como NOT RUN não foram convertidos em PASS. Evidências, riscos e limitações anteriores ficam preservados. Fase F não iniciada nem autorizada por este encerramento.
 
 As atualizações anteriores abaixo são histórico.
@@ -23,8 +25,8 @@ O roadmap continua sendo a fonte autoritativa da direção, escopo, dependência
 | `0003` | C — Interface Standalone | [0003-fase-c-interface-standalone](0003-fase-c-interface-standalone/) | C1–C11 concluídas conforme registros. C9 concluída/resolvida e aprovada pelo proprietário em 2026-11-07; suas limitações de cobertura anteriores são históricas, sem bloqueio ou reteste requerido. C10.5 aprovada explicitamente em 2026-11-06; C11 aprovada manualmente em 2026-11-07. **Fase C concluída e aprovada pelo proprietário.** |
 | `0004` | D — Auditoria, limpeza e modularização do Main | [0004-fase-d-modularizacao-limpeza-legado](0004-fase-d-modularizacao-limpeza-legado/) | **Fase D concluída e aprovada pelo proprietário em 2026-11-07.** D1–D3 concluídas; D4.1 concluída, D4.2 aprovada, D4.3 concluída nos oito lotes; D5 automatizada PASS e validação manual global aprovada. Limites específicos anteriormente `NOT RUN` permanecem identificados como tais nos tickets. |
 | `0005` | E — Consolidação de funções, instalador e gerenciamento | [0005-fase-e-instalador-gerenciamento-funcoes](0005-fase-e-instalador-gerenciamento-funcoes/) | Concluída — encerramento explícito pelo proprietário em 2026-11-09; E0–E5 encerradas. Evidências e limitações históricas preservadas; F ainda não havia iniciado naquele encerramento. |
-| `0006` | F — Regressão e estabilização pós-instalação | [0006-fase-f-regressao-estabilizacao-pos-instalacao](0006-fase-f-regressao-estabilizacao-pos-instalacao/) | F0 implementada, incluindo F0-08 e infraestrutura T3; integração e auditoria CI em [registro próprio](../fase-f0-ci.md). Evidências físicas e limitações no relatório F0; avaliação GitHub e homologação do proprietário pendentes. F1–F4 não iniciadas. |
-| `0007` | G — Comunicação remota segura | [0007-fase-g-comunicacao-remota-segura](0007-fase-g-comunicacao-remota-segura/) | Planejada, não iniciada. A decisão de autoridade da fila em conexão/reconexão segue pendente em G4. |
+| `0006` | F — Regressão e estabilização pós-instalação | [0006-fase-f-regressao-estabilizacao-pos-instalacao](0006-fase-f-regressao-estabilizacao-pos-instalacao/) | Concluída e validada pelo proprietário em 2026-11-11, incluindo F0–F4. [Encerramento e limites das evidências](../fase-f-encerramento.md). |
+| `0007` | G — Comunicação remota segura | [0007-fase-g-comunicacao-remota-segura](0007-fase-g-comunicacao-remota-segura/) | Planejada, não iniciada. Modelo pareado definido; mecanismos em G1–G6, gates técnicos T1/T2 e integração operacional em H. |
 | `0008` | H — Integração operacional Gestão + Player | [0008-fase-h-integracao-operacional-gestao-player](0008-fase-h-integracao-operacional-gestao-player/) | Planejada, não iniciada. |
 
 **Estado E vigente — 2026-11-09:** primeiro CI integral PASS, run 42622477298, HEAD b92e950, artifact NSIS baixado e hash verificado. [Evidência e limites](../fase-e-revisao-independente.md#24-primeiro-ci-integral-pass-e-artifact--2026-11-09). S1 PARTIAL; E1–E5 sem homologação/aprovação, UAC interativo/contas/sessões/legado/manutenção/aceite humano pendentes. Registros anteriores abaixo são históricos.
@@ -66,7 +68,7 @@ A sequência permanece A → B → C → D → E → F → G → H. A Fase C foi
 
 E concluída precede F; F precede G; G precede H. H1 precede H2. H2 e contratos remotos relevantes precedem os fluxos dependentes de H3. H1–H5 precedem H6; H6 concluída é requisito obrigatório para H7; H7 precede H8. Builds, distribuição, publicação e instalação efetiva de H7 exigem autorização específica do proprietário, cada uma quando aplicável. A validação presencial do estabelecimento é conduzida pelo proprietário e não pode ser presumida.
 
-A decisão antiga F4 sobre autoridade da fila quando Player independente se conecta/reconecta é agora registrada em G4. Ela continua deliberadamente pendente; não presumir fusão, substituição, descarte ou transferência da fila. Resolvê-la antes de implementar fluxos G2/G3 que dela dependam e antes da reconciliação operacional dependente em H3.
+A decisão antiga F4, depois G4, foi detalhada pelo proprietário no [contrato pareado](../paired-mode-contract.md): Gestão mantém fila/promoção, Player executa vez aceita e registra resultados duráveis; offline/retorno são explícitos, sem importação de fila local. D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida (suspender, sem importar/executar; destino final pendente); T1/T2 mantêm seus gates; a decisão ampla de autoridade não permanece aberta.
 
 ## Estados dos tickets
 
@@ -76,8 +78,12 @@ Use: Planejado; Pendente; Em implementação; Implementado — aguardando valida
 
 Antes de iniciar uma etapa, consulte o roadmap, o ticket e os documentos técnicos e confirme a autorização aplicável. Registre escopo, arquivos, testes executados/omitidos, evidências, riscos e pendências no ticket correspondente. Após validação, atualize status com base em evidência e sincronize roadmap quando status ou aprovação mudar. A reorganização deste índice e dos tickets foi autorizada documentalmente; ela não autoriza implementação das fases.
 
-## Atualização vigente F — execução F0 em 2026-11-10
+## Histórico F — execução F0 em 2026-11-10
 
 O ticket pai 0006 contém o filho [0006/0000 — F0](0006-fase-f-regressao-estabilizacao-pos-instalacao/0000-f0-estabilizacao-critica-standalone.md), subdividido em F0-01–07. Os sete lotes foram implementados e os gates automatizados disponíveis passaram após a correção de identidade de arquivo NTFS de 64 bits. F0 aguarda homologação: baseline no HD pessoal, USB físico e instalação do pacote ficaram `NOT RUN`. F1–F4 preservam IDs e permanecem não iniciadas; E continua concluída conforme declaração do proprietário.
 
 **Decisões e escopo F0:** P1 (idle seguro no restart), P2 (recuperação runtime com contenção confirmada) e P3 (JSON Main-only e consistência eventual com revalidação seletiva) estão aprovadas. A autorização global cobre F0-01–07 e avanço automático pelos gates. A matriz de 31 grupos e INS-01–03 foi executada conforme pré-requisitos; nenhuma variante de HD/instalação foi convertida em PASS. Aprovação final F0 pertence ao proprietário e precede F1–F4.
+
+## Planejamento pareado G/H — 2026-11-11
+
+G1–G6 e H1–H8 revisadas, sem novos IDs ou renumeração. Novas responsabilidades estão subdivididas nos tickets existentes. [Contrato](../paired-mode-contract.md), [sequência, autonomia e testes](../paired-mode-execution-plan.md), [Doop/IDs e descrições](../paired-mode-ui-plan.md). Status de G/H: Planejado / Não iniciado. Primeira tarefa proposta: G1.1, estratégia técnica de confiança/transporte, mediante autorização. Nenhum código, teste funcional, workflow ou dado operacional alterado; F preservada.

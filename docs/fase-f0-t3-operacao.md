@@ -1,5 +1,7 @@
 # F0 — T3 físico interativo: procedimento operacional
 
+> **Encerramento vigente — 2026-11-11:** Fase F, incluindo F0 e suas subdivisões, concluída e validada pelo proprietário. [Registro consolidado](fase-f-encerramento.md). Este documento preserva contratos, planejamento e evidências históricas; menções a homologação pendente ou F1–F4 não iniciadas estão superadas pelo aceite. Classificações técnicas e lacunas de evidência permanecem inalteradas. Prompts e gates históricos não autorizam novas execuções.
+
 > **Procedimento vigente ampliado:** a campanha unificada T3 + F0-08 para `testekaraoke` está no adendo ao final. A autorização de mídia descartável é específica desse dispositivo e exige os consentimentos descritos; não representa proteção contra escrita. As regras estritas abaixo continuam válidas para o modo protegido/runner legado. A execução física permanece NOT RUN e exige solicitação posterior.
 
 Status: infraestrutura implementada e validada com fixtures Linux/Windows. **T3 físico NOT RUN; F0 não homologada.** Não executar por iniciativa do agente. Exige solicitação explícita do proprietário e supervisão durante toda intervenção física. P1/P2/P3 permanecem aprovadas.

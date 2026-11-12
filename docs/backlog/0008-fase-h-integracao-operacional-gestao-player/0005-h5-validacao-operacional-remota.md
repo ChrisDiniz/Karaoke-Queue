@@ -1,73 +1,66 @@
 # 0008/0005 — H5: Validação operacional remota
 
-## Identificação
+## Identificação e estado
 
 - Ticket: 0008/0005
-- Ticket pai: 0008 — Fase H: Integração operacional Gestão + Player
-- Etapa canônica: H5
-- Status: Planejado / Não iniciado
-- Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
+- Etapa canônica: H5; pai 0008 — Integração operacional Gestão + Player.
+- Status: Planejado / Não iniciado. Atualização de planejamento em 2026-11-11; sem autorização de implementação nesta rodada.
+- [Roadmap](../../standalone-player-roadmap.md), [contrato funcional](../../paired-mode-contract.md), [sequência e matriz de testes](../../paired-mode-execution-plan.md), [interfaces/IDs](../../paired-mode-ui-plan.md).
 
-## Objetivo
+## Objetivo e limite
 
-Determinar, com evidências integradas, se a operação remota da Gestão está pronta para o primeiro release controlado de H7.
+Validar operação pareada completa e obter homologação com Gestão/Player em computadores distintos.
 
-## Escopo
+## Pré-requisitos e dependências
 
-- Gestão operacional, mesas/cantores, fila inteligente, prioridades e histórico.
-- Controles e Player remoto, estados/eventos e metadados disponíveis.
-- Persistência, desconexão/reconexão, recovery e consistência entre dois computadores.
-- Regressões diretamente relacionadas aos caminhos integrados.
-- A validação desta etapa é remota; não inclui a reprodução local integrada de H8.
+G e H1–H4 concluídas/aprovadas; D1/D3/D4/D5 aprovadas; suspensão D2 testada e destinos finais ainda indefinidos explicitamente excluídos/bloqueados; dois computadores; autorização H5.
 
-## Dependências
+## Módulos envolvidos
 
-- H1–H4 concluídas e aprovadas.
-- Fase G e contratos/capacidades remotas relevantes aprovados.
-- Decisão G4 resolvida para os cenários testados que exijam política de autoridade/reconciliação.
-- Autorização explícita do proprietário para iniciar H5.
+Aplicativo Main real, IPC/SQLite/MP4, journal/outbox e runners Linux/Windows existentes. São pontos existentes ou responsabilidades futuras, não alegação de arquivos novos já implementados. Conferir consumidores antes de editar.
 
-## Decisões aprovadas
+## Lotes incrementais
 
-- Prioridade é Gestão (Combined) em um computador e Player (Standalone) em outro.
-- G6 valida transporte/estado, mas não substitui a operação integrada H5.
-- H5 fornece evidências para H7; não declara aprovação humana automática.
-- Playback local integrado não é requisito nem cenário de aceite de H5.
+### H5.1
 
-## Pendências
+Executar matriz integrada determinística e Electron real; conferir critérios do contrato ponta a ponta.
 
-- Disponibilidade de dois computadores Windows, rede local, MP4, perfis e bancos isolados.
-- Critérios de decisões G4 que dependam de aprovação específica.
-- Validação presencial do proprietário ocorre após a disponibilização controlada, conforme H7.
+### H5.2
 
-## Riscos
+Campanha Windows nativa em dois computadores com mídia de teste e perfis isolados: turnos, local/remoto, rede, offline/retorno/takeover e reconciliação.
 
-- Diferença entre testes isolados de transporte e condições reais de rede/uso.
-- Perda ou duplicação de apresentação, avanço indevido, estado visual divergente ou dados não persistidos.
-- Resultados técnicos automatizados podem não revelar problemas operacionais do estabelecimento.
+### H5.3
 
-## Critérios de conclusão
+Registrar ambiente/fingerprints, falhas/correções e resultados funcionais, visuais e técnicos separados; homologação humana antes de H6/H7.
 
-- Eventos/comandos correlacionados e sem perda/duplicação de apresentações.
-- Nenhum avanço indevido; Stop/erro/desconexão não são conclusão natural.
-- Controles e estados visuais correspondem ao playback observado e a contratos aprovados.
-- Falhas de rede e recovery preservam a integridade dos dados operacionais.
-- Evidências, ambiente, falhas, limitações e regressões são registradas para decisão do proprietário sobre H7.
+## Critérios de aceite
 
-## Validação prevista
+Zero EOF artificial, avanço/turno/histórico duplicado ou perda de resultado confirmado. Round Robin/2:1 e dados preservados; mídia sem CSV opera. Evidências físicas não inferidas de mocks; NOT RUN explícito.
 
-Dois computadores reais na rede local, Electron e IPC reais, MP4 real, SQLite real, gestão de fila/histórico, metadados e cenários de desconexão/reconexão/recovery. Separar resultados técnicos dos testes humanos e audiovisuais do proprietário.
+Cada lote entrega diff revisado, testes por impacto e documentação/evidências. Persistência exige preparar → gravar → publicar; sem enfraquecer invariantes ou assertions. Registrar NOT RUN e motivo; PASS técnico não presume aprovação do proprietário.
 
-## Histórico de execução
+## Testes obrigatórios
 
-Ticket planejado. O antigo ticket H5 incluía cenários locais e remotos; a organização atual limita este ticket à operação remota. Nenhuma validação foi iniciada.
+Todos os cenários da matriz do plano, incluindo segunda indisponível, erro entre músicas, EOF×comandos, duas origens, ACK perdido, restart, fila futura alterada, reconexão em celebração/apresentação, Stop All, offline, takeover e peer não autorizado. Linux + Windows oficial + dois computadores reais.
 
-## Referências
+Usar relógios/barreiras determinísticos, rede sintética controlada, perfis/bancos isolados e runner Windows oficial quando aplicável. Nenhum sleep arbitrário como sincronização. CI existente recebe somente cenários determinísticos; campanhas físicas/duas máquinas ficam explícitas.
 
-- [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
-- [Ticket H1 — Gestão Combined preparada para operação remota](0001-h1-gestao-operacional.md)
-- [Ticket H2 — Player remoto](0002-h2-integracao-player-remoto.md)
-- [Ticket H3 — Autoridade e sincronização](0003-h3-autoridade-sincronizacao-operacional.md)
-- [Ticket H4 — UI da Gestão](0004-h4-melhorias-interface-gestao.md)
-- [Ticket G6 — Validação remota](../0007-fase-g-comunicacao-remota-segura/0006-g6-validacao-remota.md)
-- [Windows native testing](../../windows-native-testing.md)
+## Interfaces relacionadas
+
+Comparação de todos os estados usados e revisão humana dos novos frames; não inicia H6/H7 automaticamente.
+
+## Riscos e decisões pendentes
+
+Homologação operacional não substituída por G6 ou screenshots; diferenças audiovisuais/hardware exigem proprietário. D1/D3/D4/D5 resolvidas; D2 parcialmente resolvida (somente descarte definitivo versus retorno da fila suspensa pendente). T1/T2 preservados no contrato; não recriar decisões já aprovadas de autoridade/EOF/pacote.
+
+## Autonomia e conclusão
+
+Implementação apenas com autorização específica do proprietário. Uma autorização de fase não autoriza a próxima. Dentro do lote autorizado, tarefas mecânicas e testes podem ser delegados consecutivamente com ownership exclusivo; parar no gate de decisão técnica/funcional/visual indicado, sem inventar política. Nenhuma etapa foi iniciada por este planejamento.
+
+## Histórico preservado
+
+O ticket anterior era exclusivamente planejado, sem implementação ou validação. A revisão atual detalha esse escopo mantendo ID e posição canônica. A antiga decisão aberta de autoridade em G4 foi resolvida funcionalmente pelo proprietário no contrato pareado; D1–D5 foram posteriormente revisadas pelo proprietário: D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida, conforme o contrato vigente. Não há resultados de testes novos nesta atualização documental.
+
+## Aceite adicional — decisões funcionais aprovadas
+
+Aplicar os cenários DEC-01–05 da [matriz](../../paired-mode-execution-plan.md) conforme o impacto deste ticket: resultados mistos não alteram rodadas/rotação; takeover suspende a fila local, sem importação ou execução automática; vez ativa impede offline até conclusão ou Stop All explicitamente confirmado; EOF/Avançar da última promovem automaticamente uma vez, Stop All não promove; cadastro inexistente comprovado é bloqueado conectado, e offline aceita registro não verificado com revalidação antes do playback. D1/D3/D4/D5 resolvidas, D2 parcialmente resolvida. Preservar a pendência final de descarte versus retorno da fila suspensa. Testes apenas planejados, sem execução nesta atualização.

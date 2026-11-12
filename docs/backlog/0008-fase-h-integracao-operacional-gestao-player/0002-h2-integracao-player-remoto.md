@@ -1,69 +1,74 @@
 # 0008/0002 — H2: Integração com Player remoto
 
-## Identificação
+## Identificação e estado
 
 - Ticket: 0008/0002
-- Ticket pai: 0008 — Fase H: Integração operacional Gestão + Player
-- Etapa canônica: H2
-- Status: Planejado / Não iniciado
-- Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
+- Etapa canônica: H2; pai 0008 — Integração operacional Gestão + Player.
+- Status: Planejado / Não iniciado. Atualização de planejamento em 2026-11-11; sem autorização de implementação nesta rodada.
+- [Roadmap](../../standalone-player-roadmap.md), [contrato funcional](../../paired-mode-contract.md), [sequência e matriz de testes](../../paired-mode-execution-plan.md), [interfaces/IDs](../../paired-mode-ui-plan.md).
 
-## Objetivo
+## Objetivo e limite
 
-Permitir que o Combined de Gestão controle um Player Standalone instalado em outro computador pela infraestrutura segura aprovada na Fase G.
+Executar uma vez aceita de 1–2 músicas no Player com comandos locais/remotos correlacionados.
 
-## Escopo
+## Pré-requisitos e dependências
 
-- Integrar comandos operacionais autorizados da Gestão aos serviços remotos do Player.
-- Receber eventos e snapshots reais do Player.
-- Aplicar autenticação, pareamento, autorização, versionamento e transporte definidos na Fase G.
-- Preservar o isolamento de dados e processos entre computadores.
-- Manter a operação independente do Player quando desconectado, conforme contratos aprovados.
-- Reutilizar serviços e contratos existentes; não criar protocolo alternativo ou duplicação desnecessária.
+H1 e G aprovadas; contratos §3–§6; frames H4 consultados/aprovados quando houver UI; autorização H2.
 
-## Dependências
+## Módulos envolvidos
 
-- H1 concluída.
-- Infraestrutura e contratos relevantes da Fase G implementados e aprovados.
-- Decisão G4 sobre autoridade/reconciliação resolvida antes de implementar fluxos que dependam dela.
-- Autorização explícita do proprietário para iniciar H2.
+src/main-media-runtime.ts; src/standalone-player-{sequence,runtime,contracts}.ts como referência; src/player-playback-service.ts; futuros paired runtime/adapter Main; journal port G3. São pontos existentes ou responsabilidades futuras, não alegação de arquivos novos já implementados. Conferir consumidores antes de editar.
 
-## Decisões aprovadas
+## Lotes incrementais
 
-- A comunicação remota utiliza a infraestrutura e os contratos da Fase G.
-- O Player pode continuar funcionando independentemente enquanto desconectado.
-- O protocolo remoto não cria segunda autoridade sobre a fila da Gestão.
+### H2.1
 
-## Pendências
+Implementar aceite único do pacote da vez e validação física de ambas as músicas; rejeição não inicia nem promove ninguém.
 
-- A política de autoridade quando Player independente estabelece/restabelece conexão continua deliberadamente adiada em G4.
-- Dependências específicas de segurança, pairing, reconexão e estado incerto devem estar aprovadas antes do fluxo correspondente.
+### H2.2
 
-## Riscos
+Orquestrar apresentação única 5 s, loading, primeira/segunda, transição sem celebração intermediária e celebração final 5 s só para EOF da última. Queda após aceite preserva vez.
 
-- Comando não autorizado, estado obsoleto, falha de rede ou ACK incerto.
-- Diferença entre o estado observado no Player e o confirmado pela Gestão.
-- A integração pode duplicar responsabilidades já existentes na Fase G se os contratos não forem reutilizados.
+### H2.3
 
-## Critérios de conclusão
+Unificar Main arbiter para pause/resume, restart, next e Stop All local; Gestão não oferece Stop/Voltar. Validar token de confirmação e alvo/tentativa; sem submit-code pareado.
 
-- Combined envia comandos autorizados e recebe eventos/snapshots correlacionados do Player remoto.
-- A operação respeita as fronteiras de segurança e isolamento estabelecidas na Fase G.
-- Desconexão não desativa indevidamente a operação independente do Player nem altera a fila por suposição.
-- Resultados e limitações dos testes entre processos/computadores ficam registrados.
+### H2.4
 
-## Validação prevista
+Trocar somente música atual após validação/contenção, nova tentativa na mesma ocorrência; paused e erro loading confirmado cobertos; não editar cantada.
 
-Testes reais de comunicação entre Combined e Player em computadores distintos, cobrindo pareamento/autorização, comandos, snapshots/eventos, desconexão e reconexão conforme os contratos F aprovados.
+### H2.5
 
-## Histórico de execução
+Registrar eventos/terminais duráveis antes de publicar; falha em música 2 preserva EOF da 1; restart inesperado sem autoplay.
 
-Planejado. Nenhuma implementação ou validação foi iniciada.
+## Critérios de aceite
 
-## Referências
+Nenhuma ativação/timer/playback duplicado. Apresentação bloqueia ações/edição. Música 2 revalidada antes de executar. Só EOF confirmado vira cantada; Stop All encerra sem avançar fila Gestão. Standalone independente preservado.
 
-- [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
-- [Ticket H1 — Gestão Combined preparada para operação remota](0001-h1-gestao-operacional.md)
-- [Ticket G3 — Comandos e sincronização](../0007-fase-g-comunicacao-remota-segura/0003-g3-comandos-eventos-sincronizacao.md)
-- [Ticket G4 — Reconexão e recuperação](../0007-fase-g-comunicacao-remota-segura/0004-g4-reconexao-recuperacao.md)
-- [Remote player architecture](../../remote-player-architecture.md)
+Cada lote entrega diff revisado, testes por impacto e documentação/evidências. Persistência exige preparar → gravar → publicar; sem enfraquecer invariantes ou assertions. Registrar NOT RUN e motivo; PASS técnico não presume aprovação do proprietário.
+
+## Testes obrigatórios
+
+Turno duplicado com mesmo/diferente operationId, segunda indisponível, falha entre músicas, queda durante apresentação, reconnect na celebração, EOF×Avançar, local×remoto, troca×EOF, confirmação tardia, Stop All depois de EOF1. Unitários com relógio controlado, Main/IPC e Electron MP4 isolado Linux/Windows.
+
+Usar relógios/barreiras determinísticos, rede sintética controlada, perfis/bancos isolados e runner Windows oficial quando aplicável. Nenhum sleep arbitrário como sincronização. CI existente recebe somente cenários determinísticos; campanhas físicas/duas máquinas ficam explícitas.
+
+## Interfaces relacionadas
+
+3a9l_r00eg; modais locais RVRxz-s16i/2NjukUsCvh/ybFFiZIeQq/GxtqFzuqvy; H4 monta camada visual.
+
+## Riscos e decisões pendentes
+
+Dois orquestradores no mesmo engine; evento terminal ou tentativa obsoleta afetar próxima música; disco cheio após efeito físico. D1/D3/D4/D5 resolvidas; D2 parcialmente resolvida (somente descarte definitivo versus retorno da fila suspensa pendente). T1/T2 preservados no contrato; não recriar decisões já aprovadas de autoridade/EOF/pacote.
+
+## Autonomia e conclusão
+
+Implementação apenas com autorização específica do proprietário. Uma autorização de fase não autoriza a próxima. Dentro do lote autorizado, tarefas mecânicas e testes podem ser delegados consecutivamente com ownership exclusivo; parar no gate de decisão técnica/funcional/visual indicado, sem inventar política. Nenhuma etapa foi iniciada por este planejamento.
+
+## Histórico preservado
+
+O ticket anterior era exclusivamente planejado, sem implementação ou validação. A revisão atual detalha esse escopo mantendo ID e posição canônica. A antiga decisão aberta de autoridade em G4 foi resolvida funcionalmente pelo proprietário no contrato pareado; D1–D5 foram posteriormente revisadas pelo proprietário: D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida, conforme o contrato vigente. Não há resultados de testes novos nesta atualização documental.
+
+## Aceite adicional — decisões funcionais aprovadas
+
+Aplicar os cenários DEC-01–05 da [matriz](../../paired-mode-execution-plan.md) conforme o impacto deste ticket: resultados mistos não alteram rodadas/rotação; takeover suspende a fila local, sem importação ou execução automática; vez ativa impede offline até conclusão ou Stop All explicitamente confirmado; EOF/Avançar da última promovem automaticamente uma vez, Stop All não promove; cadastro inexistente comprovado é bloqueado conectado, e offline aceita registro não verificado com revalidação antes do playback. D1/D3/D4/D5 resolvidas, D2 parcialmente resolvida. Preservar a pendência final de descarte versus retorno da fila suspensa. Testes apenas planejados, sem execução nesta atualização.

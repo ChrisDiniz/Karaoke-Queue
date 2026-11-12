@@ -1,45 +1,66 @@
 # 0007/0004 — G4: Reconexão e recuperação
 
-## Identificação
+## Identificação e estado
 
 - Ticket: 0007/0004
-- Ticket pai: 0007 — Fase G: Comunicação remota segura
-- Etapa canônica: G4
-- Status: Planejado
-- Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
+- Etapa canônica: G4; pai 0007 — Comunicação remota segura.
+- Status: Planejado / Não iniciado. Atualização de planejamento em 2026-11-11; sem autorização de implementação nesta rodada.
+- [Roadmap](../../standalone-player-roadmap.md), [contrato funcional](../../paired-mode-contract.md), [sequência e matriz de testes](../../paired-mode-execution-plan.md), [interfaces/IDs](../../paired-mode-ui-plan.md).
 
-## Objetivo
+## Objetivo e limite
 
-Tratar desconexão e resultados incertos sem perda, duplicação ou mudança automática de autoridade.
+Reconciliar identidade, estado e operações sem replay cego ou tomada automática de controle.
 
-## Escopo
+## Pré-requisitos e dependências
 
-- Cobrir timeout, reconexão, ACK perdido, mensagens tardias, comando incerto e reinício de processo.
-- Manter Player operacional independente quando desconectado.
+G3.1–G3.4 e G2; sem dependência da implementação H. Política funcional já definida no contrato; suspensão local D2 e restrição de offline D3 são integradas em H; só o destino final da fila suspensa permanece pendente.
 
-## Decisões aprovadas
+## Módulos envolvidos
 
-- Decisão deliberadamente adiada: “Definir o comportamento da autoridade sobre a fila quando um Player que estava funcionando independentemente estabelece ou restabelece conexão com um Controller.”
-- Não presumir fusão/substituição/descarte da fila, transferência de autoridade, interrupção da música ou política de reconciliação.
+Ports G3, transporte G1; futuros recovery/reconciliation Main; src/player-playback-recovery*. São pontos existentes ou responsabilidades futuras, não alegação de arquivos novos já implementados. Conferir consumidores antes de editar.
 
-## Pendências
+## Lotes incrementais
 
-- A autoridade da fila em conexão/reconexão exige análise e aprovação explícita antes do fluxo correspondente.
+### G4.1
 
-## Riscos
+Implementar handshake de reconexão: snapshot, cursor/eventos, comparação de epochs/revisões e consulta de operação original; não bloquear execução por rede.
 
-- Operação ambígua após perda de ACK pode ser executada duas vezes; reconexão pode encontrar estado divergente.
+### G4.2
 
-## Histórico de execução
+Resolver timeout e uncertain; invalidar comandos por sessão/controlEpoch sem apagar resultados antigos; nenhuma nova intenção Avançar no retry.
 
-Planejado. A decisão de autoridade está aberta por aprovação do proprietário.
+### G4.3
 
-## Validação
+Expor mecanismo de transição explícita de modo/autoridade e fences; H3 fornece intenção/política de domínio e takeover.
 
-Simular desconexão/reconexão, ACK perdido, atraso, duplicata, reinício e estado incerto. Não validar política de fila até aprovação da decisão adiada.
+### G4.4
 
-## Referências
+Recuperar após restart sem autoplay, mídia ativa presumida ou perda de resultados; disponibilizar divergência contextual e bloqueio apenas dependente.
 
-- [standalone-player-roadmap.md](../../standalone-player-roadmap.md)
-- [remote-player-architecture.md](../../remote-player-architecture.md)
-- [player-playback.md](../../player-playback.md)
+## Critérios de aceite
+
+Conexão não implica controle operacional; snapshot e replay convergem mesmo com EOF durante handshake. Comando velho não afeta próxima ocorrência. Não espera ACK segurando lock/transação.
+
+Cada lote entrega diff revisado, testes por impacto e documentação/evidências. Persistência exige preparar → gravar → publicar; sem enfraquecer invariantes ou assertions. Registrar NOT RUN e motivo; PASS técnico não presume aprovação do proprietário.
+
+## Testes obrigatórios
+
+EOF durante reconnect, restart de ambos peers, resultado sem ACK, duplicatas/atrasos, epoch/sessão antiga, falha parcial e corrida entre reconciliação e nova revisão. Rede sintética determinística e integração Main.
+
+Usar relógios/barreiras determinísticos, rede sintética controlada, perfis/bancos isolados e runner Windows oficial quando aplicável. Nenhum sleep arbitrário como sincronização. CI existente recebe somente cenários determinísticos; campanhas físicas/duas máquinas ficam explícitas.
+
+## Interfaces relacionadas
+
+G5 mostra estado; H3/H4 fazem retorno pareado, takeover e decisão de conflito. Não importar fila local.
+
+## Riscos e decisões pendentes
+
+Dependências circulares com H; transporte não deve conhecer política de fila nem interromper playback. D1/D3/D4/D5 resolvidas; D2 parcialmente resolvida (somente descarte definitivo versus retorno da fila suspensa pendente). T1/T2 preservados no contrato; não recriar decisões já aprovadas de autoridade/EOF/pacote.
+
+## Autonomia e conclusão
+
+Implementação apenas com autorização específica do proprietário. Uma autorização de fase não autoriza a próxima. Dentro do lote autorizado, tarefas mecânicas e testes podem ser delegados consecutivamente com ownership exclusivo; parar no gate de decisão técnica/funcional/visual indicado, sem inventar política. Nenhuma etapa foi iniciada por este planejamento.
+
+## Histórico preservado
+
+O ticket anterior era exclusivamente planejado, sem implementação ou validação. A revisão atual detalha esse escopo mantendo ID e posição canônica. A antiga decisão aberta de autoridade em G4 foi resolvida funcionalmente pelo proprietário no contrato pareado; D1–D5 foram posteriormente revisadas pelo proprietário: D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida, conforme o contrato vigente. Não há resultados de testes novos nesta atualização documental.

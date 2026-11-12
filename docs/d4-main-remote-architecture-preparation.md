@@ -1,5 +1,7 @@
 # Preparação arquitetural do Main para D4 e comunicação remota
 
+> **Planejamento vigente G/H — 2026-11-11:** consultar o [contrato pareado](paired-mode-contract.md), o [plano incremental](paired-mode-execution-plan.md) e as [interfaces/IDs Doop](paired-mode-ui-plan.md). São capacidades planejadas, sem implementação nesta rodada. A Gestão decide fila futura/promoção; Player executa a vez atual e confirma resultados duráveis. Propostas históricas conflitantes abaixo (sincronizar fila inteira, PREVIOUS/STOP na Gestão, countdown pareado ou autoridade de reconexão indefinida) estão superadas por esse contrato. Standalone independente e histórico de implementação permanecem preservados.
+
 **Data:** 2026-11-07
 
 **Status atual:** D4.1 concluída; proposta D4.2 aprovada; D4.3 concluída nos oito lotes; D5 automatizada PASS e validação manual global aprovada pelo proprietário em 2026-11-07. Fase D concluída e aprovada; Fase E não iniciada.

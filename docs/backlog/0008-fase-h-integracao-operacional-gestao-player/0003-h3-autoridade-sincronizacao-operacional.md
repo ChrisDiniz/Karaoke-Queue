@@ -1,72 +1,70 @@
 # 0008/0003 — H3: Autoridade e sincronização operacional
 
-## Identificação
+## Identificação e estado
 
 - Ticket: 0008/0003
-- Ticket pai: 0008 — Fase H: Integração operacional Gestão + Player
-- Etapa canônica: H3
-- Status: Planejado / Não iniciado
-- Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
+- Etapa canônica: H3; pai 0008 — Integração operacional Gestão + Player.
+- Status: Planejado / Não iniciado. Atualização de planejamento em 2026-11-11; sem autorização de implementação nesta rodada.
+- [Roadmap](../../standalone-player-roadmap.md), [contrato funcional](../../paired-mode-contract.md), [sequência e matriz de testes](../../paired-mode-execution-plan.md), [interfaces/IDs](../../paired-mode-ui-plan.md).
 
-## Objetivo
+## Objetivo e limite
 
-Manter o estado da fila de Gestão sincronizado com o playback remoto observado, preservando uma única autoridade operacional.
+Aplicar resultados do Player no histórico e conciliar operação/offline/takeover sem dupla autoridade.
 
-## Escopo
+## Pré-requisitos e dependências
 
-- Correlacionar apresentação, música, comando, `operationId` e `attemptId`.
-- Registrar início e transições remotas relevantes na operação serializada existente.
-- Concluir e persistir apresentação somente após término natural válido, correlacionado e confirmado.
-- Tratar ACK perdido, eventos duplicados/atrasados, resultados incertos, reconexão e recovery.
-- Evitar avanço duplicado, perda de apresentações e corrupção de histórico.
-- Preservar as regras de fila, persistência e autoridade da Gestão.
+H2 e G4; D1/D3/D4 aprovadas e suspensão D2 definida; decisão final D2 apenas antes de descartar ou retornar a fila suspensa; autorização H3.
 
-## Dependências
+## Módulos envolvidos
 
-- H2 e contratos F relevantes aprovados.
-- Decisão G4 aprovada antes de implementar qualquer reconciliação que dependa da conexão/reconexão de um Player independente.
-- Autorização explícita do proprietário para iniciar H3.
+src/main-management-host.ts; src/application.ts; src/state-repository.ts; database.ts; journal/outbox ports; paired runtime Main. São pontos existentes ou responsabilidades futuras, não alegação de arquivos novos já implementados. Conferir consumidores antes de editar.
 
-## Decisões aprovadas
+## Lotes incrementais
 
-- Stop, erro e desconexão não significam apresentação concluída.
-- Nenhuma apresentação é concluída por suposição.
-- Estado operacional persistido só é publicado como confirmado após persistência bem-sucedida.
-- A fila e a persistência têm uma única autoridade operacional.
-- Não inventar política de reconciliação nem fusão/transferência de filas.
+### H3.1
 
-## Pendências
+Consumir resultados/cursor atomicamente e projetar histórico por ocorrência; só depois ACK durável. Aplicar terminal e promoção segundo D1/D4 sem concluir cantada por erro/Stop.
 
-- A decisão G4 sobre autoridade da fila ao conectar/reconectar continua aberta até aprovação específica.
-- Critério de confiança/validação de fim natural deve seguir os contratos e decisões aprovados, sem pressupor que evento remoto isolado prove conclusão.
+### H3.2
 
-## Riscos
+Conciliar snapshot/eventos/outbox e revisar divergências sem interromper execução; resolver comando incerto pelo ID original; origem manual offline explícita.
 
-- Reexecução de comando após ACK perdido, duplicação de EOF ou evento fora de ordem pode avançar mais de uma vez.
-- Estado incerto entre processos pode causar divergência entre fila, apresentação e playback.
-- Publicação otimista pode expor conclusão que não foi persistida.
+### H3.3
 
-## Critérios de conclusão
+Implementar confirmação de offline e retorno explícito, fences de autoridade, takeover aguardar/imediato; suspender fila local sem importação/execução automática ao assumir (D2); proibir offline durante vez ativa, aguardando terminal ou Stop All explícito e confirmado (D3). Descarte definitivo/retorno da fila suspensa ainda depende de decisão, sem bloquear os caminhos de suspensão aprovados.
 
-- Cada comando e evento opera sobre a apresentação/tentativa correspondente e respeita idempotência.
-- Stop, erro, desconexão e resultados incertos não concluem nem avançam a fila.
-- Conclusões naturais válidas são persistidas antes da confirmação/publicação e não duplicam histórico.
-- Recovery preserva integridade de fila e apresentação.
+### H3.4
 
-## Validação prevista
+Validar restart, EOF simultâneo à reconexão/takeover, restauração de resultados e pendências locais sem importação automática.
 
-Testes determinísticos de concorrência/idempotência e eventos atrasados/duplicados; integração com SQLite real e E2E Electron/IPC em comunicação remota real. Exercitar commit, ACK perdido, falhas, recovery e ausência de avanço indevido.
+## Critérios de aceite
 
-## Histórico de execução
+Histórico não duplica nem sobrescreve silenciosamente. Sem autoplay no restart/retorno da rede. Takeover imediato exige contenção/cancelamento local antes da vez remota; aguardar não deixa fila local competir. Fila Gestão prevalece sem apagar pendências silenciosamente.
 
-Planejado. Nenhuma implementação ou validação foi iniciada.
+Cada lote entrega diff revisado, testes por impacto e documentação/evidências. Persistência exige preparar → gravar → publicar; sem enfraquecer invariantes ou assertions. Registrar NOT RUN e motivo; PASS técnico não presume aprovação do proprietário.
 
-## Referências
+## Testes obrigatórios
 
-- [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
-- [Ticket H2 — Integração com Player remoto](0002-h2-integracao-player-remoto.md)
-- [Ticket G3 — Comandos e sincronização](../0007-fase-g-comunicacao-remota-segura/0003-g3-comandos-eventos-sincronizacao.md)
-- [Ticket G4 — Reconexão e recuperação](../0007-fase-g-comunicacao-remota-segura/0004-g4-reconexao-recuperacao.md)
-- [Remote player architecture](../../remote-player-architecture.md)
-- [Player playback](../../player-playback.md)
-- [SQLite persistence safety](../../sqlite-persistence-safety.md)
+Resultado commitado e ACK perdido, crash Gestão antes/depois do cursor, EOF×reconnect/takeover, eventos de sessão antiga, conflito manual×remoto, offline e retorno com fila local. SQLite/Main/IPC/Electron reais; falhas de rede e duas máquinas em H5.
+
+Usar relógios/barreiras determinísticos, rede sintética controlada, perfis/bancos isolados e runner Windows oficial quando aplicável. Nenhum sleep arbitrário como sincronização. CI existente recebe somente cenários determinísticos; campanhas físicas/duas máquinas ficam explícitas.
+
+## Interfaces relacionadas
+
+NZdmSCHivT/yDsRajh7GQ/eghthO89ZV/TuUROWWoPv/kEiJdRV0oQ; aprovação visual em H4.
+
+## Riscos e decisões pendentes
+
+Destino final da fila suspensa D2, reconciliação manual sem evidência suficiente e perda de cursor/dedupe; bloqueio deve ser contextual. D1/D3/D4/D5 resolvidas; D2 parcialmente resolvida (somente descarte definitivo versus retorno da fila suspensa pendente). T1/T2 preservados no contrato; não recriar decisões já aprovadas de autoridade/EOF/pacote.
+
+## Autonomia e conclusão
+
+Implementação apenas com autorização específica do proprietário. Uma autorização de fase não autoriza a próxima. Dentro do lote autorizado, tarefas mecânicas e testes podem ser delegados consecutivamente com ownership exclusivo; parar no gate de decisão técnica/funcional/visual indicado, sem inventar política. Nenhuma etapa foi iniciada por este planejamento.
+
+## Histórico preservado
+
+O ticket anterior era exclusivamente planejado, sem implementação ou validação. A revisão atual detalha esse escopo mantendo ID e posição canônica. A antiga decisão aberta de autoridade em G4 foi resolvida funcionalmente pelo proprietário no contrato pareado; D1–D5 foram posteriormente revisadas pelo proprietário: D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida, conforme o contrato vigente. Não há resultados de testes novos nesta atualização documental.
+
+## Aceite adicional — decisões funcionais aprovadas
+
+Aplicar os cenários DEC-01–05 da [matriz](../../paired-mode-execution-plan.md) conforme o impacto deste ticket: resultados mistos não alteram rodadas/rotação; takeover suspende a fila local, sem importação ou execução automática; vez ativa impede offline até conclusão ou Stop All explicitamente confirmado; EOF/Avançar da última promovem automaticamente uma vez, Stop All não promove; cadastro inexistente comprovado é bloqueado conectado, e offline aceita registro não verificado com revalidação antes do playback. D1/D3/D4/D5 resolvidas, D2 parcialmente resolvida. Preservar a pendência final de descarte versus retorno da fila suspensa. Testes apenas planejados, sem execução nesta atualização.

@@ -1,5 +1,7 @@
 # F0 — Cobertura no CI existente
 
+> **Encerramento vigente — 2026-11-11:** Fase F, incluindo F0 e suas subdivisões, concluída e validada pelo proprietário. [Registro consolidado](fase-f-encerramento.md). Este documento preserva contratos, planejamento e evidências históricas; menções a homologação pendente ou F1–F4 não iniciadas estão superadas pelo aceite. Classificações técnicas e lacunas de evidência permanecem inalteradas. Prompts e gates históricos não autorizam novas execuções.
+
 Revisão de 2026-11-11. P1/P2/P3 preservadas; F0 não homologada. Nenhuma funcionalidade de produção foi alterada nesta integração. Os workflows continuam sendo `pr-validation.yml` e `release-windows.yml`, com seus jobs e gates anteriores.
 
 ## Inventário e alcance

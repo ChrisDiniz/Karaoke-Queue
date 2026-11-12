@@ -1,5 +1,7 @@
 # F0 — Plano de testes e baseline
 
+> **Encerramento vigente — 2026-11-11:** Fase F, incluindo F0 e suas subdivisões, concluída e validada pelo proprietário. [Registro consolidado](fase-f-encerramento.md). Este documento preserva contratos, planejamento e evidências históricas; menções a homologação pendente ou F1–F4 não iniciadas estão superadas pelo aceite. Classificações técnicas e lacunas de evidência permanecem inalteradas. Prompts e gates históricos não autorizam novas execuções.
+
 > **Correção estrutural vigente:** gate T2, revogação do protocolo e duas corridas de scan corrigidos e validados em fixtures Linux/Windows. Acervo real não acessado nesta correção; sua campanha anterior permanece histórica. F0 não homologada. Ver adendo final e evidências estruturais.
 
 > **Atualização vigente:** resultados abaixo incluem históricos por lote. A campanha Windows real T2/T4 de 2026-11-10 está registrada na seção própria da campanha; ela sucede os resultados anteriores que diziam T2/T4 NOT RUN. T2 é PARTIAL porque `readdir` retornou todos os 9.311 nomes antes da UI. As assertions de playback T4 passaram, mas a campanha T4 é PARTIAL porque LastAccessTime automático estava habilitado e não havia baseline. T3 físico segue NOT RUN.

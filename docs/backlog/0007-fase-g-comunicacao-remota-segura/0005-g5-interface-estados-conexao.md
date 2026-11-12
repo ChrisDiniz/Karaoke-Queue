@@ -1,47 +1,62 @@
 # 0007/0005 — G5: Interface dos estados de conexão
 
-## Identificação
+## Identificação e estado
 
 - Ticket: 0007/0005
-- Ticket pai: 0007 — Fase G: Comunicação remota segura
-- Etapa canônica: G5
-- Status: Planejado
-- Roadmap: [Roadmap Standalone/Combined](../../standalone-player-roadmap.md)
+- Etapa canônica: G5; pai 0007 — Comunicação remota segura.
+- Status: Planejado / Não iniciado. Atualização de planejamento em 2026-11-11; sem autorização de implementação nesta rodada.
+- [Roadmap](../../standalone-player-roadmap.md), [contrato funcional](../../paired-mode-contract.md), [sequência e matriz de testes](../../paired-mode-execution-plan.md), [interfaces/IDs](../../paired-mode-ui-plan.md).
 
-## Objetivo
+## Objetivo e limite
 
-Apresentar dinamicamente os estados remotos conforme os frames Doop já aprovados.
+Integrar estados reais de conexão e de operações de protocolo às referências visuais.
 
-## Escopo
+## Pré-requisitos e dependências
 
-- Estados: Conectado, Desconectado, Conectando/Reconectando, Erro e toasts previstos nos designs.
-- Acompanhar o estado real do transporte; reutilizar componentes visuais C10 quando apropriado.
-- Preservar operação independente do Player sem rede.
+G1–G4; frames atuais consultados novamente e aprovados para implementação; autorização G5.
 
-## Decisões aprovadas
+## Módulos envolvidos
 
-- Frames Doop e descrições já existem; consultar novamente na G5.
-- Não alterar frames sem autorização.
-- C10 fornece base visual, sem implementar conectividade.
+src/standalone-player-renderer.ts; HTML/CSS Player; src/ui; Preloads e IPC específicos. São pontos existentes ou responsabilidades futuras, não alegação de arquivos novos já implementados. Conferir consumidores antes de editar.
 
-## Pendências
+## Lotes incrementais
 
-- A fonte do estado deve ser a conexão real; nenhum placeholder/simulação.
+### G5.1
 
-## Riscos
+Mapear conexão real conectada/reconectando/desconectada/erro para os dez frames Player existentes; separar link de controle reconciliado.
 
-- Não inferir política de fila ou autoridade de reconexão a partir da UI.
+### G5.2
 
-## Histórico de execução
+Exibir não enviado, rejeitado e resultado incerto sem spinner infinito; consulta usa operationId original, nunca reenvio cego.
 
-Planejado. Nenhuma interface remota iniciada.
+### G5.3
 
-## Validação
+Preservar playback e foco; comparar screenshots Electron/Doop nas dimensões de referência e obter revisão humana.
 
-Comparar capturas Electron/Doop e exercitar conectado/desconectado/reconectando/erro com estados reais.
+## Critérios de aceite
 
-## Referências
+UI não simula conexão, não toma controle por toast e não habilita código local por desconexão. Falha antes do envio distingue-se de comando enviado com resultado desconhecido. Fechar aviso não apaga pendência.
 
-- [standalone-player-roadmap.md](../../standalone-player-roadmap.md)
-- [standalone-player-ui-plan.md](../../standalone-player-ui-plan.md)
-- [remote-player-architecture.md](../../remote-player-architecture.md)
+Cada lote entrega diff revisado, testes por impacto e documentação/evidências. Persistência exige preparar → gravar → publicar; sem enfraquecer invariantes ou assertions. Registrar NOT RUN e motivo; PASS técnico não presume aprovação do proprietário.
+
+## Testes obrigatórios
+
+Perda real do socket, erro TLS e timeout de consulta; IPC/origem e acessibilidade teclado; screenshots 1280×800 Player/1440×920 Gestão. Electron real Linux/Windows.
+
+Usar relógios/barreiras determinísticos, rede sintética controlada, perfis/bancos isolados e runner Windows oficial quando aplicável. Nenhum sleep arbitrário como sincronização. CI existente recebe somente cenários determinísticos; campanhas físicas/duas máquinas ficam explícitas.
+
+## Interfaces relacionadas
+
+Reutilizar IDs na matriz de interfaces; novos Y47usa8PN0/kKJpUsOjMV. UI de vez/confirmar/takeover pertence H4.
+
+## Riscos e decisões pendentes
+
+Frames antigos LZhLxxiEgE e toasts de reconexão não autorizam controle automático. D1/D3/D4/D5 resolvidas; D2 parcialmente resolvida (somente descarte definitivo versus retorno da fila suspensa pendente). T1/T2 preservados no contrato; não recriar decisões já aprovadas de autoridade/EOF/pacote.
+
+## Autonomia e conclusão
+
+Implementação apenas com autorização específica do proprietário. Uma autorização de fase não autoriza a próxima. Dentro do lote autorizado, tarefas mecânicas e testes podem ser delegados consecutivamente com ownership exclusivo; parar no gate de decisão técnica/funcional/visual indicado, sem inventar política. Nenhuma etapa foi iniciada por este planejamento.
+
+## Histórico preservado
+
+O ticket anterior era exclusivamente planejado, sem implementação ou validação. A revisão atual detalha esse escopo mantendo ID e posição canônica. A antiga decisão aberta de autoridade em G4 foi resolvida funcionalmente pelo proprietário no contrato pareado; D1–D5 foram posteriormente revisadas pelo proprietário: D1/D3/D4/D5 resolvidas e D2 parcialmente resolvida, conforme o contrato vigente. Não há resultados de testes novos nesta atualização documental.

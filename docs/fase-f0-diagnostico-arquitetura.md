@@ -1,5 +1,7 @@
 # F0 — Diagnóstico e arquitetura proposta
 
+> **Encerramento vigente — 2026-11-11:** Fase F, incluindo F0 e suas subdivisões, concluída e validada pelo proprietário. [Registro consolidado](fase-f-encerramento.md). Este documento preserva contratos, planejamento e evidências históricas; menções a homologação pendente ou F1–F4 não iniciadas estão superadas pelo aceite. Classificações técnicas e lacunas de evidência permanecem inalteradas. Prompts e gates históricos não autorizam novas execuções.
+
 > **Correção estrutural vigente:** gate T2, revogação do protocolo e duas corridas de scan corrigidos e validados em fixtures Linux/Windows. Acervo real não acessado nesta correção; sua campanha anterior permanece histórica. F0 não homologada. Ver adendo final e evidências estruturais.
 
 Registro da auditoria inicial: investigação documental concluída em 2026-11-10 sobre a branch `feature/remote-player-lan-integration-2`, HEAD `bc3d37de09462485caa9ff027341eeabdd4b88cb`; working tree inicialmente limpa. Após a aprovação P1/P2/P3 e autorização global, os sete lotes foram implementados nesta execução. O estado de validação e os limites atuais estão no [relatório de execução](fase-f0-relatorio.md) e na [matriz canônica](fase-f0-testes.md). Relatos do proprietário são observações reais; os arquivos AppData originais não foram acessados e o HD pessoal não foi montado nem medido. Fase E encerrada pelo proprietário; isso não transforma limites históricos em homologações adicionais.
