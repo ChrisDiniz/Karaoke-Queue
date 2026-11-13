@@ -180,7 +180,14 @@ export class OperationalProtocolService implements RemoteTransportMessagePort {
     if (!await this.isCurrent(context)) { context.channel.close(1008, 'REVOKED'); return }
     if (message.kind === 'hello') {
       this.greeted.add(context.channel)
-      const metadata = this.options.store.getMetadata()
+      let metadata: ReturnType<PlayerOperationalStore['getMetadata']>
+      try { metadata = this.options.store.getMetadata() }
+      catch (error) {
+        const state = error instanceof PlayerOperationalStoreError
+          ? error.code.toLowerCase().replaceAll('_', '-') : 'journal-metadata-unavailable'
+        this.sendError(context, message.messageId, errorCode(error), state)
+        return
+      }
       const controlEpoch = this.options.controlEpoch?.(context) ?? currentControlEpoch(context)
       this.send(context, { protocolVersion: 1, schemaVersion: 1, kind: 'ready', messageId: randomUUID(),
         deviceId: this.options.deviceId, controllerId: context.channel.peer.controllerId,

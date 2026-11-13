@@ -635,3 +635,86 @@ Luna implementou as quatro correções e o reproducer atualizado passou no Linux
 ### G3 — reauditoria focal independente, 2026-11-13 — PASS
 
 A1–A4 confirmados corrigidos pelo Sol. G3.1–G3.4 e auditoria independente PASS; nenhuma regressão bloqueante encontrada. Compile, reproducer e suites G3 reexecutados; migração v8 real com falha transacional/rollback e restart comprovada. Evidência Windows e fingerprint e7db51bc7c000ebd42b0c0f151e4eaf494f03e0efe83740999f96aa505cd1776 verificados por relatório oficial e 309 hashes atuais. [Parecer e riscos residuais](g3-independent-audit.md). G3 apta para checkpoint e tecnicamente apta para G4 mediante autorização específica; nenhum commit feito, G4 não iniciada, produção não homologada. git diff --check PASS.
+
+
+### G4 — análise integral e preparação de execução, 2026-11-13
+
+Checkpoint G3 verificado no HEAD `ca6af2e3bed30fa26a98b0921f46f51a59f54a8b` (`feature/remote-player-lan-integration-3`), incluindo reauditoria A1–A4 PASS; árvore limpa na entrada. O [plano integral G4](g4-full-execution-plan.md) e o [ticket G4](backlog/0007-fase-g-comunicacao-remota-segura/0004-g4-reconexao-recuperacao.md) mapeiam G4.1–G4.4 completos, contratos novos PROPOSTOS, estados conservadores, replay/cursor recebido separado do aplicado H3, fences e restart. Plano pronto para autorização conjunta futura e execução sequencial Luna por gates técnicos, sem autorização entre lotes após esse aceite integral. Esta rodada autoriza somente documentação: G4 IMPLEMENTAÇÃO NÃO INICIADA. Não concede aprovação dos contratos nem inicia G5/H. Produção pairing segue dependente de apresentação local aprovada G5; homologação física G6/H5. Testes funcionais/Windows NOT RUN nesta análise documental; evidências anteriores preservadas. Sem commit/push/PR.
+
+
+### G4 — execução parcial iniciada, 2026-11-13
+
+Autorização integral recebida nesta sessão. O [diário](evidence/g4-implementation/README.md) e o [plano G4](g4-full-execution-plan.md) registram o resultado: coordenador de reconnect e reconciliador SQLite/G3 implementados; compile, suites focadas, store/crash e migrações Linux PASS. Integração G2/G3 em dois processos e remote-infrastructure 20/20 PASS fora do sandbox; esses testes não executam o coordenador de reconnect G4. Windows runner NOT RUN por `UtilBindVsockAnyPort`. Todos os quatro lotes seguem PARTIAL: não há adapter G4 de produção integrado ao runtime nem intent offline/fence durável. G4 ainda não pronta para auditoria independente. G5, G6 e H não iniciadas; produção não homologada.
+
+### G4 — fechamento técnico integral, 2026-11-13
+
+Esta entrada sucede a entrega parcial acima e preserva o histórico. G4.1–G4.4 passaram tecnicamente após integração vertical ao runtime Main e execução dos gates Linux/WSL2 e Windows nativo, incluindo E2E entre processos independentes com OPAQUE G2, WSS/TLS pinado, SQLite, restart, reconciliação, coalescing de startup concorrente e modo offline persistente. Fingerprint Windows: `5321faf82d70ecc989b8086f870864d32d9adeeba1c03f323c8f2f8a4bad890f`; detalhes em [evidências](evidence/g4-implementation/README.md) e [plano integral](g4-full-execution-plan.md). G4 está pronta para auditoria independente; auditoria do Sol e checkpoint permanecem pendentes. Produção não aprovada: pairing depende de apresentação local real/aprovada em G5; H3 mantém aplicação de negócio e ACK transacional; G6/H5 mantêm homologação física. G5, G6 e H não iniciadas. Sem commit, push ou PR.
+
+
+## Auditoria independente G4 — 2026-11-13
+
+Sol confirmou A1 P2 (autorização tardia promove synchronized após disable), A2 P1 (perda/truncamento do SQLite apaga offline explícito) e A3 P2 (snapshot cancelado ainda persiste). Parecer **FAIL**; G4.1 FAIL, G4.2 PASS no escopo inspecionado, G4.3 FAIL, G4.4 FAIL. Checkpoint e G5 bloqueados até correção e reauditoria. Relatório: `docs/g4-independent-audit.md`; reproducer determinístico: `node scripts/g4-audit-repro.cjs`. Windows histórico PASS validado por relatório e 485 hashes de código/documentos iguais; cinco divergências somente documentais. Seis entradas moderadas npm decorrem de um advisory de minimatch nas ferramentas de build, sem caminho explorável identificado em G4; não bloqueiam esta fase. Implementação preservada, sem correção funcional nesta auditoria, commit/push ou início de G5.
+
+
+### G4 — correções Luna A1–A3, 2026-11-13
+
+Luna implementou correções para os três defeitos reproduzidos, preservando o FAIL independente original e sem alterar autoridade/G2/T2/G3: A1 invalida e verifica fences depois de awaits; A2 usa identidade/autorização G2 existentes para reconhecer store perdida e bloqueia Main/listener sem reconstruir intenção nem reimportar JSON legado stale; A3 verifica cancelamento/deadline após respostas e no ponto síncrono de admissão SQLite. Regressões: `npm run test:unit:g4` 70/70, reproducer A1–A3 PASS, E2E G4 com processos independentes e perda real do SQLite offline + legado enabled PASS, e regressões afetadas de transporte/pairing/protocolo 52/52. Runner Windows desta revisão ainda deve ser registrado no diário após a execução oficial. A1–A3 aguardam reauditoria de Sol; checkpoint e G5 permanecem bloqueados até parecer independente PASS. Produção não aprovada; G5 não iniciada.
+
+#### Validação final das correções A1–A3 — 2026-11-13
+
+O runner Windows nativo oficial concluiu PASS em checkout NTFS isolado, fingerprint `2559a710644766c6fc499e97daef79a5a5291b3f4247172118ecc6403eb21bab`, com branch e HEAD G3 esperados. Compile, 94 testes focados, E2E G2/G4 entre processos independentes, `remote-infrastructure` 23/23, DPAPI/safeStorage e cleanup passaram. No Linux/WSL2, suite G4 71/71, reproducer A1–A3, E2E G4 e regressões G1/G2/G3 afetadas 52/52 passaram; a execução que exige listener foi repetida fora da restrição de bind do sandbox. O diário contém os detalhes e separa esta validação da reauditoria independente.
+
+A1–A3 estão RESOLVED segundo os testes, **pendentes de reauditoria independente**. O FAIL original permanece histórico e checkpoint/G5 continuam bloqueados até confirmação independente PASS. Rollback que remove toda evidência G2 não é detectável e SQLite corrompida exige recuperação local explícita. Produção não aprovada; G5 não iniciada; sem commit/push/PR.
+
+
+## Reauditoria focal independente G4 — 2026-11-13
+
+Sol confirmou A1–A3 corrigidos (PASS focal), mas reproduziu **A4 P1**: enable antigo suspenso em stopPlayer persiste enabled depois de offline posterior já confirmado. SQLite reaberta perde a decisão mais recente; restart volta a considerar o remoto elegível. Reproducer determinístico `node scripts/g4-reaudit-intent-race.cjs` CONFIRMED; devolver correção ao Luna. Parecer independente **FAIL**; G4.1 PASS, G4.2 PASS, G4.3 FAIL, G4.4 PASS no escopo focal. Checkpoint/G5 NÃO liberados.
+
+Compile, reproducer original corrigido, 86 testes focados/regressivos e E2E G4 real entre processos reexecutados PASS. Windows fingerprint `2559a710644766c6fc499e97daef79a5a5291b3f4247172118ecc6403eb21bab` verificado: 488/494 hashes iguais, seis divergências exclusivamente documentais; nenhum código diferente. Campanha nativa não repetida e novo reproducer A4 ainda não executado no Windows. Causa, impacto, correção mínima e regressão necessária estão em `docs/g4-independent-audit.md`. Limites de rollback completo e advisories minimatch preservados. Sem alteração funcional, commit/push/PR ou G5. `git diff --check` PASS.
+
+### G4 — correção A4 e gates finais, 2026-11-13
+
+Luna corrigiu a disputa entre enable antigo e offline mais recente com geração atribuída na entrada Main e condição de admissão revalidada antes da transação SQLite. Reproducer A4 antes/depois, leitura SQLite por outro processo, enabled/offline concorrentes, close e admission fence passaram; bootstrap cross-process também não trata arquivo transitório vazio como banco corrompido ou vice-versa. `test:unit:g4` 75/75, reproducer A1–A4, regressões afetadas G1/G2/G3 52/52, E2E G4 e runner Windows oficial passaram. Fingerprint Windows `2a4e19d84f7dea3b32ae374efb149ec9a7023a42c80a529c9962ab7518ea6350`; 98 testes focados, OPAQUE/WSS entre processos, remote-infrastructure 23/23, safeStorage/DPAPI e cleanup PASS. A1–A3 preservados. A4 corrigido pela implementação; reauditoria independente focal pendente, portanto checkpoint e G5 permanecem bloqueados. Produção não aprovada; sem commit/push/PR.
+
+
+#### G4 — validação final da correção A4, 2026-11-13
+
+Após adicionar a regressão de precedência inversa (offline antigo suspenso seguido por enable explícito mais recente), npm run test:unit:g4 passou 77/77; reproducers A1–A4 passaram; regressões G1/G2/G3 afetadas passaram 52/52; E2E G4 passou. Runner Windows oficial/NTFS: compile, 100 testes focados, E2E G2/G4 entre processos, remote-infrastructure 23/23, DPAPI/safeStorage e cleanup PASS. Fingerprint 4b11a16784faf49df02295605c5256ea02c7b5a415bfda13153a977fc7f61199, runId 4e10e589-41fb-4cd7-b9e5-10f2deab8a0f; branch e HEAD G3 verificados.
+
+A4 está RESOLVIDO pela implementação, com reauditoria focal independente pendente. Checkpoint e G5 continuam bloqueados até PASS independente. Produção não aprovada; G5 não iniciada; sem commit/push/PR.
+
+
+## Reauditoria final independente A4 — 2026-11-13
+
+Sol confirmou o reparo no mesmo Main e as regressões A1–A3, mas reproduziu A4 P1 entre dois processos Main com a mesma SQLite: enable antigo aguarda shutdown, offline posterior confirma no outro processo e enable antigo retoma e grava enabled/revisão 2. O fence é memória local e Main não fornece expectedRevision ao store. Reproducer determinístico: node scripts/g4-reaudit-cross-process-intent.cjs (CONFIRMED, não PASS do contrato). Correção devolvida ao Luna; parecer independente FAIL; G4.3 FAIL, demais lotes PASS no escopo focal. Checkpoint/G5 bloqueados.
+
+Compile, reproducers A1–A3/A4 original e 40 testes focados PASS. Windows histórico runId 4e10e589-41fb-4cd7-b9e5-10f2deab8a0f/fingerprint 4b11a16784faf49df02295605c5256ea02c7b5a415bfda13153a977fc7f61199 conferido: 490/495 hashes iguais, cinco diferenças documentais; código/testes/scripts existentes coincidem. Novo reproducer cross-process executado somente no Linux. Detalhes, pré-condição de dois proprietários e limites dos locks de bootstrap estão no relatório independente. Nenhum código de produção alterado; histórico preservado. git diff --check PASS. Sem commit/push/PR, produção não aprovada e G5 não iniciada.
+
+
+## Correção Luna A4 entre processos Main — 2026-11-13
+
+A2 principal recebeu a correção autorizada por CAS durável. Toda gravação do store exige expectedRevision explícita; undefined é rejeitado. Main captura a revisão persistida antes de iniciar a espera de shutdown/preparação e a propaga sem atualizar estado como confirmado. SQLite compara a revisão dentro de BEGIN IMMEDIATE, antes do UPDATE. Revisão divergente retorna REMOTE_CONTROL_INTENT_REVISION_CONFLICT; não há retry nem conversão do conflito em sucesso. A mutação e COMMIT são síncronos. O estado em memória/listener só prossegue depois do retorno confirmado. Para instalação/recovery com DB ausente, expectedRevision null representa a ausência observada; apenas o processo que efetivamente inicializou a store pode prosseguir, se a revisão inicial permaneceu intacta. Dois inicializadores não podem reivindicar a mesma ausência.
+
+O reproducer antes desta correção confirmou enabled/revisão 2 após offline confirmado por outro processo. O mesmo roteiro agora rejeita o Main antigo por conflito CAS, reabre SQLite em offline/revisão 1 e o novo Main recusa startup. Reproducer A4 original no mesmo Main, A1–A3 e suíte G4 77/77 PASS. Regressões G1/G2/G3 52/52 PASS; E2E G4 real WSS/G2/G3/G4 entre Management/Player independentes PASS.
+
+Ownership do runtime de produto: `main.ts` só importa `main-runtime` depois de `app.requestSingleInstanceLock()`; no contexto empacotado, o gate global da instalação também é adquirido antes da composição. Uma segunda instância normal não importa o runtime, e a invocação administrativa encerra antes dessa composição. O teste estrutural `node --test scripts/installation-binding-build.test.cjs` passou nesta revisão e verifica a ordem do lock local, gate empacotado e abertura do runtime. A reauditoria e os testes multiprocessos exercitam owners independentes sobre SQLite compartilhada; o CAS protege a revisão durável mesmo fora desse bootstrap. Não foi introduzido um segundo lock distribuído.
+
+Windows nativo pelo runner oficial: PASS em 2026-11-13, runId `5dffb033-02c0-4189-8056-f376d8d9a89c`, fingerprint `42f2ee6231c1444b4637672933358c67af478cf813f23c41c11b51e59d1c0e34`, branch e HEAD G3 esperados. O manifesto continha 496 arquivos e seus hashes coincidiram com a working tree no momento da execução. A execução incluiu compilação Windows, regressões focadas de intenção/reconexão/reconciliação/store/protocolo/migração, reproducer cross-process A4, E2E G2/G4 com WSS e processos independentes, infraestrutura remota, DPAPI/safeStorage e cleanup. Após o runner, somente documentação foi atualizada; código, testes e scripts testados permanecem iguais ao snapshot. A1–A3 continuam aprovados independentemente; esta seção registra a implementação Luna e não altera o parecer independente FAIL da reauditoria cross-process. Nova reauditoria focal pendente antes de checkpoint/G5. Sem commit/push/PR.
+
+
+## Reauditoria independente final A4 cross-process — Sol — 2026-11-13
+
+**Parecer vigente: PASS. A1–A4 PASS; G4.1–G4.4 PASS. G4 apta para checkpoint e tecnicamente apta para G5.** A autorização/execução do checkpoint e o início de G5 não foram realizados. Produção permanece não aprovada. Os FAILs anteriores são históricos e permanecem neste registro.
+
+Inspeção focal confirmou: os quatro escritores Main capturam revisão durável antes da preparação assíncrona e a passam explicitamente; `undefined` é rejeitado. `BEGIN IMMEDIATE` engloba leitura, comparação e UPDATE condicionado à revisão. Conflito ocorre antes de no-op ou mutação e faz rollback; não há retry com revisão renovada. Commit/readback precedem confirmação; falha após commit permanece erro incerto. Gerações locais continuam cercando publicação e callbacks após awaits. Nenhum código funcional foi alterado nesta reauditoria.
+
+O reproducer multiprocessos rejeitou enabled antigo com `REMOTE_CONTROL_INTENT_REVISION_CONFLICT`; a reabertura confirmou offline/revisão 1 e novo Main recusou startup. A ordenação inversa foi executada com dois processos Main independentes e SQLite real: enabled confirmou/revisão 1, offline posterior confirmou e reabriu em offline/revisão 2. Uma chamada sem revisão também foi rejeitada. Verificação auxiliar determinística em `/tmp/g4-final-order-b.cjs`, com barreiras IPC, sem sleeps.
+
+**Limite de autoridade:** CAS ordena as escritas duráveis; não é um lease de sockets entre runtimes arbitrários. No produto, `main.ts` impede composição sem o lock Electron e, quando empacotado, sem o gate global de instalação. O caminho administrativo encerra antes de importar o runtime. Busca dos consumidores confirmou apenas uma construção de produção em `main-runtime.ts`; construtores diretos adicionais são testes/harnesses. Shutdown aguarda close remoto antes de liberar o gate global. Testes de bootstrap/gate e verificação estrutural de ordem passaram. Não se alegou uma nova execução de duas instâncias do produto empacotado nesta rodada; a inspeção dos caminhos obrigatórios não demonstrou entrada alternativa nem lacuna concreta que justifique repetir homologação de instalação. Runtimes diretos dos testes não recebem a garantia de exclusividade do bootstrap.
+
+Validação independente: compile PASS; intenção/listener **19/19**, reconexão **12/12**, reconciliação **9/9**; reproducers `g4-reaudit-cross-process-intent.cjs`, `g4-reaudit-intent-race.cjs` e `g4-audit-repro.cjs` PASS. Testes de installation-bootstrap, installation-runtime-gate e installation-binding-build PASS. A primeira execução de quatro casos de listener foi impedida por EPERM no sandbox; reexecução autorizada com localhost permitido passou 19/19. A1–A3 preservados. Sem novo achado bloqueante.
+
+Windows revisado, sem repetir campanha: relatório oficial PASS, runId `5dffb033-02c0-4189-8056-f376d8d9a89c`, fingerprint `42f2ee6231c1444b4637672933358c67af478cf813f23c41c11b51e59d1c0e34`, Node v24.11.0, branch esperada e HEAD G3 `ca6af2e3bed30fa26a98b0921f46f51a59f54a8b`. Das 496 entradas do manifesto, código/testes/scripts coincidem integralmente; cinco diferenças são exclusivamente os documentos atualizados após o runner. E2E/Windows anteriores permanecem evidência revisada, não nova execução nesta reauditoria.
+
+Riscos residuais previamente aceitos permanecem: rollback completo sem evidência externa, recuperação explícita de corrupção, manutenção minimatch e limites G5/G6/H. Nenhum novo risco bloqueante demonstrado. Working tree G4 preservada, sem commit/push/PR. `git diff --check` PASS.

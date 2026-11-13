@@ -85,7 +85,12 @@
     "test:unit:usb-campaign": "node scripts/usb-campaign.test.cjs",
     "test:e2e:usb-campaign:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/usb-campaign-electron.js",
     "test:e2e:usb-campaign:windows": "npm run test:e2e:multi-instance:windows -- --video-library",
-    "test:ci:f0:windows": "node scripts/run-f0-ci.cjs"
+    "test:ci:f0:windows": "node scripts/run-f0-ci.cjs",
+    "test:unit:remote-reconnection": "npm run compile && node --test build/tests/remote-reconnection.test.js",
+    "test:unit:remote-reconciliation": "npm run compile && node --test build/tests/remote-reconciliation.test.js",
+    "test:unit:g4": "npm run compile && node --test build/tests/remote-control-intent.test.js build/tests/remote-reconnection.test.js build/tests/remote-reconciliation.test.js build/tests/player-operational-store.test.js build/tests/management-remote-journal.test.js build/tests/database-migration.test.js",
+    "test:e2e:g4": "npm run compile && node scripts/pairing-process-integration.test.cjs --operational",
+    "test:e2e:g4:windows": "node scripts/run-windows-native-tests.cjs --g4-reconnection"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

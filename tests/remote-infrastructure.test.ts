@@ -5,17 +5,20 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import https from 'node:https'
+import net from 'node:net'
 import { randomUUID, X509Certificate } from 'node:crypto'
 import { generate } from 'selfsigned'
 import WebSocket from 'ws'
-import { createPinnedHttpsAgent, generatePlayerCertificate, isPrivateIpv4, validatePlayerCertificate } from '../src/remote-tls'
+import { createPinnedHttpsAgent, generatePlayerCertificate, isPrivateIpv4, probeBootstrapCertificate,
+  validatePlayerCertificate } from '../src/remote-tls'
 import { RemoteIdentityStore } from '../src/remote-identity-store'
 import { ElectronSafeStorageSecretProtector, type SafeStoragePort, type SecretProtector } from '../src/remote-secret-protector'
 import { createRemoteTransportServer } from '../src/remote-transport'
 import { candidateFromService, BonjourPlayerAdvertisementPort } from '../src/remote-discovery'
 import { MainRemoteRuntime } from '../src/main-remote-runtime'
+import { RemoteOperationalClient } from '../src/remote-operational-client'
 import { REMOTE_CONTROL_PATH, REMOTE_CONTROL_SUBPROTOCOL, type RemoteAuthorizationPort,
-  type RemoteDeviceIdentity, type RemoteHttpRoute } from '../src/remote-contracts'
+  type RemoteDeviceIdentity, type RemoteHttpRoute, type RemoteTransportMessagePort } from '../src/remote-contracts'
 
 const TOKEN = 'A'.repeat(43)
 type DiscoveryService = Parameters<typeof candidateFromService>[0]
@@ -36,6 +39,28 @@ class FakeSecretProtector implements SecretProtector {
 
 async function temporaryDirectory(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), 'kq-remote-infrastructure-'))
+}
+
+function firstPrivateIpv4Interface(): string | undefined {
+  try {
+    for (const interfaces of Object.values(os.networkInterfaces())) {
+      const entry = interfaces?.find(value => value.family === 'IPv4' && !value.internal &&
+        /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(value.address))
+      if (entry) return entry.address
+    }
+  } catch { return undefined }
+  return undefined
+}
+
+async function availablePort(address: string): Promise<number> {
+  const listener = net.createServer()
+  await new Promise<void>((resolve, reject) => {
+    listener.once('error', reject)
+    listener.listen(0, address, () => { listener.removeListener('error', reject); resolve() })
+  })
+  const port = (listener.address() as net.AddressInfo).port
+  await new Promise<void>(resolve => listener.close(() => resolve()))
+  return port
 }
 
 async function createPlayerIdentity(): Promise<RemoteDeviceIdentity> {
@@ -59,16 +84,18 @@ function authorizedPort(isCurrent: () => boolean = () => true): RemoteAuthorizat
 }
 
 async function startServer(options: {
+  address?: string
+  port?: number
   authorization?: RemoteAuthorizationPort
   routes?: readonly RemoteHttpRoute[]
-  messagePort?: { onMessage(context: { payload: unknown }): void }
+  messagePort?: RemoteTransportMessagePort
 } = {}) {
   const identity = await createPlayerIdentity()
   const server = createRemoteTransportServer({
-    identity, address: '127.0.0.1', port: 0,
+    identity, address: options.address ?? '127.0.0.1', port: options.port ?? 0,
     authorization: options.authorization,
     routes: options.routes,
-    messagePort: options.messagePort as never
+    messagePort: options.messagePort
   })
   await server.listen()
   const address = server.address()
@@ -579,6 +606,19 @@ test('pinned client rejects a different certificate before a route can be used',
   } finally { await new Promise<void>(resolve => server.close(() => resolve())) }
 })
 
+test('Player transport safely contains the reset from a real unauthenticated TLS identity probe', async () => {
+  const address = firstPrivateIpv4Interface()
+  assert.ok(address, 'the unauthenticated TLS probe accepts LAN IPv4 endpoints only')
+  const port = await availablePort(address)
+  const fixture = await startServer({ address, port })
+  try {
+    const observed = await probeBootstrapCertificate(address, fixture.address.port)
+    assert.equal(observed.fingerprintSha256, fixture.identity.certificateFingerprintSha256)
+    assert.equal(observed.deviceIdClaim, fixture.identity.deviceId)
+    await new Promise<void>(resolve => setImmediate(resolve))
+  } finally { await fixture.server.close() }
+})
+
 test('transport close racing listen is idempotent and leaves no bound listener', async () => {
   const identity = await createPlayerIdentity()
   const server = createRemoteTransportServer({ identity, address: '127.0.0.1', port: 0 })
@@ -616,6 +656,59 @@ test('transport shutdown aborts in-flight authorization before releasing listene
   assert.equal(authorizationSignal?.aborted, true)
   assert.equal(server.address(), null)
   client.terminate()
+})
+
+test('G4 abort during operational hello closes the pinned WSS channel without waiting for timeout', async () => {
+  const address = firstPrivateIpv4Interface()
+  assert.ok(address, 'the WSS client policy requires a private IPv4 interface for the real transport test')
+  const port = await availablePort(address)
+  let observedHello!: () => void
+  const helloObserved = new Promise<void>(resolve => { observedHello = resolve })
+  const { server, identity, address: serverAddress } = await startServer({ address, port,
+    authorization: authorizedPort(), messagePort: {
+    onMessage(context) {
+      const payload = context.payload as { kind?: string }
+      if (payload.kind === 'hello') observedHello()
+    }
+  } })
+  const abort = new AbortController()
+  const connection = RemoteOperationalClient.connect({ address, port: serverAddress.port,
+    pin: { certificatePem: identity.certificatePem!, fingerprintSha256: identity.certificateFingerprintSha256!,
+      serverName: `player-${identity.deviceId}.karaoke.invalid` },
+    bearer: TOKEN, identity: { playerId: identity.deviceId, controllerId: 'controller-test', credentialGeneration: 1 },
+    authorizedPeer: { controllerId: 'controller-test', credentialGeneration: 1, scopes: ['transport:control'] },
+    signal: abort.signal })
+  try {
+    await helloObserved
+    abort.abort()
+    await assert.rejects(connection, /REMOTE_OPERATIONAL_CONNECT_ABORTED/)
+  } finally { await server.close() }
+})
+
+test('G4 pinned WSS surfaces a Player recovery-required hello as a blocked state', async () => {
+  const address = firstPrivateIpv4Interface()
+  assert.ok(address, 'the WSS client policy requires a private IPv4 interface for the real transport test')
+  const port = await availablePort(address)
+  let playerId = ''
+  const { server, identity, address: serverAddress } = await startServer({ address, port,
+    authorization: authorizedPort(), messagePort: {
+      onMessage(context) {
+        const hello = context.payload as { kind?: string; messageId?: string }
+        if (hello.kind !== 'hello' || !hello.messageId) return
+        context.channel.send(JSON.stringify({ protocolVersion: 1, schemaVersion: 1, kind: 'error',
+          messageId: randomUUID(), deviceId: playerId, controllerId: 'controller-test',
+          body: { correlationId: hello.messageId, code: 'STORAGE_UNAVAILABLE', state: 'recovery-required' } }))
+      }
+    } })
+  playerId = identity.deviceId
+  try {
+    await assert.rejects(RemoteOperationalClient.connect({ address, port: serverAddress.port,
+      pin: { certificatePem: identity.certificatePem!, fingerprintSha256: identity.certificateFingerprintSha256!,
+        serverName: `player-${identity.deviceId}.karaoke.invalid` },
+      bearer: TOKEN, identity: { playerId, controllerId: 'controller-test', credentialGeneration: 1 },
+      authorizedPeer: { controllerId: 'controller-test', credentialGeneration: 1, scopes: ['transport:control'] } }),
+    /REMOTE_PLAYER_RECOVERY_REQUIRED/)
+  } finally { await server.close() }
 })
 
 test('Main remote runtime waits for an in-flight Player start and cleans resources before close resolves', async () => {

@@ -20,6 +20,7 @@ import type {
 } from './src/music-catalog'
 import type { ManagementOutboxDatabase, ManagementOutboxRecord } from './src/management-remote-outbox'
 import type { ManagementRemoteJournalDatabase, ManagementRemoteJournalCursor } from './src/management-remote-journal'
+import { parseOperationalMessageObject } from './src/operational-protocol-validation'
 
 const DATABASE_FILENAME = 'karaoke.sqlite'
 const LEGACY_FILENAME = 'karaoke-data.json'
@@ -29,7 +30,8 @@ const PREVIOUS_SCHEMA_VERSION = 5
 const CATALOG_SCHEMA_VERSION = 6
 const OUTBOX_SCHEMA_VERSION = 7
 const JOURNAL_SCHEMA_VERSION = 8
-const SCHEMA_VERSION = 9
+const JOURNAL_RECOVERY_SCHEMA_VERSION = 9
+const SCHEMA_VERSION = 10
 const MANAGEMENT_REMOTE_OUTBOX_SCHEMA = `CREATE TABLE management_remote_outbox (
   player_device_id TEXT NOT NULL CHECK (length(player_device_id) BETWEEN 1 AND 128),
   controller_id TEXT NOT NULL CHECK (length(controller_id) BETWEEN 1 AND 128),
@@ -277,7 +279,50 @@ function initializeSchema(database: DatabaseSync): void {
         const requiresRecovery = legacy > safeContiguous || contiguous > Number(state.high_watermark)
         update.run(safeContiguous, legacy, requiresRecovery ? 1 : 0, state.player_device_id, state.controller_id)
       }
-      database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`)
+      database.exec(`PRAGMA user_version = ${JOURNAL_RECOVERY_SCHEMA_VERSION};`)
+    })
+    version = JOURNAL_RECOVERY_SCHEMA_VERSION
+  }
+
+  if (version === JOURNAL_RECOVERY_SCHEMA_VERSION) {
+    transaction(database, () => {
+      database.exec(`CREATE TABLE management_remote_journal_snapshots_v10 (
+        player_device_id TEXT NOT NULL,
+        controller_id TEXT NOT NULL,
+        journal_id TEXT NOT NULL,
+        high_watermark INTEGER NOT NULL CHECK (high_watermark BETWEEN 0 AND 9007199254740991),
+        player_epoch TEXT NOT NULL CHECK (length(player_epoch) BETWEEN 1 AND 128),
+        snapshot_json TEXT NOT NULL CHECK (length(CAST(snapshot_json AS BLOB)) BETWEEN 1 AND 65536),
+        fingerprint TEXT NOT NULL CHECK (length(fingerprint)=64 AND fingerprint NOT GLOB '*[^a-f0-9]*'),
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (player_device_id, controller_id, high_watermark, player_epoch),
+        FOREIGN KEY (player_device_id, controller_id) REFERENCES management_remote_journal_state(player_device_id, controller_id)
+      ) STRICT`)
+      const rows = database.prepare(`SELECT player_device_id,controller_id,journal_id,high_watermark,snapshot_json,
+        fingerprint,created_at FROM management_remote_journal_snapshots ORDER BY high_watermark`).all() as Array<Record<string, unknown>>
+      const insert = database.prepare(`INSERT INTO management_remote_journal_snapshots_v10(player_device_id,controller_id,
+        journal_id,high_watermark,player_epoch,snapshot_json,fingerprint,created_at) VALUES(?,?,?,?,?,?,?,?)`)
+      for (const row of rows) {
+        let snapshot: unknown
+        try { snapshot = parseOperationalMessageObject(JSON.parse(String(row.snapshot_json))) }
+        catch (error) { throw new Error('Cannot migrate malformed remote journal snapshot.', { cause: error }) }
+        if (!snapshot || typeof snapshot !== 'object' || (snapshot as any).kind !== 'response' ||
+            (snapshot as any).body?.type !== 'snapshot') throw new Error('Cannot migrate a non-snapshot remote journal record.')
+        const envelope = snapshot as { deviceId: string; controllerId: string; body: { payload: Record<string, unknown> } }
+        const payload = envelope.body.payload
+        const epoch = payload.playerEpoch
+        if (envelope.deviceId !== row.player_device_id || envelope.controllerId !== row.controller_id ||
+            payload.journalId !== row.journal_id || Number(payload.highWatermark) !== Number(row.high_watermark) ||
+            typeof epoch !== 'string' || epoch.length < 1 || epoch.length > 128 ||
+            remoteJournalFingerprint(snapshot) !== row.fingerprint) {
+          throw new Error('Cannot migrate a mismatched remote journal snapshot.')
+        }
+        insert.run(String(row.player_device_id), String(row.controller_id), String(row.journal_id), Number(row.high_watermark), epoch,
+          String(row.snapshot_json), String(row.fingerprint), Number(row.created_at))
+      }
+      database.exec(`DROP TABLE management_remote_journal_snapshots;
+        ALTER TABLE management_remote_journal_snapshots_v10 RENAME TO management_remote_journal_snapshots;
+        PRAGMA user_version = ${SCHEMA_VERSION};`)
     })
     return
   }
@@ -1402,6 +1447,7 @@ export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
     persistSnapshot(input: Parameters<ManagementRemoteJournalDatabase['remoteJournal']['persistSnapshot']>[0]): ManagementRemoteJournalCursor {
       if (!Number.isSafeInteger(input.highWatermark) || input.highWatermark < 0 ||
           !Number.isSafeInteger(input.compactedThrough) || input.compactedThrough < 0 || input.compactedThrough > input.highWatermark ||
+          typeof input.playerEpoch !== 'string' || input.playerEpoch.length < 1 || input.playerEpoch.length > 128 ||
           remoteJournalFingerprint(input.snapshot) !== input.fingerprint) throw new Error('MANAGEMENT_REMOTE_JOURNAL_SNAPSHOT_INVALID')
       const snapshotJson = stableRemoteJournalJson(input.snapshot)
       if (Buffer.byteLength(snapshotJson, 'utf8') > 64 * 1024) throw new Error('MANAGEMENT_REMOTE_JOURNAL_SNAPSHOT_INVALID')
@@ -1420,14 +1466,15 @@ export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
             input.compactedThrough, input.highWatermark, input.compactedThrough > 0 ? 1 : 0, now)
           }
           const existing = database.prepare(`SELECT snapshot_json,fingerprint FROM management_remote_journal_snapshots
-            WHERE player_device_id=? AND controller_id=? AND high_watermark=?`)
-            .get(input.playerDeviceId, input.controllerId, input.highWatermark) as { snapshot_json?: string; fingerprint?: string } | undefined
+            WHERE player_device_id=? AND controller_id=? AND high_watermark=? AND player_epoch=?`)
+            .get(input.playerDeviceId, input.controllerId, input.highWatermark, input.playerEpoch) as { snapshot_json?: string; fingerprint?: string } | undefined
           if (existing && (existing.fingerprint !== input.fingerprint || existing.snapshot_json !== snapshotJson)) {
             throw new Error('MANAGEMENT_REMOTE_JOURNAL_SNAPSHOT_CONFLICT')
           }
           if (!existing) database.prepare(`INSERT INTO management_remote_journal_snapshots(player_device_id,controller_id,
-            journal_id,high_watermark,snapshot_json,fingerprint,created_at) VALUES(?,?,?,?,?,?,?)`)
-            .run(input.playerDeviceId, input.controllerId, input.journalId, input.highWatermark, snapshotJson, input.fingerprint, now)
+            journal_id,high_watermark,player_epoch,snapshot_json,fingerprint,created_at) VALUES(?,?,?,?,?,?,?,?)`)
+            .run(input.playerDeviceId, input.controllerId, input.journalId, input.highWatermark, input.playerEpoch,
+              snapshotJson, input.fingerprint, now)
           if (prior) database.prepare(`UPDATE management_remote_journal_state SET high_watermark=?,compacted_through=?,
             snapshot_high_watermark=?,recovery_required=CASE WHEN ? > through_sequence THEN 1 ELSE recovery_required END,
             updated_at=? WHERE player_device_id=? AND controller_id=?`)
@@ -1444,7 +1491,8 @@ export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
         if (error instanceof Error && /^MANAGEMENT_REMOTE_JOURNAL_(SNAPSHOT_INVALID|LINEAGE_MISMATCH|ROLLBACK|SNAPSHOT_CONFLICT)$/.test(error.message)) throw error
         const confirmed = readRemoteJournalCursor(input.playerDeviceId, input.controllerId)
         const row = database.prepare(`SELECT fingerprint FROM management_remote_journal_snapshots WHERE player_device_id=?
-          AND controller_id=? AND high_watermark=?`).get(input.playerDeviceId, input.controllerId, input.highWatermark) as { fingerprint?: string } | undefined
+          AND controller_id=? AND high_watermark=? AND player_epoch=?`)
+          .get(input.playerDeviceId, input.controllerId, input.highWatermark, input.playerEpoch) as { fingerprint?: string } | undefined
         if (confirmed?.journalId === input.journalId && confirmed.snapshotHighWatermark >= input.highWatermark && row?.fingerprint === input.fingerprint) {
           return confirmed
         }
@@ -1474,7 +1522,7 @@ export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
     getLatestSnapshot(playerDeviceId: string, controllerId: string): import('./src/operational-protocol-contracts').OperationalMessage | null {
       if (database.isTransaction) throw new Error('MANAGEMENT_REMOTE_JOURNAL_UNRESOLVED_TRANSACTION')
       const row = database.prepare(`SELECT snapshot_json,fingerprint FROM management_remote_journal_snapshots
-        WHERE player_device_id=? AND controller_id=? ORDER BY high_watermark DESC LIMIT 1`)
+        WHERE player_device_id=? AND controller_id=? ORDER BY high_watermark DESC,created_at DESC,rowid DESC LIMIT 1`)
         .get(playerDeviceId, controllerId) as { snapshot_json?: string; fingerprint?: string } | undefined
       if (!row) return null
       let snapshot: unknown

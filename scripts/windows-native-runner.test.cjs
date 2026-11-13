@@ -91,6 +91,7 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   const videoLibrary = powershellLauncher('C:\\stage', 'run-video-library', false, '--video-library')
   const remoteInfrastructure = powershellLauncher('C:\\stage', 'run-remote-infrastructure', false, '--remote-infrastructure')
   const operationalStore = powershellLauncher('C:\\stage', 'run-operational-store', false, '--operational-store')
+  const g4Reconnection = powershellLauncher('C:\\stage', 'run-g4-reconnection', false, '--g4-reconnection')
   const packageCandidate = powershellLauncher('C:\\stage', 'run-package-candidate', false, null, null, null, true)
   const screenshots = powershellLauncher('C:\\stage', 'run-screenshots', false, null, null,
     'E:\\KaraokeQueue\\e1-03-validation\\ui-screenshots')
@@ -108,6 +109,7 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.equal(launcherPayload(videoLibrary).playbackMode, '--video-library')
   assert.equal(launcherPayload(remoteInfrastructure).playbackMode, '--remote-infrastructure')
   assert.equal(launcherPayload(operationalStore).playbackMode, '--operational-store')
+  assert.equal(launcherPayload(g4Reconnection).playbackMode, '--g4-reconnection')
   assert.equal(launcherPayload(packageCandidate).packageCandidate, true)
   assert.equal(launcherPayload(screenshots).screenshotRoot, 'E:\\KaraokeQueue\\e1-03-validation\\ui-screenshots')
   assert.match(evaluation, /\$workerArgs \+= "--playback-evaluation"/)
@@ -122,6 +124,7 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.match(videoLibrary, /\$workerArgs \+= "--video-library"/)
   assert.match(remoteInfrastructure, /\$workerArgs \+= "--remote-infrastructure"/)
   assert.match(operationalStore, /\$workerArgs \+= "--operational-store"/)
+  assert.match(g4Reconnection, /\$workerArgs \+= "--g4-reconnection"/)
   assert.match(packageCandidate, /\$workerArgs \+= "--package-candidate"/)
   assert.match(screenshots, /\$env:KQ_PLAYER_SCREENSHOT_DIR = \$screenshotRoot/)
   assert.match(screenshots, /não pode ficar dentro do checkout Windows/)
@@ -321,6 +324,25 @@ test('focused Windows operational store mode covers SQLite, durable replay, prot
     'build/tests/remote-infrastructure.test.js'
   ])
   assert.deepEqual(selectWindowsTestSuites('--operational-store')[5].args, ['--operational'])
+})
+
+test('focused Windows G4 mode includes runtime intent, reconnect, replay, two-process WSS, and native safeStorage gates', () => {
+  assert.equal(requiresWindowFocus('--g4-reconnection'), false)
+  assert.deepEqual(selectWindowsTestSuites('--g4-reconnection').map(suite => suite.script), [
+    'build/tests/remote-control-intent.test.js',
+    'build/tests/remote-reconnection.test.js',
+    'build/tests/remote-reconciliation.test.js',
+    'build/tests/player-operational-store.test.js',
+    'build/tests/operational-protocol.test.js',
+    'build/tests/operational-protocol-service.test.js',
+    'build/tests/management-remote-journal.test.js',
+    'build/tests/database-migration.test.js',
+    'scripts/pairing-process-integration.test.cjs',
+    'build/tests/remote-infrastructure.test.js',
+    'scripts/pairing-safe-storage-restart-electron.test.cjs',
+    'scripts/remote-safe-storage-electron.test.cjs'
+  ])
+  assert.deepEqual(selectWindowsTestSuites('--g4-reconnection')[8].args, ['--operational'])
 })
 
 function hash(content) {

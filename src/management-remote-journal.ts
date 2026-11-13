@@ -25,7 +25,7 @@ export interface ManagementRemoteJournalDatabase {
       throughSequence: number; highWatermark: number; compactedThrough: number; hasMore: boolean;
       events: Array<{ sequence: number; event: JournalEvent; fingerprint: string }> }): ManagementRemoteJournalCursor
     persistSnapshot(input: { playerDeviceId: string; controllerId: string; journalId: string; highWatermark: number;
-      compactedThrough: number; snapshot: OperationalMessage; fingerprint: string }): ManagementRemoteJournalCursor
+      playerEpoch: string; compactedThrough: number; snapshot: OperationalMessage; fingerprint: string }): ManagementRemoteJournalCursor
     listEvents(input: { playerDeviceId: string; controllerId: string; afterSequence: number; limit: number }):
       Array<{ sequence: number; event: JournalEvent; fingerprint: string }>
     getLatestSnapshot(playerDeviceId: string, controllerId: string): OperationalMessage | null
@@ -84,12 +84,17 @@ export class ManagementRemoteJournalInbox {
     if (!isId(playerDeviceId) || message.deviceId !== playerDeviceId || message.controllerId !== this.identity.controllerId) {
       throw new Error('MANAGEMENT_REMOTE_JOURNAL_IDENTITY_MISMATCH')
     }
-    const snapshot = message.body.payload as unknown as { journalId: string; highWatermark: number; compactedThrough: number }
+    const snapshot = message.body.payload as unknown as {
+      journalId: string; playerEpoch: string; highWatermark: number; compactedThrough: number
+    }
+    if (!isId(snapshot.journalId) || !isId(snapshot.playerEpoch) || !Number.isSafeInteger(snapshot.highWatermark) ||
+        !Number.isSafeInteger(snapshot.compactedThrough)) throw new Error('MANAGEMENT_REMOTE_JOURNAL_SNAPSHOT_INVALID')
     const durableSnapshot: Extract<OperationalMessage, { kind: 'response' }> = { ...message,
       messageId: `inbox-snapshot-${snapshot.highWatermark}`,
       body: { ...message.body, correlationId: `inbox-snapshot-${snapshot.highWatermark}` } }
     return this.database.remoteJournal.persistSnapshot({ playerDeviceId, controllerId: this.identity.controllerId,
-      journalId: snapshot.journalId, highWatermark: snapshot.highWatermark, compactedThrough: snapshot.compactedThrough,
+      journalId: snapshot.journalId, playerEpoch: snapshot.playerEpoch, highWatermark: snapshot.highWatermark,
+      compactedThrough: snapshot.compactedThrough,
       snapshot: durableSnapshot, fingerprint: fingerprint(durableSnapshot) })
   }
 

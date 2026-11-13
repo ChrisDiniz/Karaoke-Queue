@@ -61,6 +61,39 @@ function options(userDataDirectory: string, extra: Partial<PlayerOperationalStor
   return { userDataDirectory, journalId, deviceId, ...extra }
 }
 
+/** Recreates the schema-1 checkpoint key so the real in-place v1→v2 migration is exercised. */
+function downgradeOperationalStoreToSchema1(userDataDirectory: string): void {
+  const database = new DatabaseSync(path.join(userDataDirectory, PLAYER_OPERATIONAL_DATABASE_FILENAME))
+  try {
+    database.exec('PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE; ALTER TABLE checkpoints RENAME TO checkpoints_v2_test;')
+    database.exec(`CREATE TABLE checkpoints (
+      journal_id TEXT NOT NULL,
+      checkpoint_sequence INTEGER NOT NULL CHECK (checkpoint_sequence BETWEEN 0 AND 9007199254740991),
+      checkpoint_json TEXT NOT NULL,
+      checkpoint_fingerprint TEXT NOT NULL CHECK (length(checkpoint_fingerprint) = 64),
+      PRIMARY KEY (journal_id, checkpoint_sequence)
+    ) STRICT`)
+    database.exec(`INSERT INTO checkpoints(journal_id,checkpoint_sequence,checkpoint_json,checkpoint_fingerprint)
+      SELECT journal_id,checkpoint_sequence,checkpoint_json,checkpoint_fingerprint FROM checkpoints_v2_test;
+      DROP TABLE checkpoints_v2_test;
+      ALTER TABLE journal_meta RENAME TO journal_meta_v2_test;`)
+    database.exec(`CREATE TABLE journal_meta (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1), journal_id TEXT NOT NULL, device_id TEXT NOT NULL,
+      schema_version INTEGER NOT NULL CHECK (schema_version = 1),
+      next_sequence INTEGER NOT NULL CHECK (next_sequence BETWEEN 1 AND 9007199254740991),
+      high_watermark INTEGER NOT NULL CHECK (high_watermark BETWEEN 0 AND 9007199254740991),
+      compacted_through INTEGER NOT NULL CHECK (compacted_through BETWEEN 0 AND high_watermark),
+      logical_bytes INTEGER NOT NULL CHECK (logical_bytes >= 0), record_count INTEGER NOT NULL CHECK (record_count >= 0),
+      reserved_bytes INTEGER NOT NULL CHECK (reserved_bytes >= 0), reserved_records INTEGER NOT NULL CHECK (reserved_records >= 0),
+      recovery_required INTEGER NOT NULL DEFAULT 0 CHECK (recovery_required IN (0, 1)), recovery_code TEXT
+    ) STRICT`)
+    database.exec(`INSERT INTO journal_meta SELECT singleton,journal_id,device_id,1,next_sequence,high_watermark,
+      compacted_through,logical_bytes,record_count,reserved_bytes,reserved_records,recovery_required,recovery_code
+      FROM journal_meta_v2_test; DROP TABLE journal_meta_v2_test; PRAGMA user_version = 1; COMMIT;`)
+    database.exec('PRAGMA foreign_keys = ON')
+  } finally { database.close() }
+}
+
 function expectStoreError(code: string, action: () => unknown): void {
   assert.throws(action, (error: unknown) => error instanceof PlayerOperationalStoreError && error.code === code)
 }
@@ -146,8 +179,32 @@ test('SQLite store accepts, deduplicates by operation fingerprint, finalizes, pa
     snapshotRetry.messageId = 'snapshot-transport-retry'
     snapshotRetry.body.correlationId = 'snapshot-query-retry'
     assert.equal(store.saveCheckpoint({ controllerId, correlationId: 'snapshot-query-retry', snapshot: snapshotRetry }).duplicate, true)
+    const restartedSnapshot = structuredClone(snapshot) as Extract<OperationalMessage, { kind: 'response' }>
+    restartedSnapshot.messageId = 'snapshot-after-player-restart'
+    restartedSnapshot.body.correlationId = 'snapshot-after-player-restart-query'
+    restartedSnapshot.body.payload.playerEpoch = 'player-9'
+    assert.equal(store.saveCheckpoint({ controllerId, correlationId: 'snapshot-after-player-restart-query',
+      snapshot: restartedSnapshot }).duplicate, false, 'a new Player epoch may checkpoint the same journal watermark')
+    assert.throws(() => {
+      const conflicting = structuredClone(restartedSnapshot) as Extract<OperationalMessage, { kind: 'response' }>
+      conflicting.body.correlationId = 'snapshot-conflicting-same-epoch'
+      conflicting.body.payload.stateRevision = Number(conflicting.body.payload.stateRevision) + 1
+      store.saveCheckpoint({ controllerId, correlationId: 'snapshot-conflicting-same-epoch', snapshot: conflicting })
+    }, (error: unknown) => {
+      assert.ok(error instanceof PlayerOperationalStoreError)
+      assert.equal(error.code, 'CHECKPOINT_CONFLICT')
+      return true
+    },
+      'same-epoch evidence at one watermark remains immutable')
     assert.equal(store.getLatestCheckpoint()?.sequence, 2)
+    assert.equal(store.getLatestCheckpoint()?.snapshot.body.payload.playerEpoch, 'player-9')
   } finally { store.close() }
+
+  const checkpointDatabase = new DatabaseSync(path.join(userData, PLAYER_OPERATIONAL_DATABASE_FILENAME), { readOnly: true })
+  try {
+    assert.equal((checkpointDatabase.prepare('SELECT COUNT(*) AS count FROM checkpoints').get() as { count: number }).count, 2,
+      'the old-epoch checkpoint remains alongside the restart snapshot')
+  } finally { checkpointDatabase.close() }
 
   const reopened = new PlayerOperationalStore(options(userData))
   try {
@@ -157,6 +214,45 @@ test('SQLite store accepts, deduplicates by operation fingerprint, finalizes, pa
     assert.equal(reopened.getMetadata().highWatermark, 2)
     assert.equal(reopened.getLatestCheckpoint()?.sequence, 2)
   } finally { reopened.close(); fs.rmSync(userData, { recursive: true, force: true }) }
+})
+
+test('schema-1 migration preserves journal evidence and keys its checkpoint by the stored Player epoch', () => {
+  const userData = temporaryDirectory('kq-operational-store-schema1-migration-')
+  const store = new PlayerOperationalStore(options(userData, { initializeIfMissing: true }))
+  const command = commandFor('op-schema1-migration')
+  store.acceptOperation({ controllerId, command })
+  store.finishOperation({ controllerId, operationId: 'op-schema1-migration', status: 'completed',
+    events: [operationResultEvent('op-schema1-migration', 'completed', command)] })
+  const template = structuredClone(validMessages.find((message): message is Extract<OperationalMessage, { kind: 'response' }> =>
+    message.kind === 'response' && message.body.type === 'snapshot')!)
+  template.deviceId = deviceId
+  template.controllerId = controllerId
+  template.body.correlationId = 'schema1-migration-snapshot'
+  const metadataBefore = store.getMetadata()
+  template.body.payload = { ...template.body.payload, journalId, deviceId, playerEpoch: 'player-before-migration',
+    highWatermark: metadataBefore.highWatermark, compactedThrough: metadataBefore.compactedThrough }
+  store.saveCheckpoint({ controllerId, correlationId: 'schema1-migration-snapshot', snapshot: template })
+  const metadataBeforeMigration = store.getMetadata()
+  store.close()
+
+  downgradeOperationalStoreToSchema1(userData)
+  const migrated = new PlayerOperationalStore(options(userData))
+  try {
+    const metadataAfter = migrated.getMetadata()
+    assert.equal(metadataAfter.schemaVersion, 2)
+    assert.equal(metadataAfter.highWatermark, metadataBefore.highWatermark)
+    assert.equal(metadataAfter.logicalBytes, metadataBeforeMigration.logicalBytes)
+    assert.equal(metadataAfter.recordCount, metadataBeforeMigration.recordCount)
+    assert.equal(migrated.lookupOperation(controllerId, 'op-schema1-migration')?.status, 'completed')
+    assert.equal(migrated.readPage({ controllerId, correlationId: 'schema1-migration-page', afterSequence: 0, limit: 32 }).events.length, 2)
+    assert.equal(migrated.getLatestCheckpoint()?.snapshot.body.payload.playerEpoch, 'player-before-migration')
+  } finally { migrated.close() }
+  const database = new DatabaseSync(path.join(userData, PLAYER_OPERATIONAL_DATABASE_FILENAME), { readOnly: true })
+  try {
+    assert.equal((database.prepare('PRAGMA user_version').get() as { user_version: number }).user_version, 2)
+    assert.equal((database.prepare('SELECT player_epoch FROM checkpoints').get() as { player_epoch: string }).player_epoch,
+      'player-before-migration')
+  } finally { database.close(); fs.rmSync(userData, { recursive: true, force: true }) }
 })
 
 function storeFingerprintFor(command: OperationalMessage): string {

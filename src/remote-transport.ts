@@ -196,6 +196,12 @@ export function createRemoteTransportServer(options: RemoteTransportServerOption
   server.requestTimeout = REMOTE_LIMITS.httpRequestTimeoutMs
   server.keepAliveTimeout = REMOTE_LIMITS.httpKeepAliveTimeoutMs
   server.on('error', error => logger.error('REMOTE_SERVER_ERROR', { code: safeErrorCode(error) }))
+  // LAN identity probes intentionally close immediately after TLS certificate inspection.
+  // Windows Node may surface that peer reset on the accepted socket after the close callback.
+  server.on('tlsClientError', error => logger.warn('REMOTE_TLS_CLIENT_ERROR', { code: safeErrorCode(error) }))
+  server.on('secureConnection', socket => {
+    socket.on('error', error => logger.warn('REMOTE_TLS_SOCKET_ERROR', { code: safeErrorCode(error) }))
+  })
   const webSockets = new WebSocketServer({ noServer: true, clientTracking: true, perMessageDeflate: false,
     maxPayload: REMOTE_LIMITS.maxWebSocketMessageBytes, maxFragments: 16,
     handleProtocols(protocols) { return protocols.has(REMOTE_CONTROL_SUBPROTOCOL) ? REMOTE_CONTROL_SUBPROTOCOL : false }
@@ -228,6 +234,7 @@ export function createRemoteTransportServer(options: RemoteTransportServerOption
 
   server.on('connection', rawSocket => {
     const socket = rawSocket as Socket
+    socket.on('error', error => logger.warn('REMOTE_SOCKET_ERROR', { code: safeErrorCode(error) }))
     const remoteAddress = sanitizeAddress(socket.remoteAddress)
     if (!remoteAddress || !isPrivateIpv4(remoteAddress, remoteAddress.startsWith('127.'))) {
       socket.destroy()

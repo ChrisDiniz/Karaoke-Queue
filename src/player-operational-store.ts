@@ -13,7 +13,7 @@ type EventEnvelope = Extract<OperationalMessage, { kind: 'event' }>
 type ResponseEnvelope = Extract<OperationalMessage, { kind: 'response' }>
 
 export const PLAYER_OPERATIONAL_DATABASE_FILENAME = 'player-operational.sqlite'
-export const PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION = 1
+export const PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION = 2
 export const PLAYER_OPERATIONAL_DEFAULT_LIMITS = Object.freeze({ maxLogicalBytes: 256 * 1024 * 1024, maxRecords: 1_000_000 })
 export const PLAYER_OPERATIONAL_MAX_PENDING_EVENTS = 8
 const APP_ID = 0x4b514f50 // KQOP
@@ -344,9 +344,10 @@ function schemaSql(): string {
     CREATE TABLE checkpoints (
       journal_id TEXT NOT NULL,
       checkpoint_sequence INTEGER NOT NULL CHECK (checkpoint_sequence BETWEEN 0 AND 9007199254740991),
+      player_epoch TEXT NOT NULL,
       checkpoint_json TEXT NOT NULL,
       checkpoint_fingerprint TEXT NOT NULL CHECK (length(checkpoint_fingerprint) = 64),
-      PRIMARY KEY (journal_id, checkpoint_sequence)
+      PRIMARY KEY (journal_id, checkpoint_sequence, player_epoch)
     ) STRICT;
   `
 }
@@ -359,12 +360,13 @@ function validateBackupManifest(value: unknown): PlayerOperationalBackupManifest
   const keys = ['formatVersion', 'databaseFile', 'schemaVersion', 'journalId', 'deviceId', 'highWatermark',
     'logicalBytes', 'recordCount', 'createdAt', 'backupFile', 'sha256']
   if (!isRecord(value) || !exactKeys(value, keys) || value.formatVersion !== 1 ||
-      value.databaseFile !== PLAYER_OPERATIONAL_DATABASE_FILENAME || value.schemaVersion !== PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION ||
+      value.databaseFile !== PLAYER_OPERATIONAL_DATABASE_FILENAME ||
+      !Number.isSafeInteger(value.schemaVersion) || ![1, PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION].includes(Number(value.schemaVersion)) ||
       !isId(value.journalId) || !isId(value.deviceId) || !Number.isSafeInteger(value.highWatermark) ||
       Number(value.highWatermark) < 0 || !Number.isSafeInteger(value.logicalBytes) || Number(value.logicalBytes) < 0 ||
       !Number.isSafeInteger(value.recordCount) || Number(value.recordCount) < 0 ||
       typeof value.createdAt !== 'string' || !Number.isFinite(Date.parse(value.createdAt)) ||
-      typeof value.backupFile !== 'string' || !/^player-operational\.schema-1\.[0-9]{8}T[0-9]{9}Z\.[0-9a-f-]{36}\.sqlite$/.test(value.backupFile) ||
+      typeof value.backupFile !== 'string' || !/^player-operational\.schema-(?:1|2)\.[0-9]{8}T[0-9]{9}Z\.[0-9a-f-]{36}\.sqlite$/.test(value.backupFile) ||
       typeof value.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(value.sha256)) fail('BACKUP_INVALID')
   return value as unknown as PlayerOperationalBackupManifest
 }
@@ -389,9 +391,9 @@ function verifyDatabaseFile(filePath: string, manifest?: PlayerOperationalBackup
     const schemaVersion = Number(database.prepare('PRAGMA user_version').get()?.user_version ?? -1)
     const applicationId = Number(database.prepare('PRAGMA application_id').get()?.application_id ?? -1)
     if (integrity?.integrity_check !== 'ok' || foreignKeyErrors.length !== 0 ||
-        schemaVersion !== PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION || applicationId !== APP_ID) fail('STORE_CORRUPT')
+        ![1, PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION].includes(schemaVersion) || applicationId !== APP_ID) fail('STORE_CORRUPT')
     const meta = database.prepare('SELECT * FROM journal_meta WHERE singleton = 1').get() as Record<string, unknown> | undefined
-    if (!meta || Number(meta.schema_version) !== schemaVersion) fail('STORE_CORRUPT')
+    if (!meta || Number(meta.schema_version) !== schemaVersion || manifest && manifest.schemaVersion !== schemaVersion) fail('STORE_CORRUPT')
     const result: PlayerOperationalMetadata = {
       journalId: String(meta.journal_id), deviceId: String(meta.device_id), schemaVersion,
       nextSequence: readSqlNumber(meta.next_sequence, 'STORE_CORRUPT'),
@@ -578,7 +580,12 @@ export class PlayerOperationalStore {
       const applicationId = Number((this.database.prepare('PRAGMA application_id').get() as { application_id?: unknown }).application_id ?? 0)
       if (userVersion === 0 && !readyExists && initializingExists) {
         this.initializeSchema(options.journalId, options.deviceId)
-      } else if (userVersion !== PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION || applicationId !== APP_ID) {
+      } else if (applicationId !== APP_ID) {
+        this.writeRecoveryMarker('unsupported-schema', options.journalId)
+        fail('STORE_SCHEMA_UNSUPPORTED')
+      } else if (userVersion === 1 && PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION === 2) {
+        this.migrateSchema1To2()
+      } else if (userVersion !== PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION) {
         this.writeRecoveryMarker('unsupported-schema', options.journalId)
         fail('STORE_SCHEMA_UNSUPPORTED')
       }
@@ -632,6 +639,69 @@ export class PlayerOperationalStore {
     } catch (error) {
       if (this.database.isTransaction) try { this.database.exec('ROLLBACK') } catch {}
       throw error
+    }
+  }
+
+  /** Preserve every v1 checkpoint while allowing a new Player epoch at the same journal watermark. */
+  private migrateSchema1To2(): void {
+    const meta = this.database.prepare('SELECT * FROM journal_meta WHERE singleton = 1').get() as Record<string, unknown> | undefined
+    if (!meta || Number(meta.schema_version) !== 1) fail('STORE_CORRUPT')
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      this.database.exec(`CREATE TABLE checkpoints_v2 (
+        journal_id TEXT NOT NULL,
+        checkpoint_sequence INTEGER NOT NULL CHECK (checkpoint_sequence BETWEEN 0 AND 9007199254740991),
+        player_epoch TEXT NOT NULL,
+        checkpoint_json TEXT NOT NULL,
+        checkpoint_fingerprint TEXT NOT NULL CHECK (length(checkpoint_fingerprint) = 64),
+        PRIMARY KEY (journal_id, checkpoint_sequence, player_epoch)
+      ) STRICT`)
+      const checkpoints = this.database.prepare(`SELECT journal_id,checkpoint_sequence,checkpoint_json,checkpoint_fingerprint
+        FROM checkpoints ORDER BY checkpoint_sequence`).all() as Array<Record<string, unknown>>
+      for (const row of checkpoints) {
+        let envelope: OperationalMessage
+        try { envelope = parseOperationalMessageObject(JSON.parse(String(row.checkpoint_json))) as OperationalMessage }
+        catch (error) { fail('STORE_CORRUPT', error) }
+        if (envelope.kind !== 'response' || envelope.body.type !== 'snapshot') fail('STORE_CORRUPT')
+        const snapshot = envelope.body.payload as Record<string, unknown>
+        const epoch = snapshot.playerEpoch
+        const sequence = Number(row.checkpoint_sequence)
+        const json = String(row.checkpoint_json)
+        if (String(row.journal_id) !== String(meta.journal_id) || !isId(epoch) || Number(snapshot.highWatermark) !== sequence ||
+            sha256(json) !== row.checkpoint_fingerprint) {
+          fail('STORE_CORRUPT')
+        }
+        this.database.prepare('INSERT INTO checkpoints_v2 VALUES(?,?,?,?,?)')
+          .run(String(row.journal_id), sequence, epoch, json, String(row.checkpoint_fingerprint))
+      }
+      this.database.exec('DROP TABLE checkpoints; ALTER TABLE checkpoints_v2 RENAME TO checkpoints;')
+      this.database.exec(`CREATE TABLE journal_meta_v2 (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        journal_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        schema_version INTEGER NOT NULL CHECK (schema_version = ${PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION}),
+        next_sequence INTEGER NOT NULL CHECK (next_sequence BETWEEN 1 AND 9007199254740991),
+        high_watermark INTEGER NOT NULL CHECK (high_watermark BETWEEN 0 AND 9007199254740991),
+        compacted_through INTEGER NOT NULL CHECK (compacted_through BETWEEN 0 AND high_watermark),
+        logical_bytes INTEGER NOT NULL CHECK (logical_bytes >= 0),
+        record_count INTEGER NOT NULL CHECK (record_count >= 0),
+        reserved_bytes INTEGER NOT NULL CHECK (reserved_bytes >= 0),
+        reserved_records INTEGER NOT NULL CHECK (reserved_records >= 0),
+        recovery_required INTEGER NOT NULL DEFAULT 0 CHECK (recovery_required IN (0, 1)),
+        recovery_code TEXT
+      ) STRICT`)
+      this.database.prepare(`INSERT INTO journal_meta_v2(singleton,journal_id,device_id,schema_version,next_sequence,
+        high_watermark,compacted_through,logical_bytes,record_count,reserved_bytes,reserved_records,recovery_required,recovery_code)
+        VALUES(?,?,?,${PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION},?,?,?,?,?,?,?,?,?)`)
+        .run(Number(meta.singleton), String(meta.journal_id), String(meta.device_id), Number(meta.next_sequence),
+          Number(meta.high_watermark), Number(meta.compacted_through), Number(meta.logical_bytes), Number(meta.record_count),
+          Number(meta.reserved_bytes), Number(meta.reserved_records), Number(meta.recovery_required),
+          meta.recovery_code == null ? null : String(meta.recovery_code))
+      this.database.exec('DROP TABLE journal_meta; ALTER TABLE journal_meta_v2 RENAME TO journal_meta; PRAGMA user_version = 2; COMMIT;')
+    } catch (error) {
+      if (this.database.isTransaction) try { this.database.exec('ROLLBACK') } catch {}
+      if (error instanceof PlayerOperationalStoreError) throw error
+      fail('STORE_CORRUPT', error)
     }
   }
 
@@ -1267,7 +1337,7 @@ export class PlayerOperationalStore {
         const cursorRow = this.database.prepare(`SELECT MIN(through_sequence) AS through_sequence FROM consumer_cursors
           WHERE journal_id=?`).get(this.options.journalId) as { through_sequence?: number | null }
         const checkpoint = this.database.prepare(`SELECT checkpoint_sequence FROM checkpoints WHERE journal_id=?
-          ORDER BY checkpoint_sequence DESC LIMIT 1`).get(this.options.journalId) as { checkpoint_sequence?: number } | undefined
+          ORDER BY checkpoint_sequence DESC,rowid DESC LIMIT 1`).get(this.options.journalId) as { checkpoint_sequence?: number } | undefined
         if (cursorRow.through_sequence == null || !checkpoint) {
           attempted = { journalId: this.options.journalId, compactedThrough, highWatermark,
             eventsDeleted: 0, operationsDeleted: 0, checkpointsDeleted: 0, logicalBytesReleased: 0, recordsReleased: 0 }
@@ -1362,7 +1432,8 @@ export class PlayerOperationalStore {
         snapshot.controllerId !== input.controllerId || snapshot.body.correlationId !== input.correlationId ||
         snapshot.body.payload.deviceId !== this.options.deviceId || snapshot.body.payload.journalId !== this.options.journalId) fail('EVENT_INVALID')
     const sequence = Number(snapshot.body.payload.highWatermark)
-    if (!Number.isSafeInteger(sequence) || sequence < 0) fail('CURSOR_INVALID')
+    const playerEpoch = snapshot.body.payload.playerEpoch
+    if (!Number.isSafeInteger(sequence) || sequence < 0 || !isId(playerEpoch)) fail('CURSOR_INVALID')
     const durableSnapshot: ResponseEnvelope = { ...snapshot, messageId: `checkpoint-${sequence}`,
       body: { ...snapshot.body, correlationId: `checkpoint-${sequence}` } }
     const json = stableJson(durableSnapshot)
@@ -1374,15 +1445,17 @@ export class PlayerOperationalStore {
         if (sequence !== Number(meta.high_watermark) || Number(snapshot.body.payload.compactedThrough) !== Number(meta.compacted_through)) {
           fail('CURSOR_INVALID')
         }
-        const existing = this.database.prepare('SELECT checkpoint_fingerprint FROM checkpoints WHERE journal_id=? AND checkpoint_sequence=?')
-          .get(this.options.journalId, sequence) as { checkpoint_fingerprint?: string } | undefined
+        const existing = this.database.prepare(`SELECT checkpoint_fingerprint FROM checkpoints
+          WHERE journal_id=? AND checkpoint_sequence=? AND player_epoch=?`)
+          .get(this.options.journalId, sequence, playerEpoch) as { checkpoint_fingerprint?: string } | undefined
         if (existing) {
           if (existing.checkpoint_fingerprint !== fingerprint) fail('CHECKPOINT_CONFLICT')
           return { sequence, fingerprint, duplicate: true }
         }
         const bytes = Buffer.byteLength(json) + Buffer.byteLength(fingerprint)
         this.checkCapacity(meta, bytes, 1)
-        this.database.prepare('INSERT INTO checkpoints VALUES(?,?,?,?)').run(this.options.journalId, sequence, json, fingerprint)
+        this.database.prepare(`INSERT INTO checkpoints(journal_id,checkpoint_sequence,player_epoch,checkpoint_json,checkpoint_fingerprint)
+          VALUES(?,?,?,?,?)`).run(this.options.journalId, sequence, playerEpoch, json, fingerprint)
         this.updateMeta(bytes, 1)
         return { sequence, fingerprint, duplicate: false }
       })
@@ -1393,8 +1466,9 @@ export class PlayerOperationalStore {
       if (sqliteErrorIsBusy(error)) fail('STORE_IN_USE', error)
       try {
         this.options.testHooks?.failReadback?.('checkpoint')
-        const row = this.database.prepare('SELECT checkpoint_fingerprint FROM checkpoints WHERE journal_id=? AND checkpoint_sequence=?')
-          .get(this.options.journalId, sequence) as { checkpoint_fingerprint?: string } | undefined
+        const row = this.database.prepare(`SELECT checkpoint_fingerprint FROM checkpoints
+          WHERE journal_id=? AND checkpoint_sequence=? AND player_epoch=?`)
+          .get(this.options.journalId, sequence, playerEpoch) as { checkpoint_fingerprint?: string } | undefined
         if (row?.checkpoint_fingerprint === fingerprint) return { sequence, fingerprint, duplicate: true }
         if (row) { this.writeRecoveryMarker('checkpoint-readback-mismatch', this.options.journalId); fail('RESULT_UNCERTAIN') }
         fail('STORE_WRITE_FAILED', error)
@@ -1409,7 +1483,7 @@ export class PlayerOperationalStore {
   getLatestCheckpoint(): { readonly sequence: number; readonly snapshot: ResponseEnvelope } | null {
     this.ensureOpen()
     const row = this.database.prepare(`SELECT checkpoint_sequence,checkpoint_json,checkpoint_fingerprint FROM checkpoints
-      WHERE journal_id=? ORDER BY checkpoint_sequence DESC LIMIT 1`).get(this.options.journalId) as Record<string, unknown> | undefined
+      WHERE journal_id=? ORDER BY checkpoint_sequence DESC,rowid DESC LIMIT 1`).get(this.options.journalId) as Record<string, unknown> | undefined
     if (!row) return null
     const json = String(row.checkpoint_json)
     if (sha256(json) !== row.checkpoint_fingerprint) {
@@ -1427,7 +1501,7 @@ export class PlayerOperationalStore {
     const sequence = readSqlNumber(row.checkpoint_sequence, 'STORE_CORRUPT')
     if (snapshot.kind !== 'response' || snapshot.body.type !== 'snapshot' || snapshot.deviceId !== this.options.deviceId ||
         snapshot.body.payload.journalId !== this.options.journalId || Number(snapshot.body.payload.highWatermark) !== sequence ||
-        Number(snapshot.body.payload.compactedThrough) > sequence) {
+        Number(snapshot.body.payload.compactedThrough) > sequence || !isId(snapshot.body.payload.playerEpoch)) {
       this.writeRecoveryMarker('checkpoint-lineage-invalid', this.options.journalId)
       fail('STORE_CORRUPT')
     }
@@ -1549,7 +1623,7 @@ export class PlayerOperationalStore {
     assertRegularDirectory(directory)
     const createdAt = new Date().toISOString()
     const stamp = createdAt.replace(/[-:.]/g, '')
-    const stem = 'player-operational.schema-1.' + stamp + '.' + crypto.randomUUID()
+    const stem = 'player-operational.schema-' + PLAYER_OPERATIONAL_STORE_SCHEMA_VERSION + '.' + stamp + '.' + crypto.randomUUID()
     const backupFile = stem + '.sqlite'
     const manifestFile = stem + '.json'
     const temporaryDatabase = path.join(directory, '.' + stem + '.tmp.sqlite')

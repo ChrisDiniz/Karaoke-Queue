@@ -63,6 +63,28 @@ async function greet(service: OperationalProtocolService, ctx: ReturnType<typeof
     deviceId, controllerId, messageId: 'hello-' + ctx.channel.connectionId } })
   assert.equal(ctx.out.at(-1)?.kind, 'ready')
 }
+test('Player hello reports a durable recovery marker instead of tearing down the authorized channel ambiguously', async () => {
+  const directory = temp()
+  const store = new PlayerOperationalStore(storeOptions(directory))
+  const service = new OperationalProtocolService({ store, authorization: authorization(), deviceId, playerEpoch,
+    executionPort: { async execute() { return { status: 'unknown', state: 'not-used' } } } })
+  const ctx = context('recovery-hello')
+  try {
+    ;(store as any).writeRecoveryMarker('manual-recovery-required', store.getMetadata().journalId)
+    const hello = structuredClone(valid.find(item => item.kind === 'hello')!) as any
+    await service.onMessage({ channel: ctx.channel, payload: { ...hello, deviceId, controllerId, messageId: 'hello-recovery' } })
+    const failure = ctx.out.at(-1)
+    assert.equal(failure?.kind, 'error')
+    if (failure?.kind !== 'error') throw new Error('G4_RECOVERY_HELLO_ERROR_MISSING')
+    assert.equal(failure.body.code, 'STORAGE_UNAVAILABLE')
+    assert.equal(failure.body.state, 'recovery-required')
+    assert.equal(ctx.closed.length, 0, 'the explicit blocked state is reported without implying success or revoking G2')
+  } finally {
+    await service.close()
+    store.close()
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
 function eventStatuses(ctx: ReturnType<typeof context>): string[] {
   return ctx.out.filter((item): item is Extract<OperationalMessage, { kind: 'event' }> => item.kind === 'event' &&
     item.body.type === 'operation-result').map(item => (item.body as { type: 'operation-result';

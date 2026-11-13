@@ -38,6 +38,7 @@ import { MainStandaloneShutdownCoordinator } from './src/main-standalone-shutdow
 import { MainManagementCloseCoordinator } from './src/main-management-close'
 import { MainManagementHost } from './src/main-management-host'
 import { MainRemoteRuntime } from './src/main-remote-runtime'
+import { getRemoteDiscoveryInterfaceAddresses } from './src/remote-discovery'
 import { getPackagedInstallationContext, getPackagedInstalledRole } from './src/installed-role-context'
 import { confirmInitialRoleThroughUac } from './src/installation-role-broker'
 import { acquirePackagedInstallationState } from './src/installation-bootstrap'
@@ -957,6 +958,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
         throw error
       }
       database = openedDatabase
+      await remoteRuntime?.resumeManagementReconnection(openedDatabase, getRemoteDiscoveryInterfaceAddresses())
       musicCatalogService = mainMediaRuntime.createCatalog(openedDatabase)
 
       const legacyStorage = createLegacyStateStorageBuffer()

@@ -147,3 +147,46 @@ A1–A4 foram corrigidos pelo Luna após a auditoria, sem iniciar G4/H. Handler 
 Validação Linux após correções: compile, reproducer A1–A4, store 18/18, protocolo 10/10, serviço/outbox 12/12, inbox 5/5, migrações 12/12, pairing-wire 3/3, remote-infrastructure 20/20 e integração WSS real entre processos PASS. Runner oficial Windows `--operational-store` PASS no checkout NTFS, incluindo compile nativo, suites G3, migração v9, integração operacional, WSS 20/20 e cleanup. Fingerprint Windows `e7db51bc7c000ebd42b0c0f151e4eaf494f03e0efe83740999f96aa505cd1776`.
 
 Reauditoria independente permanece gate; somente a segunda confirma os achados como encerrados para checkpoint. G3 está pronta para reauditoria; checkpoint depende do parecer independente; G4 não iniciada.
+
+
+## G4 — detalhamento integral proposto, 2026-11-13
+
+O [plano integral G4](g4-full-execution-plan.md) detalha os quatro lotes canônicos G4.1–G4.4 e seus gates. Não altera o contrato funcional aprovado ou o perfil G2. Checkpoint G3 `ca6af2e` verificado com reauditoria PASS; G4 permanece não iniciada. Contratos novos e autorização integral para Luna aguardam aceite explícito; após esse aceite os lotes avançam sequencialmente pelos gates sem nova autorização individual. Reconciliação técnica não é retomada de controle nem aplicação de negócio H3. Windows G4 é gate automatizado obrigatório, sem exigir duas máquinas antes de G6/H5. Esta rodada é exclusivamente documental, sem testes funcionais novos ou commit/push/PR.
+
+
+## Execução parcial da G4 — 2026-11-13
+
+Autorização integral do proprietário recebida. Implementados em primeira entrega o scheduler por peer e reconciliação sobre ports G3 existentes. Evidências, testes PASS/NOT RUN/FAIL e limites estão no [diário G4](evidence/g4-implementation/README.md). A regressão G2/G3 de dois processos e WSS passou fora do sandbox, mas ainda não existe adapter ligando o coordenador novo ao WSS/G2/G3. Persistência da intenção offline e execução Windows também pendentes; G4.1–G4.4 PARTIAL. Não habilita pairing nem G5/H.
+
+## Fechamento técnico integral da G4 — 2026-11-13
+
+Esta entrada substitui o status parcial acima sem remover o histórico da primeira execução. G4.1–G4.4 foram integradas ao runtime Main e passaram os gates Linux/WSL2 e Windows nativo. O teste E2E G4 usa Gestão e Player em processos independentes, OPAQUE G2, WSS real com TLS pinado, stores SQLite, handshake/reconnect/restart, replay G3, consultas operation-status sem repetir operação incerta e intenção offline persistente/fencing.
+
+Resultados e decisões estão em [plano integral G4](g4-full-execution-plan.md), [diário](evidence/g4-implementation/README.md) e [ticket](backlog/0007-fase-g-comunicacao-remota-segura/0004-g4-reconexao-recuperacao.md). Windows fingerprint `5321faf82d70ecc989b8086f870864d32d9adeeba1c03f323c8f2f8a4bad890f`. O E2E também prova coalescing de chamadas concorrentes ao startup Main para não criar coordenadores duplicados. G4 está pronta para auditoria independente; auditoria/checkpoint pendentes. Produção continua não aprovada e pairing depende da apresentação local aprovada G5. H3 ainda implementará aplicação de negócio e ACK transacional; G6/H5 farão homologação física. G5, G6 e H não iniciadas. Commit/push/PR não realizados.
+
+
+## Parecer independente G4 — 2026-11-13
+
+O PASS técnico relatado acima foi sucedido pela auditoria independente **FAIL** em `docs/g4-independent-audit.md`: A1 P2, A2 P1 e A3 P2 reproduzidos. Checkpoint/G5 bloqueados até correção e reauditoria; histórico de execução preservado. Nenhuma fase posterior iniciada.
+
+
+### G4 — execução das correções A1–A3, 2026-11-13
+
+Após o parecer independente FAIL, Luna aplicou fences pós-await no coordenador, bloqueio fail-closed para perda/corrupção da store de intenção com evidência G2 e admissão de persistência cancelável no reconciliador. A intenção SQLite não é recriada em leitura quando histórico remoto prova inicialização anterior; JSON antigo não substitui offline perdido. Primeira inicialização valida/migra intenção antes de criar identidade. As escritas G3 permanecem na inbox/outbox existentes e síncronas; snapshot não avança evento recebido/aplicado nem gera ACK H3.
+
+Validação final da implementação: G4 unitários 71/71, reproducer A1–A3 PASS, E2E G4 de processos independentes com OPAQUE/WSS/TLS/SQLite/restart e perda de intenção offline PASS, regressões G1/G2/G3 diretamente afetadas 52/52. Windows nativo pelo runner oficial nesta revisão: compile, 94 testes focados, integração G2/G4, `remote-infrastructure` 23/23, DPAPI/safeStorage e cleanup PASS; fingerprint `2559a710644766c6fc499e97daef79a5a5291b3f4247172118ecc6403eb21bab`. Essa validação é da implementação Luna; não é reauditoria independente nem liberação de checkpoint/G5. Rollback que remove todas as evidências e recuperação local de DB corrompido permanecem limites documentados. Auditoria independente pendente; G5 não iniciada.
+
+
+## Reauditoria focal independente G4 — 2026-11-13
+
+Sol confirmou A1–A3 corrigidos (PASS focal), mas reproduziu **A4 P1**: enable antigo suspenso em stopPlayer persiste enabled depois de offline posterior já confirmado. SQLite reaberta perde a decisão mais recente; restart volta a considerar o remoto elegível. Reproducer determinístico `node scripts/g4-reaudit-intent-race.cjs` CONFIRMED; devolver correção ao Luna. Parecer independente **FAIL**; G4.1 PASS, G4.2 PASS, G4.3 FAIL, G4.4 PASS no escopo focal. Checkpoint/G5 NÃO liberados.
+
+Compile, reproducer original corrigido, 86 testes focados/regressivos e E2E G4 real entre processos reexecutados PASS. Windows fingerprint `2559a710644766c6fc499e97daef79a5a5291b3f4247172118ecc6403eb21bab` verificado: 488/494 hashes iguais, seis divergências exclusivamente documentais; nenhum código diferente. Campanha nativa não repetida e novo reproducer A4 ainda não executado no Windows. Causa, impacto, correção mínima e regressão necessária estão em `docs/g4-independent-audit.md`. Limites de rollback completo e advisories minimatch preservados. Sem alteração funcional, commit/push/PR ou G5. `git diff --check` PASS.
+
+### G4 — correção A4, 2026-11-13
+
+Geração Main e fence na admissão SQLite impedem que enable suspenso sobrescreva offline confirmado. O reproducer falha antes e passa depois; segundo processo lê offline após restart. Testes cobrem a fronteira de shutdown, admissão de gravação, escolhas concorrentes e close. G4 75/75, A1–A4 reproducers, regressões G1/G2/G3 52/52, E2E G4 e Windows runner oficial PASS (fingerprint `2a4e19d84f7dea3b32ae374efb149ec9a7023a42c80a529c9962ab7518ea6350`; 98 testes focados, E2E real e cleanup). A1–A3 continuam aprovados na reauditoria anterior. Esta atualização é evidência do Luna; reauditoria independente de A4 permanece pendente e G4 não está liberada para checkpoint/G5.
+
+## Parecer independente final da G4 — 2026-11-13
+
+A auditoria focal A4 cross-process foi aprovada por Sol: A1–A4 e G4.1–G4.4 PASS. O CAS SQLite rejeita escritores com revisão obsoleta; o bootstrap mantém exclusividade do Main de produto. O checkpoint está tecnicamente liberado; G5 ainda não foi iniciada e produção não está aprovada. G5 integra apresentação/consentimento locais; G6/H5 cobrem homologação física. H3 continua responsável pela aplicação de negócio e ACK transacional. Os FAILs anteriores permanecem no histórico detalhado da auditoria. Seis advisories moderados minimatch seguem manutenção não bloqueante; rollback que apague toda evidência externa permanece limitação documentada.

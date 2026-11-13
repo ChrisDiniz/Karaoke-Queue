@@ -200,6 +200,7 @@ export function connectPinnedControlChannel(options: {
   bearer: string
   capabilities?: readonly string[]
   timeoutMs?: number
+  signal?: AbortSignal
 }): Promise<PinnedControlChannel> {
   validateEndpoint(options.address, options.port)
   validateToken(options.bearer)
@@ -216,14 +217,18 @@ export function connectPinnedControlChannel(options: {
     let settled = false
     const timeout = setTimeout(() => fail(new Error('REMOTE_HELLO_TIMEOUT')), REMOTE_LIMITS.helloTimeoutMs)
     timeout.unref()
+    const abort = (): void => fail(new Error('REMOTE_CONNECT_ABORTED'))
     const fail = (error: Error): void => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
+      options.signal?.removeEventListener('abort', abort)
       socket.terminate()
       agent.destroy()
       reject(error)
     }
+    options.signal?.addEventListener('abort', abort, { once: true })
+    if (options.signal?.aborted) { abort(); return }
     socket.on('error', fail)
     socket.once('close', () => {
       agent.destroy()
@@ -248,6 +253,7 @@ export function connectPinnedControlChannel(options: {
       }
       settled = true
       clearTimeout(timeout)
+      options.signal?.removeEventListener('abort', abort)
       resolve({ socket, ready: value as PinnedControlChannel['ready'], close() {
         if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) socket.close(1000)
         agent.destroy()

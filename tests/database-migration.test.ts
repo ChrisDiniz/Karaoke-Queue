@@ -10,6 +10,8 @@ import {
   restoreSqliteMigrationBackupToNewPath,
   verifySqliteMigrationBackup
 } from '../src/sqlite-migration-backup'
+import { ManagementRemoteJournalInbox } from '../src/management-remote-journal'
+import type { OperationalMessage } from '../src/operational-protocol-contracts'
 import { KaraokeApplication } from '../src/application'
 import { createStateRepository } from '../src/state-repository'
 
@@ -22,10 +24,56 @@ function assertMusicCatalogSchema(database: DatabaseSync): void {
   assert.ok(tables.has('management_remote_journal_state'))
   assert.ok(tables.has('management_remote_journal_events'))
   assert.ok(tables.has('management_remote_journal_snapshots'))
-  assert.equal(database.prepare('PRAGMA user_version').get()?.user_version, 9)
+  assert.equal(database.prepare('PRAGMA user_version').get()?.user_version, 10)
   assert.ok(database.prepare('PRAGMA table_info(music_catalog_metadata)').all()
     .some((column: any) => column.name === 'source_name'))
 }
+
+test('schema-v9 remote journal migration preserves snapshot evidence and adds Player epoch identity', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-schema-v9-remote-snapshot-'))
+  const database = createKaraokeDatabase(directory)
+  const inbox = new ManagementRemoteJournalInbox(database, { controllerId: 'controller-local-01' })
+  const fixture = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'tests/fixtures/operational-v1/valid-messages.json'), 'utf8')) as OperationalMessage[]
+  const original = structuredClone(fixture.find(value => value.kind === 'response' && value.body.type === 'snapshot')!) as any
+  original.deviceId = 'device-player-01'
+  original.controllerId = 'controller-local-01'
+  original.body.correlationId = 'migration-snapshot-query'
+  original.body.payload.highWatermark = 0
+  original.body.payload.compactedThrough = 0
+  inbox.persistSnapshot('device-player-01', original)
+  database.close()
+
+  const databasePath = path.join(directory, 'karaoke.sqlite')
+  const old = new DatabaseSync(databasePath)
+  old.exec(`PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE;
+    ALTER TABLE management_remote_journal_snapshots RENAME TO management_remote_journal_snapshots_v10_test;
+    CREATE TABLE management_remote_journal_snapshots (
+      player_device_id TEXT NOT NULL, controller_id TEXT NOT NULL, journal_id TEXT NOT NULL,
+      high_watermark INTEGER NOT NULL CHECK (high_watermark BETWEEN 0 AND 9007199254740991),
+      snapshot_json TEXT NOT NULL CHECK (length(CAST(snapshot_json AS BLOB)) BETWEEN 1 AND 65536),
+      fingerprint TEXT NOT NULL CHECK (length(fingerprint)=64 AND fingerprint NOT GLOB '*[^a-f0-9]*'),
+      created_at INTEGER NOT NULL, PRIMARY KEY (player_device_id, controller_id, high_watermark),
+      FOREIGN KEY (player_device_id, controller_id) REFERENCES management_remote_journal_state(player_device_id, controller_id)
+    ) STRICT;
+    INSERT INTO management_remote_journal_snapshots SELECT player_device_id,controller_id,journal_id,high_watermark,
+      snapshot_json,fingerprint,created_at FROM management_remote_journal_snapshots_v10_test;
+    DROP TABLE management_remote_journal_snapshots_v10_test;
+    PRAGMA user_version = 9; COMMIT;`)
+  old.close()
+
+  const migrated = createKaraokeDatabase(directory)
+  try {
+    const latest = new ManagementRemoteJournalInbox(migrated, { controllerId: 'controller-local-01' })
+      .latestSnapshot('device-player-01') as any
+    assert.equal(latest?.body.payload.playerEpoch, original.body.payload.playerEpoch)
+    const inspected = new DatabaseSync(databasePath, { readOnly: true })
+    try {
+      assert.equal(inspected.prepare('PRAGMA user_version').get()?.user_version, 10)
+      assert.equal((inspected.prepare('SELECT player_epoch FROM management_remote_journal_snapshots').get() as any).player_epoch,
+        original.body.payload.playerEpoch)
+    } finally { inspected.close() }
+  } finally { migrated.close(); fs.rmSync(directory, { recursive: true, force: true }) }
+})
 
 test('upgrades a schema-v1 SQLite profile in place and retains app state', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-schema-v1-'))
@@ -228,7 +276,7 @@ test('upgrades a schema-v4 profile to schema v9 without changing operational sta
   }
 })
 
-test('v9 migration fences and preserves a legacy v8 inbox cursor unsupported by its event rows', () => {
+test('v8/v9 migration fences a legacy cursor unsupported by event rows and preserves the new schema', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-journal-v8-cursor-'))
   let database = createKaraokeDatabase(directory)
   try {
@@ -237,7 +285,18 @@ test('v9 migration fences and preserves a legacy v8 inbox cursor unsupported by 
     legacy.prepare(`INSERT INTO management_remote_journal_state(player_device_id,controller_id,journal_id,
       through_sequence,high_watermark,compacted_through,updated_at) VALUES(?,?,?,?,?,?,?)`)
       .run('player-migration-01','controller-migration-01','journal-migration-01',13,13,0,1)
-    legacy.exec('PRAGMA user_version=8')
+    legacy.exec(`ALTER TABLE management_remote_journal_snapshots RENAME TO management_remote_journal_snapshots_v10_test;
+      CREATE TABLE management_remote_journal_snapshots (
+        player_device_id TEXT NOT NULL, controller_id TEXT NOT NULL, journal_id TEXT NOT NULL,
+        high_watermark INTEGER NOT NULL CHECK (high_watermark BETWEEN 0 AND 9007199254740991),
+        snapshot_json TEXT NOT NULL CHECK (length(CAST(snapshot_json AS BLOB)) BETWEEN 1 AND 65536),
+        fingerprint TEXT NOT NULL CHECK (length(fingerprint)=64 AND fingerprint NOT GLOB '*[^a-f0-9]*'),
+        created_at INTEGER NOT NULL, PRIMARY KEY (player_device_id, controller_id, high_watermark),
+        FOREIGN KEY (player_device_id, controller_id) REFERENCES management_remote_journal_state(player_device_id, controller_id)
+      ) STRICT;
+      INSERT INTO management_remote_journal_snapshots SELECT player_device_id,controller_id,journal_id,high_watermark,
+        snapshot_json,fingerprint,created_at FROM management_remote_journal_snapshots_v10_test;
+      DROP TABLE management_remote_journal_snapshots_v10_test; PRAGMA user_version=8;`)
     legacy.close()
     database = createKaraokeDatabase(directory)
     const migrated = new DatabaseSync(path.join(directory, 'karaoke.sqlite'))
@@ -247,7 +306,7 @@ test('v9 migration fences and preserves a legacy v8 inbox cursor unsupported by 
     assert.equal(state.through_sequence, 0)
     assert.equal(state.legacy_through_sequence, 13)
     assert.equal(state.recovery_required, 1)
-    assert.equal(migrated.prepare('PRAGMA user_version').get()?.user_version, 9)
+    assert.equal(migrated.prepare('PRAGMA user_version').get()?.user_version, 10)
     migrated.close()
   } finally { database.close(); fs.rmSync(directory, { recursive: true, force: true }) }
 })
@@ -307,7 +366,7 @@ test('upgrades a schema-v5 profile with catalog metadata in place', () => {
       /SQLITE_RESTORE_DESTINATION_EXISTS/, 'restore must never overwrite the live database')
     assert.equal(verified.backupPath, backupPath)
     const currentAfterBlockedRestore = new DatabaseSync(databasePath, { readOnly: true })
-    try { assert.equal(currentAfterBlockedRestore.prepare('PRAGMA user_version').get()?.user_version, 9) }
+    try { assert.equal(currentAfterBlockedRestore.prepare('PRAGMA user_version').get()?.user_version, 10) }
     finally { currentAfterBlockedRestore.close() }
   } finally {
     upgradedDatabase.close()

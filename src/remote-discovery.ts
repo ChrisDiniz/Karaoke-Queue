@@ -63,6 +63,16 @@ function getInterfaceSnapshot(address: string): InterfaceSnapshot | undefined {
   return undefined
 }
 
+/** Returns bounded private LAN interfaces for Main-owned discovery; results are locators only. */
+export function getRemoteDiscoveryInterfaceAddresses(): string[] {
+  let interfaces: ReturnType<typeof os.networkInterfaces>
+  try { interfaces = os.networkInterfaces() } catch { return [] }
+  const addresses = Object.values(interfaces).flatMap(entries => (entries ?? [])
+    .filter(entry => entry.family === 'IPv4' && !entry.internal && isPrivateIpv4(entry.address))
+    .map(entry => entry.address))
+  return [...new Set(addresses)].slice(0, MAX_DISCOVERY_INTERFACES)
+}
+
 function sameSubnet(left: string, right: string, mask: string): boolean {
   return ((ipv4Number(left) & ipv4Number(mask)) >>> 0) === ((ipv4Number(right) & ipv4Number(mask)) >>> 0)
 }

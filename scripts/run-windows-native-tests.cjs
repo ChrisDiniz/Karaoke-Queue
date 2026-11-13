@@ -915,7 +915,7 @@ function requiresWindowFocus(playbackMode) {
     '--standalone-integration',
     '--player-recovery',
     '--standalone-options',
-    '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store'
+    '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection'
   ].includes(playbackMode)
 }
 
@@ -949,6 +949,21 @@ function selectWindowsTestSuites(playbackMode) {
     { name: 'management-database-migration-regression', script: 'build/tests/database-migration.test.js' },
     { name: 'operational-independent-processes', script: 'scripts/pairing-process-integration.test.cjs', args: ['--operational'] },
     { name: 'remote-infrastructure-wss-regression', script: 'build/tests/remote-infrastructure.test.js' }
+  ]
+  if (playbackMode === '--g4-reconnection') return [
+    { name: 'remote-control-intent-unit', script: 'build/tests/remote-control-intent.test.js' },
+    { name: 'remote-reconnection-unit', script: 'build/tests/remote-reconnection.test.js' },
+    { name: 'remote-reconciliation-unit', script: 'build/tests/remote-reconciliation.test.js' },
+    { name: 'player-operational-store-unit', script: 'build/tests/player-operational-store.test.js' },
+    { name: 'operational-protocol-unit', script: 'build/tests/operational-protocol.test.js' },
+    { name: 'operational-service-outbox-unit', script: 'build/tests/operational-protocol-service.test.js' },
+    { name: 'management-remote-journal-unit', script: 'build/tests/management-remote-journal.test.js' },
+    { name: 'management-database-migration-regression', script: 'build/tests/database-migration.test.js' },
+    { name: 'g4-intent-revision-cas-independent-mains', script: 'scripts/g4-reaudit-cross-process-intent.cjs' },
+    { name: 'g4-independent-processes-wss-g2-g3', script: 'scripts/pairing-process-integration.test.cjs', args: ['--operational'] },
+    { name: 'remote-infrastructure-wss-regression', script: 'build/tests/remote-infrastructure.test.js' },
+    { name: 'pairing-safe-storage-restart-electron', script: 'scripts/pairing-safe-storage-restart-electron.test.cjs' },
+    { name: 'remote-safe-storage-electron', script: 'scripts/remote-safe-storage-electron.test.cjs' }
   ]
   if (playbackMode === '--video-library') return [
     { name: 'video-library-index', script: 'build/tests/video-library-index-store.test.js' },
@@ -1595,6 +1610,7 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
     const focusedStandaloneOptions = playbackMode === '--standalone-options'
     const focusedStandaloneProduction = playbackMode === '--standalone-production'
     const focusedRemoteInfrastructure = playbackMode === '--remote-infrastructure'
+    const focusedG4 = playbackMode === '--g4-reconnection'
     if (focusedPlayerPlayback && !process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
       fail('O modo player-playback requer KQ_PLAYER_TEST_MEDIA_DIR com os vídeos de teste de leitura.')
     }
@@ -1662,6 +1678,7 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       : focusedPlayerRecovery ? 'TEST START production Player recovery in isolated Electron processes; Windows desktop\n'
       : focusedStandaloneOptions ? 'TEST START focused C8 options/catalog UI in real Electron + Playwright + SQLite + MP4; Windows paths supplied read-only\n'
       : focusedRemoteInfrastructure ? 'TEST START HTTPS/WSS and discovery unit suites + real Electron safeStorage; isolated profile\n'
+      : focusedG4 ? 'TEST START G4 reconnection, durable offline intent, replay and real G2/G3 WSS between independent processes; native safeStorage regressions\n'
       : focusedStandaloneProduction ? 'TEST START C9 production Standalone Main/Preload/IPC/shutdown with real Electron, MP4 and isolated SQLite\n'
       : 'TEST START Electron real + Playwright + SQLite temporário; sessão gráfica Windows\n')
     if (focusedStandaloneOptions) env.KQ_STANDALONE_C8_ONLY = '1'
@@ -1712,6 +1729,7 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       : focusedPlayerRecovery ? 'TEST PASS production Player recovery Electron integration; unrelated regression suites not run by request\n'
       : focusedStandaloneOptions ? 'TEST PASS focused C8 options/catalog UI through real Electron, Playwright, IPC, SQLite and MP4; native file-picker window is represented by the test-only dialog port\n'
       : focusedRemoteInfrastructure ? 'TEST PASS HTTPS/WSS and discovery unit suites + real Electron safeStorage; unrelated regressions not run\n'
+      : focusedG4 ? 'TEST PASS focused G4 reconnection/runtime, durable replay, G2/G3 WSS process integration, and native safeStorage regressions\n'
       : focusedStandaloneProduction ? 'TEST PASS production C9 Standalone Electron lifecycle with real MP4 and recovery; unrelated Controller/Combined suites not run by request\n'
       : 'TEST PASS database migration, operating-mode, video-library and music-catalog unit; multi-instance, operating-modes, video-library and music-catalog Electron suites\n')
     restorePreviousBuild(root, buildState, manifest)
@@ -1845,7 +1863,7 @@ function powershellManualLauncher(stagePath, runId, profileKind, profileName) {
 
 function powershellLauncher(stagePath, runId, playbackEvaluation = false, playbackMode = null, manualOptions = null, screenshotRoot = null, packageCandidate = false) {
   if (manualOptions) return powershellManualLauncher(stagePath, runId, manualOptions.profileKind, manualOptions.profileName)
-  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store'].includes(playbackMode)) {
+  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection'].includes(playbackMode)) {
     fail('Modo de playback não permitido para o worker Windows.')
   }
   if (screenshotRoot !== null && (typeof screenshotRoot !== 'string' || !/^[A-Za-z]:\\/.test(screenshotRoot) || screenshotRoot.startsWith('\\\\'))) {
@@ -1902,6 +1920,7 @@ function powershellLauncher(stagePath, runId, playbackEvaluation = false, playba
     '    elseif ($payload.playbackMode -eq "--video-library") { $workerArgs += "--video-library" }',
     '    elseif ($payload.playbackMode -eq "--remote-infrastructure") { $workerArgs += "--remote-infrastructure" }',
     '    elseif ($payload.playbackMode -eq "--operational-store") { $workerArgs += "--operational-store" }',
+    '    elseif ($payload.playbackMode -eq "--g4-reconnection") { $workerArgs += "--g4-reconnection" }',
     '    & node.exe $worker @workerArgs',
     '    $workerExit = $LASTEXITCODE',
     '  } finally { Pop-Location }',
@@ -2227,12 +2246,12 @@ async function runOrchestrator() {
     fail('O build candidato não combina com launcher manual, testes ou harnesses.')
   }
   const unexpectedArguments = process.argv.slice(2).filter(argument =>
-    !['--approve-untracked', '--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--manual-launch', '--manual-profile-kind', '--manual-profile-name'].includes(argument) &&
+    !['--approve-untracked', '--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection', '--manual-launch', '--manual-profile-kind', '--manual-profile-name'].includes(argument) &&
     argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName
   )
   if (unexpectedArguments.length) fail('Argumento não permitido: ' + unexpectedArguments.join(' '))
   const playbackModes = process.argv.slice(2).filter(argument =>
-    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store'].includes(argument)
+    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection'].includes(argument)
   )
   if (playbackModes.length > 1) fail('Escolha apenas um modo de avaliação de playback.')
   const playbackEvaluation = process.argv.includes('--playback-evaluation')
@@ -2409,13 +2428,13 @@ async function main() {
       fail('O worker manual requer uma seleção de perfil válida.')
     }
     if (!manualLaunch && (profileKindIndex >= 0 || profileNameIndex >= 0)) fail('Perfil manual sem --manual-launch.')
-    const allowedWorkerArguments = ['--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--manual-launch', '--manual-profile-kind', '--manual-profile-name']
+    const allowedWorkerArguments = ['--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection', '--manual-launch', '--manual-profile-kind', '--manual-profile-name']
     if (workerArguments.some(argument => !allowedWorkerArguments.includes(argument) &&
         argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName)) {
       fail('O worker recebeu argumentos não permitidos.')
     }
     const playbackModes = workerArguments.filter(argument =>
-      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store'].includes(argument)
+      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection'].includes(argument)
     )
     if (playbackModes.length > 1) fail('O worker recebeu modos de playback conflitantes.')
     if (workerArguments.includes('--package-candidate') && (playbackModes.length || workerArguments.includes('--playback-evaluation'))) fail('O worker recebeu build candidato combinado com testes.')
