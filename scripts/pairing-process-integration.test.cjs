@@ -10,8 +10,12 @@ const { PairingControllerClient } = require('../build/src/pairing-controller.js'
 const { PairingStore } = require('../build/src/pairing-store.js')
 const { encodeBase64Url } = require('../build/src/pairing-crypto.js')
 const { parsePairingEnvelope } = require('../build/src/pairing-wire.js')
-const { createBootstrapChannel } = require('../build/src/remote-clients.js')
+const { createBootstrapChannel, connectPinnedControlChannel } = require('../build/src/remote-clients.js')
 const { generatePlayerCertificate } = require('../build/src/remote-tls.js')
+const { createKaraokeDatabase } = require('../build/database.js')
+const { ManagementRemoteOutbox } = require('../build/src/management-remote-outbox.js')
+const { ManagementRemoteJournalInbox } = require('../build/src/management-remote-journal.js')
+const { parseOperationalMessage } = require('../build/src/operational-protocol-validation.js')
 
 class TestProtector {
   async assertAvailable() {}
@@ -55,6 +59,7 @@ function messageBus(child, diagnostics = () => '') {
 }
 
 const fixture = path.join(__dirname, 'pairing-process-player.cjs')
+const includeOperational = process.argv.includes('--operational')
 function firstPrivateAddress() {
   try {
     for (const entries of Object.values(os.networkInterfaces())) {
@@ -78,6 +83,42 @@ function startPlayer(profile, address) {
     }
   })
   return { child, bus, stderr: () => stderr, events }
+}
+function operationalMailbox(socket) {
+  const messages = []
+  const waiters = []
+  let failed = null
+  socket.on('message', (data, binary) => {
+    try {
+      if (binary) throw new Error('OPERATIONAL_BINARY_MESSAGE')
+      const bytes = Array.isArray(data) ? Buffer.concat(data) : Buffer.isBuffer(data) ? data : Buffer.from(data)
+      const message = parseOperationalMessage(bytes)
+      const index = waiters.findIndex(waiter => waiter.match(message))
+      if (index >= 0) waiters.splice(index, 1)[0].resolve(message)
+      else messages.push(message)
+    } catch (error) { failed = error; for (const waiter of waiters.splice(0)) waiter.reject(error) }
+  })
+  socket.on('error', error => { failed = error; for (const waiter of waiters.splice(0)) waiter.reject(error) })
+  socket.on('close', (code, reason) => {
+    failed = failed ?? new Error(`OPERATIONAL_SOCKET_CLOSED_${code}_${reason.toString()}`)
+    for (const waiter of waiters.splice(0)) waiter.reject(failed)
+  })
+  return { next(match) {
+    if (failed) return Promise.reject(failed)
+    const index = messages.findIndex(match)
+    if (index >= 0) return Promise.resolve(messages.splice(index, 1)[0])
+    return new Promise((resolve, reject) => {
+      const waiter = { match, resolve, reject }
+      const timer = setTimeout(() => {
+        const index = waiters.indexOf(waiter)
+        if (index >= 0) waiters.splice(index, 1)
+        reject(new Error('OPERATIONAL_MESSAGE_TIMEOUT'))
+      }, 15_000)
+      timer.unref()
+      waiter.resolve = value => { clearTimeout(timer); resolve(value) }
+      waiters.push(waiter)
+    })
+  } }
 }
 
 async function request(player, type, payload = {}) {
@@ -198,6 +239,99 @@ async function main() {
     const activeSnapshot = await request(player, 'snapshot', { token: encodeBase64Url(managerToken) })
     assert.equal(activeSnapshot.state.playerAuthority.phase, 'active')
     assert.equal(activeSnapshot.unauthorized, false)
+
+    if (includeOperational) {
+      const managementDatabase = createKaraokeDatabase(controllerProfile)
+      let managementDatabaseClosed = false
+      const outbox = new ManagementRemoteOutbox(managementDatabase, {
+      deviceId: '11111111-1111-4111-8111-111111111111', controllerId: '11111111-1111-4111-8111-111111111111'
+    })
+    let operationalChannel
+    try {
+      operationalChannel = await connectPinnedControlChannel({ address, port: ready.port,
+        pin: { certificatePem: ready.certificatePem, fingerprintSha256: ready.fingerprintSha256, serverName: ready.serverName },
+        bearer: encodeBase64Url(managerToken) })
+      const mailbox = operationalMailbox(operationalChannel.socket)
+      operationalChannel.socket.send(JSON.stringify({ protocolVersion: 1, schemaVersion: 1, kind: 'hello',
+        messageId: crypto.randomUUID(), deviceId: ready.deviceId, controllerId: '11111111-1111-4111-8111-111111111111',
+        body: { protocol: 'kq-operation/1', protocolVersion: 1, schemaVersion: 1 } }))
+      const operationalReady = await mailbox.next(message => message.kind === 'ready')
+      assert.equal(operationalReady.body.journalId, 'journal-' + ready.deviceId)
+
+      const operationId = crypto.randomUUID()
+      const commandMessage = { protocolVersion: 1, schemaVersion: 1, kind: 'command', messageId: crypto.randomUUID(),
+        deviceId: ready.deviceId, controllerId: '11111111-1111-4111-8111-111111111111', body: {
+          operationId, type: 'pause', target: { sessionId: 'session-process-test', turnId: 'LOG-1762900000000-AB12',
+            controlEpoch: operationalReady.body.controlEpoch, playerEpoch: operationalReady.body.playerEpoch,
+            stateRevision: 0, occurrenceId: 'occ-process-test', attemptId: 'attempt-process-test' }, payload: {} } }
+      outbox.prepare(ready.deviceId, commandMessage)
+      const acceptedEvent = mailbox.next(message => message.kind === 'event' && message.body.type === 'operation-result' &&
+        message.body.payload.operationId === operationId && message.body.payload.status === 'accepted')
+      const completedEvent = mailbox.next(message => message.kind === 'event' && message.body.type === 'operation-result' &&
+        message.body.payload.operationId === operationId && message.body.payload.status === 'completed')
+      outbox.transmit(ready.deviceId, operationId, { send(message) {
+        operationalChannel.socket.send(JSON.stringify(message))
+        return true
+      } })
+      await acceptedEvent
+      await completedEvent
+      assert.equal(outbox.get(ready.deviceId, operationId).status, 'unknown', 'lost application responses remain uncertain in the durable outbox')
+      const firstExecutionCount = await request(player, 'execution-count')
+      assert.equal(firstExecutionCount.value, 1)
+
+      let retryMessage
+      const statusResponse = mailbox.next(message => message.kind === 'response' && message.body.type === 'operation-status' &&
+        message.body.payload.operationId === operationId)
+      outbox.transmit(ready.deviceId, operationId, { send(message) {
+        retryMessage = message
+        operationalChannel.socket.send(JSON.stringify(message))
+        return true
+      } })
+      const recovered = await statusResponse
+      assert.equal(recovered.body.payload.status, 'completed')
+      assert.equal(outbox.acceptStatus(ready.deviceId, recovered).status, 'completed')
+      assert.equal(outbox.get(ready.deviceId, operationId).status, 'completed')
+      assert.equal(retryMessage.body.operationId, operationId, 'retry preserves the original operation ID')
+      const finalExecutionCount = await request(player, 'execution-count')
+      assert.equal(finalExecutionCount.value, 1, 'Player dedupe prevents a second handler invocation')
+
+      const journalInbox = new ManagementRemoteJournalInbox(managementDatabase, {
+        controllerId: '11111111-1111-4111-8111-111111111111'
+      })
+      const pageResponsePromise = mailbox.next(message => message.kind === 'response' && message.body.type === 'journal-page')
+      operationalChannel.socket.send(JSON.stringify({ protocolVersion: 1, schemaVersion: 1, kind: 'query',
+        messageId: crypto.randomUUID(), deviceId: ready.deviceId, controllerId: '11111111-1111-4111-8111-111111111111',
+        body: { queryId: crypto.randomUUID(), type: 'journal-page', payload: {
+          journalId: operationalReady.body.journalId, afterSequence: 0, limit: 32 } } }))
+      const pageResponse = await pageResponsePromise
+      const durableCursor = journalInbox.persistPage(ready.deviceId, 0, pageResponse)
+      assert.equal(durableCursor.throughSequence, 2)
+      assert.deepEqual(journalInbox.readEvents(ready.deviceId, 0, 32).map(item => item.sequence), [1, 2])
+      // This harness acts as a synthetic consumer only after its inbox commit and page assertions above.
+      const ack = parseOperationalMessage(JSON.stringify({ protocolVersion: 1, schemaVersion: 1, kind: 'ack',
+        messageId: crypto.randomUUID(), deviceId: ready.deviceId, controllerId: '11111111-1111-4111-8111-111111111111',
+        body: { correlationId: crypto.randomUUID(), type: 'consumed', payload: { journalId: operationalReady.body.journalId,
+          throughSequence: durableCursor.throughSequence, consumerId: '11111111-1111-4111-8111-111111111111' } } }))
+      operationalChannel.socket.send(JSON.stringify(ack))
+      const ackCommit = await player.bus.next('operational-ack-committed')
+      assert.equal(ackCommit.throughSequence, 2)
+      const playerCursor = await request(player, 'journal-cursor', { controllerId: '11111111-1111-4111-8111-111111111111' })
+      assert.equal(playerCursor.value.throughSequence, 2, 'Player committed the consumer ACK received over real pinned WSS')
+      managementDatabase.close()
+      managementDatabaseClosed = true
+      const reopenedManagementDatabase = createKaraokeDatabase(controllerProfile)
+      try {
+        const reopenedInbox = new ManagementRemoteJournalInbox(reopenedManagementDatabase, {
+          controllerId: '11111111-1111-4111-8111-111111111111'
+        })
+        assert.equal(reopenedInbox.cursor(ready.deviceId).throughSequence, 2,
+          'Management event page and cursor survive an independent database restart')
+      } finally { reopenedManagementDatabase.close() }
+      } finally {
+        operationalChannel?.close()
+        if (!managementDatabaseClosed) managementDatabase.close()
+      }
+    }
     const playerFile = await fs.readFile(path.join(playerProfile, 'remote-authorization.json'), 'utf8')
     assert.equal(playerFile.includes(encodeBase64Url(managerToken)), false, 'the bearer is protected at rest')
 
@@ -205,6 +339,10 @@ async function main() {
     player = startPlayer(playerProfile, address)
     const restarted = await player.bus.next('ready')
     assert.equal(restarted.state.playerAuthority.phase, 'active')
+    if (includeOperational) {
+      const persistedCursor = await request(player, 'journal-cursor', { controllerId: '11111111-1111-4111-8111-111111111111' })
+      assert.equal(persistedCursor.value.throughSequence, 2, 'Player consumer cursor survives process restart')
+    }
     const afterRestart = await request(player, 'snapshot', { token: encodeBase64Url(managerToken) })
     assert.equal(afterRestart.unauthorized, false, 'persisted active authority survives a Player restart')
     await request(player, 'revoke')
@@ -216,7 +354,9 @@ async function main() {
     assert.equal(deniedAfterRestart.unauthorized, true, 'durable local revocation survives restart')
     await controllerClient.close()
     assert.deepEqual(managerPresentationOutcomes, ['active'], 'closing after commit does not relabel the completed pairing as cancelled')
-    console.log('pairing-process-integration: PASS (separate Player/Management processes, real OPAQUE, wrong-code retry, bilateral persistence, restart, revocation)')
+    console.log(includeOperational
+      ? 'pairing-process-integration: PASS (G2 pairing plus G3.3/G3.4 pinned TLS/WSS outbox retry, Player dedupe, event replay, ACK and independent persistence)'
+      : 'pairing-process-integration: PASS (separate Player/Management processes, real OPAQUE, wrong-code retry, bilateral persistence, restart, revocation)')
   } finally {
     await controllerClient?.close().catch(() => undefined)
     await stopPlayer(player)

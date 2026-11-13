@@ -1,0 +1,1 @@
+{"protocolVersion":1,"protocolVersion":1,"schemaVersion":1,"kind":"hello","messageId":"m","deviceId":"d","controllerId":"c","body":{"protocol":"kq-operation/1","protocolVersion":1,"schemaVersion":1}}

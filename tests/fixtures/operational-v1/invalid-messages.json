@@ -1,0 +1,194 @@
+[
+  {
+    "name": "unsupported-protocol-version",
+    "message": {
+      "protocolVersion": 9,
+      "schemaVersion": 1,
+      "kind": "hello",
+      "messageId": "msg-1",
+      "deviceId": "device-player-01",
+      "controllerId": "controller-local-01",
+      "body": {
+        "protocol": "kq-operation/1",
+        "protocolVersion": 1,
+        "schemaVersion": 1
+      }
+    },
+    "error": "OPERATIONAL_VERSION_UNSUPPORTED"
+  },
+  {
+    "name": "extra-envelope-field",
+    "message": {
+      "protocolVersion": 1,
+      "schemaVersion": 1,
+      "kind": "hello",
+      "messageId": "msg-1",
+      "deviceId": "device-player-01",
+      "controllerId": "controller-local-01",
+      "body": {
+        "protocol": "kq-operation/1",
+        "protocolVersion": 1,
+        "schemaVersion": 1
+      },
+      "unexpected": "field"
+    }
+  },
+  {
+    "name": "missing-target-fence",
+    "message": {
+      "protocolVersion": 1,
+      "schemaVersion": 1,
+      "kind": "command",
+      "messageId": "activate-1",
+      "deviceId": "device-player-01",
+      "controllerId": "controller-local-01",
+      "body": {
+        "operationId": "op-activate-1",
+        "type": "activate-turn",
+        "target": {
+          "sessionId": "session-legacy-12",
+          "turnId": "LOG-1762900000000-AB12",
+          "controlEpoch": "control-3",
+          "stateRevision": 17
+        },
+        "payload": {
+          "packageRevision": 1,
+          "managementRevision": 8,
+          "singerName": "José",
+          "table": "Mesa 2",
+          "tracks": [
+            {
+              "occurrenceId": "occ-1",
+              "trackIndex": 1,
+              "musicCode": "01001"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "short-music-code",
+    "message": {
+      "protocolVersion": 1,
+      "schemaVersion": 1,
+      "kind": "command",
+      "messageId": "activate-1",
+      "deviceId": "device-player-01",
+      "controllerId": "controller-local-01",
+      "body": {
+        "operationId": "op-activate-1",
+        "type": "activate-turn",
+        "target": {
+          "sessionId": "session-legacy-12",
+          "turnId": "LOG-1762900000000-AB12",
+          "controlEpoch": "control-3",
+          "playerEpoch": "player-8",
+          "stateRevision": 17
+        },
+        "payload": {
+          "packageRevision": 1,
+          "managementRevision": 8,
+          "singerName": "José",
+          "table": "Mesa 2",
+          "tracks": [
+            {
+              "occurrenceId": "occ-1",
+              "trackIndex": 1,
+              "musicCode": "1001"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "journal-sequence-gap",
+    "message": {
+      "protocolVersion": 1,
+      "schemaVersion": 1,
+      "kind": "response",
+      "messageId": "msg-1",
+      "deviceId": "device-player-01",
+      "controllerId": "controller-local-01",
+      "body": {
+        "correlationId": "q-page",
+        "type": "journal-page",
+        "payload": {
+          "journalId": "journal-device-01",
+          "events": [
+            {
+              "journalId": "journal-device-01",
+              "eventSequence": 1,
+              "type": "turn-accepted",
+              "schemaVersion": 1,
+              "causationOperationId": "op-1",
+              "stateRevision": 1,
+              "payload": {
+                "packageRevision": 1
+              }
+            },
+            {
+              "journalId": "journal-device-01",
+              "eventSequence": 8,
+              "type": "attempt-started",
+              "schemaVersion": 1,
+              "causationOperationId": "op-2",
+              "stateRevision": 2,
+              "payload": {
+                "musicCode": "01001"
+              },
+              "sessionId": "session-legacy-12",
+              "turnId": "LOG-1762900000000-AB12",
+              "occurrenceId": "occ-2",
+              "attemptId": "attempt-2"
+            }
+          ],
+          "throughSequence": 2,
+          "highWatermark": 13,
+          "hasMore": true,
+          "compactedThrough": 0
+        }
+      }
+    }
+  },
+  {
+    "name": "null-schema-version",
+    "message": {
+      "protocolVersion": 1,
+      "schemaVersion": 1,
+      "kind": "hello",
+      "messageId": "msg-1",
+      "deviceId": "device-player-01",
+      "controllerId": "controller-local-01",
+      "body": {
+        "protocol": "kq-operation/1",
+        "protocolVersion": 1,
+        "schemaVersion": null
+      }
+    }
+  },
+  {
+    "name": "extra-event-payload-field",
+    "message": {
+      "protocolVersion": 1,
+      "schemaVersion": 1,
+      "kind": "event",
+      "messageId": "event-1",
+      "deviceId": "device-player-01",
+      "controllerId": "controller-local-01",
+      "body": {
+        "journalId": "journal-device-01",
+        "eventSequence": 1,
+        "type": "turn-accepted",
+        "schemaVersion": 1,
+        "causationOperationId": "op-1",
+        "stateRevision": 1,
+        "payload": {
+          "packageRevision": 1,
+          "extra": "field"
+        }
+      }
+    }
+  }
+]

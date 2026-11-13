@@ -9,6 +9,8 @@ const { PairingAuthorizationAdapter } = require('../build/src/pairing-authorizat
 const { PairingStore } = require('../build/src/pairing-store.js')
 const { generatePlayerCertificate } = require('../build/src/remote-tls.js')
 const { createRemoteTransportServer } = require('../build/src/remote-transport.js')
+const { PlayerOperationalStore } = require('../build/src/player-operational-store.js')
+const { OperationalProtocolService } = require('../build/src/operational-protocol-service.js')
 
 class TestProtector {
   async assertAvailable() {}
@@ -34,6 +36,7 @@ async function availablePort(bindAddress) {
   return port
 }
 let displayedCode = ''
+let executionCount = 0
 const certificate = (async () => {
   const identityFile = path.join(profile, 'pairing-test-identity.json')
   let bundle
@@ -58,9 +61,23 @@ const certificate = (async () => {
   }
   const service = new PairingBootstrapService(identity, store, presentation)
   const authorization = new PairingAuthorizationAdapter(store)
+  const operationalStore = new PlayerOperationalStore({ userDataDirectory: profile,
+    journalId: 'journal-' + playerId, deviceId: playerId, initializeIfMissing: true })
+  const operationalService = new OperationalProtocolService({ store: operationalStore, authorization,
+    deviceId: playerId, playerEpoch: 'player-epoch-' + process.pid,
+    isTargetCurrent: () => true,
+    executionPort: { async execute() {
+      executionCount++
+      return { status: 'completed', state: 'synthetic-integration-handler' }
+    } } })
+  const observedOperationalMessagePort = { async onMessage(context) {
+    await operationalService.onMessage(context)
+    if (context.payload?.kind === 'ack') process.send({ type: 'operational-ack-committed',
+      consumerId: context.payload.body.payload.consumerId, throughSequence: context.payload.body.payload.throughSequence })
+  } }
   const port = await availablePort(address)
   const server = createRemoteTransportServer({ identity, address, port, authorization,
-    bootstrap: service, messagePort: { onMessage() {} } })
+    bootstrap: service, messagePort: observedOperationalMessagePort })
   await server.listen()
   process.on('message', async message => {
     try {
@@ -73,8 +90,15 @@ const certificate = (async () => {
       } else if (message?.type === 'revoke') {
         await authorization.revokeLocally()
         process.send({ type: 'revoked', id: message.id })
+      } else if (message?.type === 'execution-count') {
+        process.send({ type: 'execution-count', id: message.id, value: executionCount })
+      } else if (message?.type === 'journal-cursor') {
+        process.send({ type: 'journal-cursor', id: message.id,
+          value: operationalStore.getConsumerCursor(message.controllerId) })
       } else if (message?.type === 'close') {
         await server.close()
+        await operationalService.close()
+        operationalStore.close()
         await service.close()
         process.send({ type: 'closed', id: message.id })
         process.disconnect()

@@ -148,6 +148,8 @@ export interface RemoteTransportReady {
 export interface RemoteTransportChannel {
   connectionId: string
   peer: RemoteAuthorizedPeer
+  /** Aborted when the underlying WSS closes; optional for existing non-network test ports. */
+  signal?: AbortSignal
   send(data: string | Uint8Array): boolean
   close(code?: number, reason?: string): void
 }
@@ -158,7 +160,7 @@ export interface RemoteTransportMessageContext {
 }
 
 export interface RemoteTransportMessagePort {
-  onMessage(context: RemoteTransportMessageContext): void
+  onMessage(context: RemoteTransportMessageContext): void | Promise<void>
 }
 
 export interface RemoteTransportLifecycle {

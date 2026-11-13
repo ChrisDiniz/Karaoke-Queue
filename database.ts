@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { createSqliteMigrationBackup } from './src/sqlite-migration-backup'
 import {
@@ -17,13 +18,65 @@ import type {
   MusicCatalogRecord,
   MusicCatalogRepository
 } from './src/music-catalog'
+import type { ManagementOutboxDatabase, ManagementOutboxRecord } from './src/management-remote-outbox'
+import type { ManagementRemoteJournalDatabase, ManagementRemoteJournalCursor } from './src/management-remote-journal'
 
 const DATABASE_FILENAME = 'karaoke.sqlite'
 const LEGACY_FILENAME = 'karaoke-data.json'
 const LEGACY_MIGRATION = 'electron-store-v1'
 const BASE_SCHEMA_VERSION = 4
 const PREVIOUS_SCHEMA_VERSION = 5
-const SCHEMA_VERSION = 6
+const CATALOG_SCHEMA_VERSION = 6
+const OUTBOX_SCHEMA_VERSION = 7
+const JOURNAL_SCHEMA_VERSION = 8
+const SCHEMA_VERSION = 9
+const MANAGEMENT_REMOTE_OUTBOX_SCHEMA = `CREATE TABLE management_remote_outbox (
+  player_device_id TEXT NOT NULL CHECK (length(player_device_id) BETWEEN 1 AND 128),
+  controller_id TEXT NOT NULL CHECK (length(controller_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 128),
+  fingerprint TEXT NOT NULL CHECK (length(fingerprint) = 64 AND fingerprint NOT GLOB '*[^a-f0-9]*'),
+  command_json TEXT NOT NULL CHECK (length(CAST(command_json AS BLOB)) BETWEEN 1 AND 65536),
+  status TEXT NOT NULL CHECK (status IN ('not-sent', 'rejected', 'accepted', 'completed', 'unknown')),
+  detail_json TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (player_device_id, controller_id, operation_id)
+) STRICT;
+CREATE INDEX management_remote_outbox_recoverable
+  ON management_remote_outbox(status, created_at, operation_id);`
+const MANAGEMENT_REMOTE_JOURNAL_SCHEMA = `CREATE TABLE management_remote_journal_state (
+  player_device_id TEXT NOT NULL CHECK (length(player_device_id) BETWEEN 1 AND 128),
+  controller_id TEXT NOT NULL CHECK (length(controller_id) BETWEEN 1 AND 128),
+  journal_id TEXT NOT NULL CHECK (length(journal_id) BETWEEN 1 AND 128),
+  through_sequence INTEGER NOT NULL CHECK (through_sequence BETWEEN 0 AND 9007199254740991),
+  high_watermark INTEGER NOT NULL CHECK (high_watermark BETWEEN through_sequence AND 9007199254740991),
+  compacted_through INTEGER NOT NULL CHECK (compacted_through BETWEEN 0 AND high_watermark),
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (player_device_id, controller_id)
+) STRICT;
+CREATE TABLE management_remote_journal_events (
+  player_device_id TEXT NOT NULL,
+  controller_id TEXT NOT NULL,
+  journal_id TEXT NOT NULL,
+  event_sequence INTEGER NOT NULL CHECK (event_sequence BETWEEN 1 AND 9007199254740991),
+  event_json TEXT NOT NULL CHECK (length(CAST(event_json AS BLOB)) BETWEEN 1 AND 8192),
+  fingerprint TEXT NOT NULL CHECK (length(fingerprint)=64 AND fingerprint NOT GLOB '*[^a-f0-9]*'),
+  PRIMARY KEY (player_device_id, controller_id, event_sequence),
+  FOREIGN KEY (player_device_id, controller_id) REFERENCES management_remote_journal_state(player_device_id, controller_id)
+) STRICT;
+CREATE TABLE management_remote_journal_snapshots (
+  player_device_id TEXT NOT NULL,
+  controller_id TEXT NOT NULL,
+  journal_id TEXT NOT NULL,
+  high_watermark INTEGER NOT NULL CHECK (high_watermark BETWEEN 0 AND 9007199254740991),
+  snapshot_json TEXT NOT NULL CHECK (length(CAST(snapshot_json AS BLOB)) BETWEEN 1 AND 65536),
+  fingerprint TEXT NOT NULL CHECK (length(fingerprint)=64 AND fingerprint NOT GLOB '*[^a-f0-9]*'),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (player_device_id, controller_id, high_watermark),
+  FOREIGN KEY (player_device_id, controller_id) REFERENCES management_remote_journal_state(player_device_id, controller_id)
+) STRICT;
+CREATE INDEX management_remote_journal_events_page
+  ON management_remote_journal_events(player_device_id, controller_id, event_sequence);`
 
 interface DatabaseEntry {
   id: string
@@ -118,7 +171,7 @@ interface DatabaseMusicCatalogMetadataRow {
   source_name: string | null
 }
 
-interface KaraokeDatabase extends MusicCatalogRepository {
+interface KaraokeDatabase extends MusicCatalogRepository, ManagementOutboxDatabase, ManagementRemoteJournalDatabase {
   databasePath: string
   loadState: () => StoredAppState
   saveState: (state: AppState) => void
@@ -155,6 +208,19 @@ function readTransaction<T>(database: DatabaseSync, operation: () => T): T {
   }
 }
 
+function stableRemoteJournalJson(value: unknown): string {
+  if (Array.isArray(value)) return '[' + value.map(stableRemoteJournalJson).join(',') + ']'
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype) {
+    const record = value as Record<string, unknown>
+    return '{' + Object.keys(record).sort().map(key => JSON.stringify(key) + ':' + stableRemoteJournalJson(record[key])).join(',') + '}'
+  }
+  return JSON.stringify(value)
+}
+
+function remoteJournalFingerprint(value: unknown): string {
+  return createHash('sha256').update(stableRemoteJournalJson(value), 'utf8').digest('hex')
+}
+
 function initializeSchema(database: DatabaseSync): void {
   let version = Number(database.prepare('PRAGMA user_version').get()?.user_version ?? 0)
   if (version > SCHEMA_VERSION) {
@@ -166,6 +232,51 @@ function initializeSchema(database: DatabaseSync): void {
     transaction(database, () => {
       database.exec(`ALTER TABLE music_catalog_metadata ADD COLUMN source_name TEXT
         CHECK (source_name IS NULL OR length(source_name) <= 255);`)
+      database.exec(`PRAGMA user_version = ${CATALOG_SCHEMA_VERSION};`)
+    })
+    version = CATALOG_SCHEMA_VERSION
+  }
+
+  if (version === CATALOG_SCHEMA_VERSION) {
+    transaction(database, () => {
+      database.exec(`${MANAGEMENT_REMOTE_OUTBOX_SCHEMA}; PRAGMA user_version = ${OUTBOX_SCHEMA_VERSION};`)
+    })
+    version = OUTBOX_SCHEMA_VERSION
+  }
+
+  if (version === OUTBOX_SCHEMA_VERSION) {
+    transaction(database, () => {
+      database.exec(`${MANAGEMENT_REMOTE_JOURNAL_SCHEMA}; PRAGMA user_version = ${JOURNAL_SCHEMA_VERSION};`)
+    })
+    version = JOURNAL_SCHEMA_VERSION
+  }
+
+  if (version === JOURNAL_SCHEMA_VERSION) {
+    transaction(database, () => {
+      const columns = new Set((database.prepare('PRAGMA table_info(management_remote_journal_state)').all() as Array<{ name: string }>).map(row => row.name))
+      if (!columns.has('snapshot_high_watermark')) database.exec(`ALTER TABLE management_remote_journal_state ADD COLUMN snapshot_high_watermark INTEGER NOT NULL DEFAULT 0
+        CHECK (snapshot_high_watermark BETWEEN 0 AND 9007199254740991);`)
+      if (!columns.has('legacy_through_sequence')) database.exec(`ALTER TABLE management_remote_journal_state ADD COLUMN legacy_through_sequence INTEGER
+        CHECK (legacy_through_sequence IS NULL OR legacy_through_sequence BETWEEN 0 AND 9007199254740991);`)
+      if (!columns.has('recovery_required')) database.exec(`ALTER TABLE management_remote_journal_state ADD COLUMN recovery_required INTEGER NOT NULL DEFAULT 0
+        CHECK (recovery_required IN (0,1));`)
+      const states = database.prepare(`SELECT player_device_id,controller_id,through_sequence,high_watermark FROM management_remote_journal_state`)
+        .all() as Array<{ player_device_id: string; controller_id: string; through_sequence: number; high_watermark: number }>
+      const getEvents = database.prepare(`SELECT event_sequence FROM management_remote_journal_events
+        WHERE player_device_id=? AND controller_id=? ORDER BY event_sequence`)
+      const update = database.prepare(`UPDATE management_remote_journal_state SET through_sequence=?,legacy_through_sequence=?,
+        recovery_required=? WHERE player_device_id=? AND controller_id=?`)
+      for (const state of states) {
+        let contiguous = 0
+        for (const row of getEvents.all(state.player_device_id, state.controller_id) as Array<{ event_sequence: number }>) {
+          if (row.event_sequence !== contiguous + 1) break
+          contiguous = row.event_sequence
+        }
+        const legacy = Number(state.through_sequence)
+        const safeContiguous = Math.min(contiguous, Number(state.high_watermark))
+        const requiresRecovery = legacy > safeContiguous || contiguous > Number(state.high_watermark)
+        update.run(safeContiguous, legacy, requiresRecovery ? 1 : 0, state.player_device_id, state.controller_id)
+      }
       database.exec(`PRAGMA user_version = ${SCHEMA_VERSION};`)
     })
     return
@@ -291,9 +402,17 @@ function initializeSchema(database: DatabaseSync): void {
         source_name TEXT CHECK (source_name IS NULL OR length(source_name) <= 255)
       );
 
-      PRAGMA user_version = ${SCHEMA_VERSION};
+      PRAGMA user_version = ${CATALOG_SCHEMA_VERSION};
     `)
   })
+  version = CATALOG_SCHEMA_VERSION
+  transaction(database, () => {
+    database.exec(`${MANAGEMENT_REMOTE_OUTBOX_SCHEMA}; PRAGMA user_version = ${OUTBOX_SCHEMA_VERSION};`)
+  })
+  transaction(database, () => {
+    database.exec(`${MANAGEMENT_REMOTE_JOURNAL_SCHEMA}; PRAGMA user_version = ${JOURNAL_SCHEMA_VERSION};`)
+  })
+  initializeSchema(database)
 }
 
 function normalizeEntry(entry: QueueEntry, status: EntryStatus): DatabaseEntry {
@@ -1061,11 +1180,317 @@ export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
     previousSnapshot = nextSnapshot
   }
   const catalogRepository = createMusicCatalogRepository(database)
+  const readOutboxRow = (row: Record<string, unknown>): ManagementOutboxRecord => {
+    let command: unknown, detail: unknown = null
+    try { command = JSON.parse(String(row.command_json)); detail = row.detail_json == null ? null : JSON.parse(String(row.detail_json)) }
+    catch (error) { throw new Error('MANAGEMENT_REMOTE_OUTBOX_CORRUPT', { cause: error }) }
+    return { playerDeviceId: String(row.player_device_id), controllerId: String(row.controller_id),
+      operationId: String(row.operation_id), fingerprint: String(row.fingerprint), command,
+      status: row.status as ManagementOutboxRecord['status'], detail,
+      createdAt: Number(row.created_at), updatedAt: Number(row.updated_at) }
+  }
+  const findOutbox = (playerDeviceId: string, controllerId: string, operationId: string): ManagementOutboxRecord | null => {
+    const row = database.prepare(`SELECT * FROM management_remote_outbox
+      WHERE player_device_id=? AND controller_id=? AND operation_id=?`).get(playerDeviceId, controllerId, operationId) as Record<string, unknown> | undefined
+    return row ? readOutboxRow(row) : null
+  }
+  const outbox = {
+    enqueue(input: Omit<ManagementOutboxRecord, 'status' | 'detail' | 'createdAt' | 'updatedAt'>): { record: ManagementOutboxRecord; duplicate: boolean } {
+      const commandJson = JSON.stringify(input.command)
+      if (Buffer.byteLength(commandJson, 'utf8') > 64 * 1024) throw new Error('MANAGEMENT_OUTBOX_INVALID')
+      const now = Date.now()
+      try {
+        const result = transaction(database, () => {
+          const existing = findOutbox(input.playerDeviceId, input.controllerId, input.operationId)
+          if (existing) {
+            if (existing.fingerprint !== input.fingerprint) throw new Error('MANAGEMENT_OUTBOX_CONFLICT')
+            return { record: existing, duplicate: true }
+          }
+          database.prepare(`INSERT INTO management_remote_outbox(player_device_id,controller_id,operation_id,
+            fingerprint,command_json,status,detail_json,created_at,updated_at) VALUES(?,?,?,?,?,'not-sent',NULL,?,?)`)
+            .run(input.playerDeviceId, input.controllerId, input.operationId, input.fingerprint, commandJson, now, now)
+          const record = findOutbox(input.playerDeviceId, input.controllerId, input.operationId)
+          if (!record) throw new Error('MANAGEMENT_OUTBOX_READBACK_FAILED')
+          return { record, duplicate: false }
+        })
+        return result
+      } catch (error) {
+        const readback = findOutbox(input.playerDeviceId, input.controllerId, input.operationId)
+        if (readback?.fingerprint === input.fingerprint) {
+          return { record: readback, duplicate: true }
+        }
+        if (readback) throw new Error('MANAGEMENT_OUTBOX_CONFLICT', { cause: error })
+        throw error
+      }
+    },
+    get(playerDeviceId: string, controllerId: string, operationId: string): ManagementOutboxRecord | null {
+      if (database.isTransaction) throw new Error('MANAGEMENT_OUTBOX_UNRESOLVED_TRANSACTION')
+      return findOutbox(playerDeviceId, controllerId, operationId)
+    },
+    listRecoverable(playerDeviceId: string, controllerId: string): ManagementOutboxRecord[] {
+      if (database.isTransaction) throw new Error('MANAGEMENT_OUTBOX_UNRESOLVED_TRANSACTION')
+      return database.prepare(`SELECT * FROM management_remote_outbox
+        WHERE player_device_id=? AND controller_id=? AND status IN ('not-sent','accepted','unknown')
+        ORDER BY created_at,operation_id`).all(playerDeviceId, controllerId)
+        .map(row => readOutboxRow(row as Record<string, unknown>))
+    },
+    markTransmissionStarted(playerDeviceId: string, controllerId: string, operationId: string): ManagementOutboxRecord {
+      const prior = findOutbox(playerDeviceId, controllerId, operationId)
+      if (!prior) throw new Error('MANAGEMENT_OUTBOX_NOT_FOUND')
+      if (prior.status === 'completed' || prior.status === 'rejected') throw new Error('MANAGEMENT_OUTBOX_TERMINAL')
+      if (prior.status === 'not-sent') {
+        const now = Date.now()
+        try {
+          transaction(database, () => {
+            database.prepare(`UPDATE management_remote_outbox SET status='unknown', updated_at=?
+              WHERE player_device_id=? AND controller_id=? AND operation_id=? AND status='not-sent'`)
+              .run(now, playerDeviceId, controllerId, operationId)
+          })
+        } catch (error) {
+          const readback = findOutbox(playerDeviceId, controllerId, operationId)
+          if (readback?.status !== 'unknown') throw error
+        }
+      }
+      const confirmed = findOutbox(playerDeviceId, controllerId, operationId)
+      if (!confirmed || ['not-sent', 'completed', 'rejected'].includes(confirmed.status)) {
+        throw new Error('MANAGEMENT_OUTBOX_UNCERTAIN')
+      }
+      return confirmed
+    },
+    recordRemoteStatus(input: { playerDeviceId: string; controllerId: string; operationId: string; fingerprint: string;
+      status: Exclude<ManagementOutboxRecord['status'], 'not-sent'>; detail: unknown }): ManagementOutboxRecord {
+      const current = findOutbox(input.playerDeviceId, input.controllerId, input.operationId)
+      if (!current) throw new Error('MANAGEMENT_OUTBOX_NOT_FOUND')
+      if (current.fingerprint !== input.fingerprint) throw new Error('MANAGEMENT_OUTBOX_FINGERPRINT_MISMATCH')
+      const detailJson = stableRemoteJournalJson(input.detail)
+      if (typeof detailJson !== 'string' || Buffer.byteLength(detailJson, 'utf8') > 64 * 1024) throw new Error('MANAGEMENT_OUTBOX_INVALID')
+      if (current.status === 'completed' || current.status === 'rejected') {
+        if (current.status !== input.status || stableRemoteJournalJson(current.detail) !== detailJson) {
+          throw new Error('MANAGEMENT_OUTBOX_TERMINAL_CONFLICT')
+        }
+        return current
+      }
+      if (current.status === input.status) {
+        if (stableRemoteJournalJson(current.detail) === detailJson) return current
+        throw new Error('MANAGEMENT_OUTBOX_STATUS_CONFLICT')
+      }
+      const allowed = current.status === 'not-sent' ? input.status === 'unknown'
+        : current.status === 'unknown' ? true
+        : current.status === 'accepted' ? ['completed', 'rejected', 'unknown'].includes(input.status)
+        : false
+      if (!allowed) throw new Error('MANAGEMENT_OUTBOX_TRANSITION_INVALID')
+      const now = Date.now()
+      try {
+        transaction(database, () => {
+          database.prepare(`UPDATE management_remote_outbox SET status=?,detail_json=?,updated_at=?
+            WHERE player_device_id=? AND controller_id=? AND operation_id=? AND fingerprint=?`)
+            .run(input.status, detailJson, now, input.playerDeviceId, input.controllerId, input.operationId, input.fingerprint)
+        })
+      } catch (error) {
+        const readback = findOutbox(input.playerDeviceId, input.controllerId, input.operationId)
+        if (readback?.fingerprint !== input.fingerprint || readback.status !== input.status ||
+            stableRemoteJournalJson(readback.detail) !== detailJson) throw error
+      }
+      const result = findOutbox(input.playerDeviceId, input.controllerId, input.operationId)
+      if (!result || result.fingerprint !== input.fingerprint || result.status !== input.status) {
+        throw new Error('MANAGEMENT_OUTBOX_UNCERTAIN')
+      }
+      return result
+    }
+  }
+  const readRemoteJournalCursor = (playerDeviceId: string, controllerId: string): ManagementRemoteJournalCursor | null => {
+    const row = database.prepare(`SELECT * FROM management_remote_journal_state
+      WHERE player_device_id=? AND controller_id=?`).get(playerDeviceId, controllerId) as Record<string, unknown> | undefined
+    return row ? { playerDeviceId: String(row.player_device_id), controllerId: String(row.controller_id),
+      journalId: String(row.journal_id), throughSequence: Number(row.through_sequence),
+      highWatermark: Number(row.high_watermark), snapshotHighWatermark: Number(row.snapshot_high_watermark ?? 0),
+      compactedThrough: Number(row.compacted_through),
+      legacyThroughSequence: row.legacy_through_sequence == null ? null : Number(row.legacy_through_sequence),
+      recoveryRequired: Number(row.recovery_required ?? 0) === 1, updatedAt: Number(row.updated_at) } : null
+  }
+  const readRemoteJournalEvent = (row: Record<string, unknown>) => {
+    let event: unknown
+    try { event = JSON.parse(String(row.event_json)) }
+    catch (error) { throw new Error('MANAGEMENT_REMOTE_JOURNAL_CORRUPT', { cause: error }) }
+    if (remoteJournalFingerprint(event) !== row.fingerprint) throw new Error('MANAGEMENT_REMOTE_JOURNAL_CORRUPT')
+    return { sequence: Number(row.event_sequence), event: event as import('./src/operational-protocol-contracts').JournalEvent,
+      fingerprint: String(row.fingerprint) }
+  }
+  const remoteJournal = {
+    getCursor(playerDeviceId: string, controllerId: string): ManagementRemoteJournalCursor | null {
+      if (database.isTransaction) throw new Error('MANAGEMENT_REMOTE_JOURNAL_UNRESOLVED_TRANSACTION')
+      return readRemoteJournalCursor(playerDeviceId, controllerId)
+    },
+    persistPage(input: Parameters<ManagementRemoteJournalDatabase['remoteJournal']['persistPage']>[0]): ManagementRemoteJournalCursor {
+      if (!Number.isSafeInteger(input.afterSequence) || input.afterSequence < 0 ||
+          !Number.isSafeInteger(input.throughSequence) || !Number.isSafeInteger(input.highWatermark) ||
+          !Number.isSafeInteger(input.compactedThrough) || input.compactedThrough < 0 ||
+          input.highWatermark < input.throughSequence || input.compactedThrough > input.highWatermark ||
+          input.throughSequence < input.afterSequence || !Array.isArray(input.events)) {
+        throw new Error('MANAGEMENT_REMOTE_JOURNAL_PAGE_INVALID')
+      }
+      let expectedSequence = input.afterSequence + 1
+      for (const item of input.events) {
+        if (item.sequence !== expectedSequence++ || item.event.eventSequence !== item.sequence ||
+            item.event.journalId !== input.journalId || remoteJournalFingerprint(item.event) !== item.fingerprint) {
+          throw new Error('MANAGEMENT_REMOTE_JOURNAL_PAGE_INVALID')
+        }
+        const json = stableRemoteJournalJson(item.event)
+        if (Buffer.byteLength(json, 'utf8') > 8 * 1024) throw new Error('MANAGEMENT_REMOTE_JOURNAL_PAGE_INVALID')
+      }
+      const pageThrough = input.events.length ? input.events[input.events.length - 1].sequence : input.afterSequence
+      if (input.throughSequence !== pageThrough || input.hasMore && input.events.length === 0 ||
+          !input.hasMore && input.throughSequence !== input.highWatermark) {
+        throw new Error('MANAGEMENT_REMOTE_JOURNAL_PAGE_INVALID')
+      }
+      const now = Date.now()
+      try {
+        return transaction(database, () => {
+          let prior = readRemoteJournalCursor(input.playerDeviceId, input.controllerId)
+          if (!prior) {
+            if (input.afterSequence !== 0) throw new Error('MANAGEMENT_REMOTE_JOURNAL_CURSOR_GAP')
+            database.prepare(`INSERT INTO management_remote_journal_state(player_device_id,controller_id,journal_id,
+              through_sequence,high_watermark,compacted_through,updated_at) VALUES(?,?,?,0,?,?,?)`)
+              .run(input.playerDeviceId, input.controllerId, input.journalId, input.highWatermark, input.compactedThrough, now)
+            prior = readRemoteJournalCursor(input.playerDeviceId, input.controllerId)
+          }
+          if (!prior || prior.journalId !== input.journalId) throw new Error('MANAGEMENT_REMOTE_JOURNAL_LINEAGE_MISMATCH')
+          if (prior.recoveryRequired) throw new Error('MANAGEMENT_REMOTE_JOURNAL_RECOVERY_REQUIRED')
+          if (input.highWatermark < prior.highWatermark || input.compactedThrough < prior.compactedThrough) {
+            throw new Error('MANAGEMENT_REMOTE_JOURNAL_ROLLBACK')
+          }
+          if (input.compactedThrough > prior.throughSequence || input.afterSequence < input.compactedThrough) {
+            throw new Error('MANAGEMENT_REMOTE_JOURNAL_REPLAY_COMPACTED')
+          }
+          if (input.afterSequence > prior.throughSequence) throw new Error('MANAGEMENT_REMOTE_JOURNAL_CURSOR_GAP')
+          for (const item of input.events) {
+            const json = stableRemoteJournalJson(item.event)
+            const existing = database.prepare(`SELECT event_json,fingerprint FROM management_remote_journal_events
+              WHERE player_device_id=? AND controller_id=? AND event_sequence=?`)
+              .get(input.playerDeviceId, input.controllerId, item.sequence) as { event_json?: string; fingerprint?: string } | undefined
+            if (existing && (existing.fingerprint !== item.fingerprint || existing.event_json !== json)) {
+              throw new Error('MANAGEMENT_REMOTE_JOURNAL_EVENT_CONFLICT')
+            }
+            if (!existing) database.prepare(`INSERT INTO management_remote_journal_events(player_device_id,controller_id,
+              journal_id,event_sequence,event_json,fingerprint) VALUES(?,?,?,?,?,?)`)
+              .run(input.playerDeviceId, input.controllerId, input.journalId, item.sequence, json, item.fingerprint)
+          }
+          const throughSequence = Math.max(prior.throughSequence, input.throughSequence)
+          database.prepare(`UPDATE management_remote_journal_state SET through_sequence=?,high_watermark=?,compacted_through=?,updated_at=?
+            WHERE player_device_id=? AND controller_id=? AND journal_id=?`)
+            .run(throughSequence, Math.max(prior.highWatermark, input.highWatermark),
+              Math.max(prior.compactedThrough, input.compactedThrough), now,
+              input.playerDeviceId, input.controllerId, input.journalId)
+          const confirmed = readRemoteJournalCursor(input.playerDeviceId, input.controllerId)
+          if (!confirmed || confirmed.journalId !== input.journalId || confirmed.throughSequence !== throughSequence) {
+            throw new Error('MANAGEMENT_REMOTE_JOURNAL_READBACK_FAILED')
+          }
+          return confirmed
+        })
+      } catch (error) {
+        if (error instanceof Error && /^MANAGEMENT_REMOTE_JOURNAL_(PAGE_INVALID|CURSOR_GAP|LINEAGE_MISMATCH|ROLLBACK|REPLAY_COMPACTED|EVENT_CONFLICT|RECOVERY_REQUIRED)$/.test(error.message)) throw error
+        const confirmed = readRemoteJournalCursor(input.playerDeviceId, input.controllerId)
+        if (confirmed?.journalId === input.journalId && confirmed.throughSequence >= input.throughSequence &&
+            confirmed.highWatermark >= input.highWatermark && input.events.every(item => {
+              const row = database.prepare(`SELECT fingerprint FROM management_remote_journal_events WHERE player_device_id=?
+                AND controller_id=? AND event_sequence=?`).get(input.playerDeviceId, input.controllerId, item.sequence) as { fingerprint?: string } | undefined
+              return row?.fingerprint === item.fingerprint
+            })) return confirmed
+        throw new Error('MANAGEMENT_REMOTE_JOURNAL_UNCERTAIN', { cause: error })
+      }
+    },
+    persistSnapshot(input: Parameters<ManagementRemoteJournalDatabase['remoteJournal']['persistSnapshot']>[0]): ManagementRemoteJournalCursor {
+      if (!Number.isSafeInteger(input.highWatermark) || input.highWatermark < 0 ||
+          !Number.isSafeInteger(input.compactedThrough) || input.compactedThrough < 0 || input.compactedThrough > input.highWatermark ||
+          remoteJournalFingerprint(input.snapshot) !== input.fingerprint) throw new Error('MANAGEMENT_REMOTE_JOURNAL_SNAPSHOT_INVALID')
+      const snapshotJson = stableRemoteJournalJson(input.snapshot)
+      if (Buffer.byteLength(snapshotJson, 'utf8') > 64 * 1024) throw new Error('MANAGEMENT_REMOTE_JOURNAL_SNAPSHOT_INVALID')
+      const now = Date.now()
+      try {
+        return transaction(database, () => {
+          let prior = readRemoteJournalCursor(input.playerDeviceId, input.controllerId)
+          if (prior && prior.journalId !== input.journalId) throw new Error('MANAGEMENT_REMOTE_JOURNAL_LINEAGE_MISMATCH')
+          if (prior && (input.highWatermark < prior.highWatermark || input.highWatermark < prior.throughSequence ||
+              input.compactedThrough < prior.compactedThrough)) throw new Error('MANAGEMENT_REMOTE_JOURNAL_ROLLBACK')
+          if (!prior) {
+            database.prepare(`INSERT INTO management_remote_journal_state(player_device_id,controller_id,journal_id,
+          through_sequence,high_watermark,compacted_through,snapshot_high_watermark,recovery_required,updated_at)
+          VALUES(?,?,?,0,?,?,?,?,?)`)
+          .run(input.playerDeviceId, input.controllerId, input.journalId, input.highWatermark,
+            input.compactedThrough, input.highWatermark, input.compactedThrough > 0 ? 1 : 0, now)
+          }
+          const existing = database.prepare(`SELECT snapshot_json,fingerprint FROM management_remote_journal_snapshots
+            WHERE player_device_id=? AND controller_id=? AND high_watermark=?`)
+            .get(input.playerDeviceId, input.controllerId, input.highWatermark) as { snapshot_json?: string; fingerprint?: string } | undefined
+          if (existing && (existing.fingerprint !== input.fingerprint || existing.snapshot_json !== snapshotJson)) {
+            throw new Error('MANAGEMENT_REMOTE_JOURNAL_SNAPSHOT_CONFLICT')
+          }
+          if (!existing) database.prepare(`INSERT INTO management_remote_journal_snapshots(player_device_id,controller_id,
+            journal_id,high_watermark,snapshot_json,fingerprint,created_at) VALUES(?,?,?,?,?,?,?)`)
+            .run(input.playerDeviceId, input.controllerId, input.journalId, input.highWatermark, snapshotJson, input.fingerprint, now)
+          if (prior) database.prepare(`UPDATE management_remote_journal_state SET high_watermark=?,compacted_through=?,
+            snapshot_high_watermark=?,recovery_required=CASE WHEN ? > through_sequence THEN 1 ELSE recovery_required END,
+            updated_at=? WHERE player_device_id=? AND controller_id=?`)
+            .run(Math.max(prior.highWatermark, input.highWatermark), Math.max(prior.compactedThrough, input.compactedThrough),
+              Math.max(prior.snapshotHighWatermark, input.highWatermark), Math.max(prior.compactedThrough, input.compactedThrough),
+              now, input.playerDeviceId, input.controllerId)
+          const confirmed = readRemoteJournalCursor(input.playerDeviceId, input.controllerId)
+          if (!confirmed || confirmed.journalId !== input.journalId || confirmed.snapshotHighWatermark < input.highWatermark) {
+            throw new Error('MANAGEMENT_REMOTE_JOURNAL_READBACK_FAILED')
+          }
+          return confirmed
+        })
+      } catch (error) {
+        if (error instanceof Error && /^MANAGEMENT_REMOTE_JOURNAL_(SNAPSHOT_INVALID|LINEAGE_MISMATCH|ROLLBACK|SNAPSHOT_CONFLICT)$/.test(error.message)) throw error
+        const confirmed = readRemoteJournalCursor(input.playerDeviceId, input.controllerId)
+        const row = database.prepare(`SELECT fingerprint FROM management_remote_journal_snapshots WHERE player_device_id=?
+          AND controller_id=? AND high_watermark=?`).get(input.playerDeviceId, input.controllerId, input.highWatermark) as { fingerprint?: string } | undefined
+        if (confirmed?.journalId === input.journalId && confirmed.snapshotHighWatermark >= input.highWatermark && row?.fingerprint === input.fingerprint) {
+          return confirmed
+        }
+        throw new Error('MANAGEMENT_REMOTE_JOURNAL_UNCERTAIN', { cause: error })
+      }
+    },
+    listEvents(input: Parameters<ManagementRemoteJournalDatabase['remoteJournal']['listEvents']>[0]) {
+      if (!Number.isSafeInteger(input.afterSequence) || input.afterSequence < 0 ||
+          !Number.isSafeInteger(input.limit) || input.limit < 1 || input.limit > 32) throw new Error('MANAGEMENT_REMOTE_JOURNAL_CURSOR_INVALID')
+      if (database.isTransaction) throw new Error('MANAGEMENT_REMOTE_JOURNAL_UNRESOLVED_TRANSACTION')
+      const cursor = readRemoteJournalCursor(input.playerDeviceId, input.controllerId)
+      if (!cursor) return []
+      if (cursor.recoveryRequired) throw new Error('MANAGEMENT_REMOTE_JOURNAL_RECOVERY_REQUIRED')
+      if (input.afterSequence < cursor.compactedThrough) throw new Error('MANAGEMENT_REMOTE_JOURNAL_REPLAY_COMPACTED')
+      if (input.afterSequence > cursor.throughSequence) throw new Error('MANAGEMENT_REMOTE_JOURNAL_GAP')
+      const rows = database.prepare(`SELECT event_sequence,event_json,fingerprint FROM management_remote_journal_events
+        WHERE player_device_id=? AND controller_id=? AND event_sequence>? ORDER BY event_sequence LIMIT ?`)
+        .all(input.playerDeviceId, input.controllerId, input.afterSequence, input.limit) as Array<Record<string, unknown>>
+      const events = rows.map(readRemoteJournalEvent)
+      let expected = input.afterSequence + 1
+      for (const event of events) {
+        if (event.sequence !== expected++) throw new Error('MANAGEMENT_REMOTE_JOURNAL_GAP')
+      }
+      if (events.length === 0 && input.afterSequence < cursor.throughSequence) throw new Error('MANAGEMENT_REMOTE_JOURNAL_GAP')
+      return events
+    },
+    getLatestSnapshot(playerDeviceId: string, controllerId: string): import('./src/operational-protocol-contracts').OperationalMessage | null {
+      if (database.isTransaction) throw new Error('MANAGEMENT_REMOTE_JOURNAL_UNRESOLVED_TRANSACTION')
+      const row = database.prepare(`SELECT snapshot_json,fingerprint FROM management_remote_journal_snapshots
+        WHERE player_device_id=? AND controller_id=? ORDER BY high_watermark DESC LIMIT 1`)
+        .get(playerDeviceId, controllerId) as { snapshot_json?: string; fingerprint?: string } | undefined
+      if (!row) return null
+      let snapshot: unknown
+      try { snapshot = JSON.parse(String(row.snapshot_json)) }
+      catch (error) { throw new Error('MANAGEMENT_REMOTE_JOURNAL_CORRUPT', { cause: error }) }
+      if (remoteJournalFingerprint(snapshot) !== row.fingerprint) throw new Error('MANAGEMENT_REMOTE_JOURNAL_CORRUPT')
+      return snapshot as import('./src/operational-protocol-contracts').OperationalMessage
+    }
+  }
   return {
     databasePath,
     loadState: readState,
     saveState,
     ...catalogRepository,
+    remoteOutbox: outbox,
+    remoteJournal,
     close: () => database.close()
   }
 }

@@ -18,7 +18,11 @@ function assertMusicCatalogSchema(database: DatabaseSync): void {
     .map(table => table.name))
   assert.ok(tables.has('music_catalog'))
   assert.ok(tables.has('music_catalog_metadata'))
-  assert.equal(database.prepare('PRAGMA user_version').get()?.user_version, 6)
+  assert.ok(tables.has('management_remote_outbox'))
+  assert.ok(tables.has('management_remote_journal_state'))
+  assert.ok(tables.has('management_remote_journal_events'))
+  assert.ok(tables.has('management_remote_journal_snapshots'))
+  assert.equal(database.prepare('PRAGMA user_version').get()?.user_version, 9)
   assert.ok(database.prepare('PRAGMA table_info(music_catalog_metadata)').all()
     .some((column: any) => column.name === 'source_name'))
 }
@@ -162,7 +166,7 @@ test('upgrades a schema-v3 profile with cadence defaults and retains the queue',
   }
 })
 
-test('upgrades a schema-v4 profile to catalog schema v6 without changing operational state', () => {
+test('upgrades a schema-v4 profile to schema v9 without changing operational state', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-schema-v4-'))
   const databasePath = path.join(directory, 'karaoke.sqlite')
   const old = new DatabaseSync(databasePath)
@@ -224,6 +228,30 @@ test('upgrades a schema-v4 profile to catalog schema v6 without changing operati
   }
 })
 
+test('v9 migration fences and preserves a legacy v8 inbox cursor unsupported by its event rows', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-journal-v8-cursor-'))
+  let database = createKaraokeDatabase(directory)
+  try {
+    database.close()
+    const legacy = new DatabaseSync(path.join(directory, 'karaoke.sqlite'))
+    legacy.prepare(`INSERT INTO management_remote_journal_state(player_device_id,controller_id,journal_id,
+      through_sequence,high_watermark,compacted_through,updated_at) VALUES(?,?,?,?,?,?,?)`)
+      .run('player-migration-01','controller-migration-01','journal-migration-01',13,13,0,1)
+    legacy.exec('PRAGMA user_version=8')
+    legacy.close()
+    database = createKaraokeDatabase(directory)
+    const migrated = new DatabaseSync(path.join(directory, 'karaoke.sqlite'))
+    const state = migrated.prepare(`SELECT through_sequence,legacy_through_sequence,recovery_required
+      FROM management_remote_journal_state WHERE player_device_id=? AND controller_id=?`)
+      .get('player-migration-01','controller-migration-01') as Record<string, unknown>
+    assert.equal(state.through_sequence, 0)
+    assert.equal(state.legacy_through_sequence, 13)
+    assert.equal(state.recovery_required, 1)
+    assert.equal(migrated.prepare('PRAGMA user_version').get()?.user_version, 9)
+    migrated.close()
+  } finally { database.close(); fs.rmSync(directory, { recursive: true, force: true }) }
+})
+
 test('upgrades a schema-v5 profile with catalog metadata in place', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kqueue-schema-v5-'))
   const initial = createKaraokeDatabase(directory)
@@ -231,6 +259,10 @@ test('upgrades a schema-v5 profile with catalog metadata in place', () => {
   const databasePath = path.join(directory, 'karaoke.sqlite')
   const old = new DatabaseSync(databasePath)
   old.exec(`
+    DROP TABLE management_remote_journal_events;
+    DROP TABLE management_remote_journal_snapshots;
+    DROP TABLE management_remote_journal_state;
+    DROP TABLE management_remote_outbox;
     DROP TABLE music_catalog_metadata;
     CREATE TABLE music_catalog_metadata (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1), revision TEXT NOT NULL,
@@ -275,7 +307,7 @@ test('upgrades a schema-v5 profile with catalog metadata in place', () => {
       /SQLITE_RESTORE_DESTINATION_EXISTS/, 'restore must never overwrite the live database')
     assert.equal(verified.backupPath, backupPath)
     const currentAfterBlockedRestore = new DatabaseSync(databasePath, { readOnly: true })
-    try { assert.equal(currentAfterBlockedRestore.prepare('PRAGMA user_version').get()?.user_version, 6) }
+    try { assert.equal(currentAfterBlockedRestore.prepare('PRAGMA user_version').get()?.user_version, 9) }
     finally { currentAfterBlockedRestore.close() }
   } finally {
     upgradedDatabase.close()

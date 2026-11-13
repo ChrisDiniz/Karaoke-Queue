@@ -11,6 +11,7 @@ import type { RemoteAuthorizationPort, RemoteBootstrapPort, RemoteDeviceIdentity
   RemoteHttpResponse, RemoteHttpRoute, RemoteRequestContext, RemoteTransportChannel,
   RemoteTransportLogger, RemoteTransportMessagePort } from './remote-contracts'
 import { isPrivateIpv4, validatePlayerCertificate } from './remote-tls'
+import { assertNoDuplicateJsonKeys, parseOperationalMessageObject } from './operational-protocol-validation'
 
 interface TokenBucket { tokens: number; updatedAt: number }
 
@@ -60,9 +61,13 @@ function hasExactlyOneHeader(request: IncomingMessage, wanted: string): boolean 
   return count === 1
 }
 
-function validateBoundedJson(body: Buffer): unknown {
+function validateBoundedJson(body: Buffer, rejectDuplicateKeys = false): unknown {
   let parsed: unknown
-  try { parsed = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body)) }
+  try {
+    const source = new TextDecoder('utf-8', { fatal: true }).decode(body)
+    if (rejectDuplicateKeys) assertNoDuplicateJsonKeys(source)
+    parsed = JSON.parse(source)
+  }
   catch { throw new Error('REMOTE_MESSAGE_INVALID') }
   const pending: Array<{ value: unknown; depth: number }> = [{ value: parsed, depth: 0 }]
   let visited = 0
@@ -371,7 +376,13 @@ export function createRemoteTransportServer(options: RemoteTransportServerOption
       }
       webSockets.handleUpgrade(request, socket, head, webSocket => {
         controlSocket = webSocket
-        webSocket.on('error', () => webSocket.terminate())
+        webSocket.on('error', error => {
+          // ws has already initiated close(1009) for maxPayload errors. Terminating here
+          // aborts that close frame and makes the peer observe 1006 instead.
+          if (error && typeof error === 'object' && 'code' in error &&
+              (error as NodeJS.ErrnoException).code === 'WS_ERR_UNSUPPORTED_MESSAGE_LENGTH') return
+          webSocket.terminate()
+        })
         if (controlReservation === connectionId) controlReservation = undefined
         reservedId = undefined
         const channelInfo = { connectionId, peer, controllerId: peer.controllerId }
@@ -380,9 +391,11 @@ export function createRemoteTransportServer(options: RemoteTransportServerOption
         let pendingSendCount = 0
         const helloTimer = setTimeout(() => webSocket.close(1008, 'HELLO_TIMEOUT'), REMOTE_LIMITS.helloTimeoutMs)
         helloTimer.unref()
+        const connectionAbort = new AbortController()
         const channel: RemoteTransportChannel = {
           connectionId,
           peer,
+          signal: connectionAbort.signal,
           send(data) {
             if (webSocket.readyState !== WebSocket.OPEN) return false
             const payload = typeof data === 'string' ? Buffer.from(data, 'utf8') : Buffer.from(data)
@@ -417,7 +430,7 @@ export function createRemoteTransportServer(options: RemoteTransportServerOption
           messageQueue = messageQueue.then(async () => {
             if (webSocket.readyState !== WebSocket.OPEN) return
             let payload: unknown
-            try { payload = validateBoundedJson(bytes) }
+            try { payload = validateBoundedJson(bytes, true) }
             catch { return webSocket.close(1007, 'MESSAGE_INVALID') }
             if (!handshakeComplete) {
               if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return webSocket.close(1002, 'HELLO_REQUIRED')
@@ -434,13 +447,22 @@ export function createRemoteTransportServer(options: RemoteTransportServerOption
               return
             }
             if (!options.messagePort) return webSocket.close(1008, 'NO_OPERATIONAL_PROTOCOL')
+            let operationalMessage: ReturnType<typeof parseOperationalMessageObject>
+            try {
+              operationalMessage = parseOperationalMessageObject(payload)
+              if (operationalMessage.deviceId !== identity.deviceId ||
+                  operationalMessage.controllerId !== peer.controllerId) {
+                return webSocket.close(1008, 'IDENTITY_MISMATCH')
+              }
+            } catch { return webSocket.close(1007, 'MESSAGE_INVALID') }
             const current = await isPeerCurrent(peer, connectionId)
             if (!current) return webSocket.close(1008, 'REVOKED')
             if (webSocket.readyState !== WebSocket.OPEN) return
-            options.messagePort.onMessage({ channel, payload })
+            await options.messagePort.onMessage({ channel, payload: operationalMessage })
           }).catch(() => webSocket.close(1011, 'INTERNAL_ERROR')).finally(() => { pendingMessages-- })
         })
         webSocket.on('close', () => {
+          connectionAbort.abort()
           clearTimeout(helloTimer)
           const pongTimeout = heartbeatTimeouts.get(webSocket)
           if (pongTimeout) clearTimeout(pongTimeout)

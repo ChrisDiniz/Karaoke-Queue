@@ -461,15 +461,88 @@ test('WSS admits only one authorized control connection and rechecks revocation 
     assert.equal(conflictStatus, 409)
 
     const firstDispatch = new Promise<void>(resolve => { dispatchResolved = resolve })
-    first.send(JSON.stringify({ type: 'test-operation', value: 1 }))
+    first.send(JSON.stringify({ protocolVersion: 1, schemaVersion: 1, kind: 'hello', messageId: 'm-1',
+      deviceId: fixture.identity.deviceId, controllerId: 'controller-test',
+      body: { protocol: 'kq-operation/1', protocolVersion: 1, schemaVersion: 1 } }))
     await firstDispatch
     dispatchResolved = undefined
     assert.equal(dispatched, 1)
     current = false
     const closed = waitForClose(first)
-    first.send(JSON.stringify({ type: 'test-operation', value: 2 }))
+    first.send(JSON.stringify({ protocolVersion: 1, schemaVersion: 1, kind: 'hello', messageId: 'm-2',
+      deviceId: fixture.identity.deviceId, controllerId: 'controller-test',
+      body: { protocol: 'kq-operation/1', protocolVersion: 1, schemaVersion: 1 } }))
     assert.equal((await closed).code, 1008)
     assert.equal(dispatched, 1)
+  } finally { await fixture.server.close() }
+})
+
+test('WSS validates operational JSON raw before dispatch and fences envelope identity', async () => {
+  const received: unknown[] = []
+  let dispatchResolve: (() => void) | undefined
+  const fixture = await startServer({ authorization: authorizedPort(),
+    messagePort: { onMessage(context) { received.push(context.payload); dispatchResolve?.() } } })
+  const connect = async () => {
+    const client = openWebSocket('127.0.0.1', fixture.address.port, fixture.identity, { Authorization: 'Bearer ' + TOKEN })
+    await new Promise<void>((resolve, reject) => { client.once('open', resolve); client.once('error', reject) })
+    const ready = nextMessage(client)
+    client.send(JSON.stringify({ type: 'transport-hello', transportVersion: 1, capabilities: [] }))
+    await ready
+    return client
+  }
+  try {
+    const valid = {
+      protocolVersion: 1, schemaVersion: 1, kind: 'hello', messageId: 'wire-message-1',
+      deviceId: fixture.identity.deviceId, controllerId: 'controller-test',
+      body: { protocol: 'kq-operation/1', protocolVersion: 1, schemaVersion: 1 }
+    }
+    const client = await connect()
+    const dispatched = new Promise<void>(resolve => { dispatchResolve = resolve })
+    client.send(JSON.stringify(valid))
+    await dispatched
+    dispatchResolve = undefined
+    assert.deepEqual(received, [valid], 'a schema-valid operational message reaches only the registered port')
+    const clientClosed = waitForClose(client)
+    client.close()
+    await clientClosed
+
+    const activate = {
+      ...valid, kind: 'command', messageId: 'wire-message-2',
+      body: { operationId: 'op-1', type: 'activate-turn',
+        target: { sessionId: 'session-1', turnId: 'LOG-1762900000000-AB12', controlEpoch: 'control-1',
+          playerEpoch: 'player-1', stateRevision: 1 },
+        payload: { packageRevision: 1, managementRevision: 1, singerName: 'Singer', table: 'Table 1',
+          tracks: [{ occurrenceId: 'occ-1', trackIndex: 1, musicCode: '01001' }] } }
+    }
+    const rawVariants = [
+      JSON.stringify(valid).replace('"messageId":"wire-message-1"',
+        '"messageId":"wire-message-1","messageId":"wire-message-1"'),
+      JSON.stringify(valid).replace('"protocol":"kq-operation/1"',
+        '"protocol":"kq-operation/1","protocol":"kq-operation/1"'),
+      JSON.stringify(activate).replace('"musicCode":"01001"',
+        '"musicCode":"01001","musicCode":"01001"'),
+      JSON.stringify({ type: 'activate-turn', operationId: 'op-bypass', payload: {} }),
+      '{invalid-json'
+    ]
+    for (const raw of rawVariants) {
+      const rejected = await connect()
+      const closed = waitForClose(rejected)
+      rejected.send(raw)
+      assert.equal((await closed).code, 1007)
+      assert.equal(received.length, 1, 'invalid raw input cannot reach an operational handler')
+    }
+
+    const wrongIdentity = await connect()
+    const wrongIdentityClosed = waitForClose(wrongIdentity)
+    wrongIdentity.send(JSON.stringify({ ...valid, messageId: 'wire-message-3', controllerId: 'unpaired-controller' }))
+    assert.equal((await wrongIdentityClosed).code, 1008)
+    assert.equal(received.length, 1)
+
+    const oversized = await connect()
+    const oversizedClosed = waitForClose(oversized)
+    oversized.send('😀'.repeat(16 * 1024 + 1))
+    assert.equal((await oversizedClosed).code, 1009)
+    assert.equal(received.length, 1)
   } finally { await fixture.server.close() }
 })
 

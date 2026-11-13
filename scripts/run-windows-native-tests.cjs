@@ -915,7 +915,7 @@ function requiresWindowFocus(playbackMode) {
     '--standalone-integration',
     '--player-recovery',
     '--standalone-options',
-    '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure'
+    '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store'
   ].includes(playbackMode)
 }
 
@@ -940,6 +940,15 @@ function selectWindowsTestSuites(playbackMode) {
     { name: 'remote-private-network', script: 'build/tests/remote-private-network.test.js' },
     { name: 'remote-discovery-multicast', script: 'build/tests/remote-discovery-multicast.test.js' },
     { name: 'remote-safe-storage-electron', script: 'scripts/remote-safe-storage-electron.test.cjs' }
+  ]
+  if (playbackMode === '--operational-store') return [
+    { name: 'player-operational-store-unit', script: 'build/tests/player-operational-store.test.js' },
+    { name: 'operational-protocol-unit', script: 'build/tests/operational-protocol.test.js' },
+    { name: 'operational-service-outbox-unit', script: 'build/tests/operational-protocol-service.test.js' },
+    { name: 'management-remote-journal-unit', script: 'build/tests/management-remote-journal.test.js' },
+    { name: 'management-database-migration-regression', script: 'build/tests/database-migration.test.js' },
+    { name: 'operational-independent-processes', script: 'scripts/pairing-process-integration.test.cjs', args: ['--operational'] },
+    { name: 'remote-infrastructure-wss-regression', script: 'build/tests/remote-infrastructure.test.js' }
   ]
   if (playbackMode === '--video-library') return [
     { name: 'video-library-index', script: 'build/tests/video-library-index-store.test.js' },
@@ -1836,7 +1845,7 @@ function powershellManualLauncher(stagePath, runId, profileKind, profileName) {
 
 function powershellLauncher(stagePath, runId, playbackEvaluation = false, playbackMode = null, manualOptions = null, screenshotRoot = null, packageCandidate = false) {
   if (manualOptions) return powershellManualLauncher(stagePath, runId, manualOptions.profileKind, manualOptions.profileName)
-  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure'].includes(playbackMode)) {
+  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store'].includes(playbackMode)) {
     fail('Modo de playback não permitido para o worker Windows.')
   }
   if (screenshotRoot !== null && (typeof screenshotRoot !== 'string' || !/^[A-Za-z]:\\/.test(screenshotRoot) || screenshotRoot.startsWith('\\\\'))) {
@@ -1892,6 +1901,7 @@ function powershellLauncher(stagePath, runId, playbackEvaluation = false, playba
     '    elseif ($payload.playbackMode -eq "--installation-coordination") { $workerArgs += "--installation-coordination" }',
     '    elseif ($payload.playbackMode -eq "--video-library") { $workerArgs += "--video-library" }',
     '    elseif ($payload.playbackMode -eq "--remote-infrastructure") { $workerArgs += "--remote-infrastructure" }',
+    '    elseif ($payload.playbackMode -eq "--operational-store") { $workerArgs += "--operational-store" }',
     '    & node.exe $worker @workerArgs',
     '    $workerExit = $LASTEXITCODE',
     '  } finally { Pop-Location }',
@@ -2217,12 +2227,12 @@ async function runOrchestrator() {
     fail('O build candidato não combina com launcher manual, testes ou harnesses.')
   }
   const unexpectedArguments = process.argv.slice(2).filter(argument =>
-    !['--approve-untracked', '--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--manual-launch', '--manual-profile-kind', '--manual-profile-name'].includes(argument) &&
+    !['--approve-untracked', '--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--manual-launch', '--manual-profile-kind', '--manual-profile-name'].includes(argument) &&
     argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName
   )
   if (unexpectedArguments.length) fail('Argumento não permitido: ' + unexpectedArguments.join(' '))
   const playbackModes = process.argv.slice(2).filter(argument =>
-    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure'].includes(argument)
+    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store'].includes(argument)
   )
   if (playbackModes.length > 1) fail('Escolha apenas um modo de avaliação de playback.')
   const playbackEvaluation = process.argv.includes('--playback-evaluation')
@@ -2399,13 +2409,13 @@ async function main() {
       fail('O worker manual requer uma seleção de perfil válida.')
     }
     if (!manualLaunch && (profileKindIndex >= 0 || profileNameIndex >= 0)) fail('Perfil manual sem --manual-launch.')
-    const allowedWorkerArguments = ['--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--manual-launch', '--manual-profile-kind', '--manual-profile-name']
+    const allowedWorkerArguments = ['--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--manual-launch', '--manual-profile-kind', '--manual-profile-name']
     if (workerArguments.some(argument => !allowedWorkerArguments.includes(argument) &&
         argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName)) {
       fail('O worker recebeu argumentos não permitidos.')
     }
     const playbackModes = workerArguments.filter(argument =>
-      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure'].includes(argument)
+      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store'].includes(argument)
     )
     if (playbackModes.length > 1) fail('O worker recebeu modos de playback conflitantes.')
     if (workerArguments.includes('--package-candidate') && (playbackModes.length || workerArguments.includes('--playback-evaluation'))) fail('O worker recebeu build candidato combinado com testes.')

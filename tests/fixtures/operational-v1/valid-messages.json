@@ -1,0 +1,693 @@
+[
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "hello",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "protocol": "kq-operation/1",
+      "protocolVersion": 1,
+      "schemaVersion": 1
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "ready",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "protocol": "kq-operation/1",
+      "protocolVersion": 1,
+      "schemaVersion": 1,
+      "journalId": "journal-device-01",
+      "playerEpoch": "player-8",
+      "controlEpoch": "control-3"
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "command",
+    "messageId": "activate-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "operationId": "op-activate-1",
+      "type": "activate-turn",
+      "target": {
+        "sessionId": "session-legacy-12",
+        "turnId": "LOG-1762900000000-AB12",
+        "controlEpoch": "control-3",
+        "playerEpoch": "player-8",
+        "stateRevision": 17
+      },
+      "payload": {
+        "packageRevision": 1,
+        "managementRevision": 8,
+        "singerName": "José",
+        "table": "Mesa 2",
+        "tracks": [
+          {
+            "occurrenceId": "occ-1",
+            "trackIndex": 1,
+            "musicCode": "01001"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "command",
+    "messageId": "activate-2",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "operationId": "op-activate-1",
+      "type": "activate-turn",
+      "target": {
+        "sessionId": "session-legacy-12",
+        "turnId": "LOG-1762900000000-AB12",
+        "controlEpoch": "control-3",
+        "playerEpoch": "player-8",
+        "stateRevision": 17
+      },
+      "payload": {
+        "packageRevision": 1,
+        "managementRevision": 8,
+        "singerName": "José",
+        "table": "Mesa 2",
+        "tracks": [
+          {
+            "occurrenceId": "occ-1",
+            "trackIndex": 1,
+            "musicCode": "01001"
+          },
+          {
+            "occurrenceId": "occ-2",
+            "trackIndex": 2,
+            "musicCode": "00042"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "command",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "operationId": "op-pause",
+      "type": "pause",
+      "target": {
+        "sessionId": "session-legacy-12",
+        "turnId": "LOG-1762900000000-AB12",
+        "controlEpoch": "control-3",
+        "playerEpoch": "player-8",
+        "stateRevision": 17,
+        "occurrenceId": "occ-1",
+        "attemptId": "attempt-1"
+      },
+      "payload": {}
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "command",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "operationId": "op-resume",
+      "type": "resume",
+      "target": {
+        "sessionId": "session-legacy-12",
+        "turnId": "LOG-1762900000000-AB12",
+        "controlEpoch": "control-3",
+        "playerEpoch": "player-8",
+        "stateRevision": 17,
+        "occurrenceId": "occ-1",
+        "attemptId": "attempt-1"
+      },
+      "payload": {}
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "command",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "operationId": "op-restart",
+      "type": "restart",
+      "target": {
+        "sessionId": "session-legacy-12",
+        "turnId": "LOG-1762900000000-AB12",
+        "controlEpoch": "control-3",
+        "playerEpoch": "player-8",
+        "stateRevision": 17,
+        "occurrenceId": "occ-1",
+        "attemptId": "attempt-1"
+      },
+      "payload": {}
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "command",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "operationId": "op-advance",
+      "type": "advance",
+      "target": {
+        "sessionId": "session-legacy-12",
+        "turnId": "LOG-1762900000000-AB12",
+        "controlEpoch": "control-3",
+        "playerEpoch": "player-8",
+        "stateRevision": 17,
+        "occurrenceId": "occ-1",
+        "attemptId": "attempt-1"
+      },
+      "payload": {}
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "command",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "operationId": "op-replace",
+      "type": "replace-current",
+      "target": {
+        "sessionId": "session-legacy-12",
+        "turnId": "LOG-1762900000000-AB12",
+        "controlEpoch": "control-3",
+        "playerEpoch": "player-8",
+        "stateRevision": 17,
+        "occurrenceId": "occ-1",
+        "attemptId": "attempt-1"
+      },
+      "payload": {
+        "musicCode": "00042"
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "query",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "queryId": "q-media-availability",
+      "type": "media-availability",
+      "payload": {
+        "musicCode": "01001"
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "query",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "queryId": "q-operation-status",
+      "type": "operation-status",
+      "payload": {
+        "operationId": "op-activate-1"
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "query",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "queryId": "q-snapshot",
+      "type": "snapshot",
+      "payload": {}
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "query",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "queryId": "q-journal-page",
+      "type": "journal-page",
+      "payload": {
+        "journalId": "journal-device-01",
+        "afterSequence": 0,
+        "limit": 32
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "response",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "correlationId": "q-media",
+      "type": "media-availability",
+      "payload": {
+        "queryId": "q-media",
+        "musicCode": "01001",
+        "deviceId": "device-player-01",
+        "libraryRevision": "lib-3",
+        "status": "available",
+        "title": "Canção",
+        "artist": null
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "response",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "correlationId": "q-operation",
+      "type": "operation-status",
+      "payload": {
+        "operationId": "op-activate-1",
+        "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "unknown",
+        "result": null,
+        "eventSequence": null
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "response",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "correlationId": "q-snapshot",
+      "type": "snapshot",
+      "payload": {
+        "journalId": "journal-device-01",
+        "deviceId": "device-player-01",
+        "playerEpoch": "player-8",
+        "hostEpoch": "host-2",
+        "controlEpoch": "control-3",
+        "stateRevision": 17,
+        "mode": "paired",
+        "observedState": {
+          "status": "idle"
+        },
+        "acceptedTurn": null,
+        "active": null,
+        "libraryRevision": "lib-3",
+        "highWatermark": 13,
+        "compactedThrough": 0,
+        "operations": []
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "response",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "correlationId": "q-page",
+      "type": "journal-page",
+      "payload": {
+        "journalId": "journal-device-01",
+        "events": [
+          {
+            "journalId": "journal-device-01",
+            "eventSequence": 1,
+            "type": "turn-accepted",
+            "schemaVersion": 1,
+            "causationOperationId": "op-1",
+            "stateRevision": 1,
+            "payload": {
+              "packageRevision": 1
+            }
+          },
+          {
+            "journalId": "journal-device-01",
+            "eventSequence": 2,
+            "type": "attempt-started",
+            "schemaVersion": 1,
+            "causationOperationId": "op-2",
+            "stateRevision": 2,
+            "payload": {
+              "musicCode": "01001"
+            },
+            "sessionId": "session-legacy-12",
+            "turnId": "LOG-1762900000000-AB12",
+            "occurrenceId": "occ-2",
+            "attemptId": "attempt-2"
+          }
+        ],
+        "throughSequence": 2,
+        "highWatermark": 13,
+        "hasMore": true,
+        "compactedThrough": 0
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "ack",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "correlationId": "q-page",
+      "type": "consumed",
+      "payload": {
+        "journalId": "journal-device-01",
+        "throughSequence": 2,
+        "consumerId": "controller-local-01"
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "error",
+    "messageId": "msg-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "correlationId": "q-page",
+      "code": "CURSOR_GAP",
+      "state": "known"
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-1",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 1,
+      "type": "turn-accepted",
+      "schemaVersion": 1,
+      "causationOperationId": "op-1",
+      "stateRevision": 1,
+      "payload": {
+        "packageRevision": 1
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-2",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 2,
+      "type": "attempt-started",
+      "schemaVersion": 1,
+      "causationOperationId": "op-2",
+      "stateRevision": 2,
+      "payload": {
+        "musicCode": "01001"
+      },
+      "sessionId": "session-legacy-12",
+      "turnId": "LOG-1762900000000-AB12",
+      "occurrenceId": "occ-2",
+      "attemptId": "attempt-2"
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-3",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 3,
+      "type": "natural-end-confirmed",
+      "schemaVersion": 1,
+      "causationOperationId": "op-3",
+      "stateRevision": 3,
+      "payload": {
+        "musicCode": "01001"
+      },
+      "sessionId": "session-legacy-12",
+      "turnId": "LOG-1762900000000-AB12",
+      "occurrenceId": "occ-3",
+      "attemptId": "attempt-3"
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-4",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 4,
+      "type": "cancelled",
+      "schemaVersion": 1,
+      "causationOperationId": "op-4",
+      "stateRevision": 4,
+      "payload": {
+        "musicCode": "01001",
+        "reason": "advance"
+      },
+      "sessionId": "session-legacy-12",
+      "turnId": "LOG-1762900000000-AB12",
+      "occurrenceId": "occ-4",
+      "attemptId": "attempt-4",
+      "origin": "local"
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-5",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 5,
+      "type": "restarted",
+      "schemaVersion": 1,
+      "causationOperationId": "op-5",
+      "stateRevision": 5,
+      "payload": {
+        "musicCode": "01001"
+      },
+      "sessionId": "session-legacy-12",
+      "turnId": "LOG-1762900000000-AB12",
+      "occurrenceId": "occ-5",
+      "attemptId": "attempt-5",
+      "origin": "local"
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-6",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 6,
+      "type": "media-replaced",
+      "schemaVersion": 1,
+      "causationOperationId": "op-6",
+      "stateRevision": 6,
+      "payload": {
+        "previousMusicCode": "01001",
+        "musicCode": "00042"
+      },
+      "sessionId": "session-legacy-12",
+      "turnId": "LOG-1762900000000-AB12",
+      "occurrenceId": "occ-6",
+      "attemptId": "attempt-6",
+      "origin": "local"
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-7",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 7,
+      "type": "stop-all",
+      "schemaVersion": 1,
+      "causationOperationId": "op-7",
+      "stateRevision": 7,
+      "payload": {
+        "reason": "local-stop"
+      },
+      "origin": "local"
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-8",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 8,
+      "type": "turn-ended",
+      "schemaVersion": 1,
+      "causationOperationId": "op-8",
+      "stateRevision": 8,
+      "payload": {
+        "outcome": "completed"
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-9",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 9,
+      "type": "playback-error",
+      "schemaVersion": 1,
+      "causationOperationId": "op-9",
+      "stateRevision": 9,
+      "payload": {
+        "code": "MEDIA_UNAVAILABLE"
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-10",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 10,
+      "type": "interrupted",
+      "schemaVersion": 1,
+      "causationOperationId": "op-10",
+      "stateRevision": 10,
+      "payload": {
+        "reason": "host-terminated"
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-11",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 11,
+      "type": "uncertain",
+      "schemaVersion": 1,
+      "causationOperationId": "op-11",
+      "stateRevision": 11,
+      "payload": {
+        "reason": "effect-outcome-unknown"
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-12",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 12,
+      "type": "control-mode-changed",
+      "schemaVersion": 1,
+      "causationOperationId": "op-12",
+      "stateRevision": 12,
+      "payload": {
+        "mode": "paired"
+      }
+    }
+  },
+  {
+    "protocolVersion": 1,
+    "schemaVersion": 1,
+    "kind": "event",
+    "messageId": "event-13",
+    "deviceId": "device-player-01",
+    "controllerId": "controller-local-01",
+    "body": {
+      "journalId": "journal-device-01",
+      "eventSequence": 13,
+      "type": "operation-result",
+      "schemaVersion": 1,
+      "causationOperationId": "op-13",
+      "stateRevision": 13,
+      "payload": {
+        "operationId": "op-13",
+        "status": "completed"
+      }
+    }
+  }
+]
