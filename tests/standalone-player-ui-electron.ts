@@ -221,6 +221,17 @@ if (process.env.KQ_STANDALONE_C1_UI_MAIN === '1') {
       getOptionsDialogCounts: () => ({ folder: folderDialogCalls, catalog: catalogDialogCalls }),
       getLibraryConfiguration: () => readVideoLibraryConfiguration(profileRoot),
       configureLibraryRoots: roots => library.configureRoots(roots),
+      getLibraryUiDiagnostic: () => {
+        const snapshot = library.getSnapshot()
+        const code = snapshot.items.find(item => item.musicCode === '1001')
+        return {
+          scanStatus: snapshot.scanStatus,
+          configuredRootCount: snapshot.configuredRootCount,
+          scannedRootCount: snapshot.scannedRootCount,
+          unavailableRootCount: snapshot.unavailableRootCount,
+          code1001Availability: code?.availability ?? null
+        }
+      },
       importCatalog: filePath => catalog.importFile(filePath),
       getVideoState: () => window.webContents.executeJavaScript(`(() => {
         const video = document.querySelector('#playback-media-layer video')
@@ -627,9 +638,38 @@ if (process.env.KQ_STANDALONE_C1_UI_MAIN === '1') {
 
       await callMain(app, 'configureLibraryRoots', [path.join(tempRoot, 'unavailable-library')])
       for (const digit of '1001') await page.keyboard.press(digit)
-      await page.keyboard.press('Enter')
-      await page.waitForFunction(() => document.querySelector('#idle-feedback')?.textContent?.includes(
-        'A disponibilidade do vídeo do código 1001 não pôde ser confirmada.'))
+      let unavailableLibraryPhase = 'input-buffer'
+      try {
+        await page.waitForFunction(() => document.querySelector('#idle-code-digits')?.getAttribute('aria-label') ===
+          'Código digitado: 1001')
+        unavailableLibraryPhase = 'media-result'
+        await page.keyboard.press('Enter')
+        await page.waitForFunction(() => document.querySelector('#idle-feedback')?.textContent?.includes(
+          'A disponibilidade do vídeo do código 1001 não pôde ser confirmada.'))
+      } catch (error) {
+        const renderer = await page.evaluate(async () => ({
+          digits: document.querySelector('#idle-code-digits')?.getAttribute('aria-label'),
+          feedbackHidden: document.querySelector('#idle-feedback')?.hidden,
+          feedback: document.querySelector('#idle-feedback span')?.textContent,
+          operationalState: document.body.dataset.operationalState,
+          playbackCondition: document.body.dataset.playbackCondition,
+          menuScreen: document.body.dataset.menuScreen,
+          activeElement: document.activeElement instanceof HTMLElement
+            ? { tag: document.activeElement.tagName, id: document.activeElement.id }
+            : null,
+          idlePanelHidden: document.querySelector('#standalone-idle-panel')?.hidden,
+          mainMenuHidden: document.querySelector('#standalone-main-menu')?.hidden,
+          licenseModalHidden: document.querySelector('#standalone-license-modal')?.hidden,
+          storageModalHidden: document.querySelector('#storage-recovery-modal')?.hidden,
+          stopModalHidden: document.querySelector('#standalone-stop-confirmation')?.hidden,
+          catalogDialogHidden: document.querySelector('#options-catalog-dialog')?.hidden,
+          remoteDialogs: [...document.querySelectorAll('[data-remote-pairing-dialog="true"]')]
+            .map(element => ({ hidden: element instanceof HTMLElement ? element.hidden : true })),
+          snapshot: await window.standalonePlayer.getSnapshot()
+        }))
+        const library = await callMain(app, 'getLibraryUiDiagnostic')
+        throw new Error(`Unavailable-library UI diagnostic (${unavailableLibraryPhase}): ${JSON.stringify({ renderer, library })}; ${error.message}`)
+      }
       const unknownIdleSnapshot = await callMain(app, 'getSnapshot')
       assert.equal(unknownIdleSnapshot.state.operationalState, 'idle')
       assert.deepEqual(unknownIdleSnapshot.state.pending, [], 'an unknown library scan is not treated as a valid idle admission.')

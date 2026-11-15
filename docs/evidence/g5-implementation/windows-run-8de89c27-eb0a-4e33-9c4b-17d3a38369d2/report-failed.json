@@ -1,0 +1,11 @@
+{
+  "owner": "karaoke-queue-windows-test-runner-v1",
+  "runId": "8de89c27-eb0a-4e33-9c4b-17d3a38369d2",
+  "status": "FAIL",
+  "stage": "CLEANUP",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "355a103486a68659cc7d56340f39ea4f2671301cf0162cfcc0fa49ce5853aff4",
+  "reason": "O teste deixou o perfil temporário: [WINDOWS_PATH_REDACTED]",
+  "testedAt": "2026-11-14T12:47:01.812Z"
+}

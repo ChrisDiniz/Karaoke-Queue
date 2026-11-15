@@ -54,24 +54,34 @@ function makeHarness() {
   return { discovery, nodes, optionsSeen, ticks, setNow, emit, records, setInterface: (next: typeof current) => { current = next } }
 }
 
-test('repeated identical DNS-SD answers renew TTL and DHCP address replaces stale endpoint', async () => {
+test('same live DNS-SD target retains its candidate handle while TTL renews; DHCP address change replaces it', async () => {
   const h = makeHarness()
   await h.discovery.start(['192.168.10.20'])
   assert.deepEqual(h.optionsSeen, [{ interface: '192.168.10.20', bind: '0.0.0.0', reuseAddr: true }])
   h.emit(h.records())
   const initial = h.discovery.getSnapshot().candidates[0]
   assert.deepEqual(initial.addresses, ['192.168.10.20'])
+  h.setNow(1_500)
+  for (const tick of h.ticks) tick()
+  const afterSweep = h.discovery.getSnapshot().candidates[0]
+  assert.equal(afterSweep.candidateId, initial.candidateId,
+    'a periodic cache sweep cannot invalidate the button handle for the same live service target')
   h.emit(h.records('192.168.10.99'), undefined, '192.168.11.99')
   assert.deepEqual(h.discovery.getSnapshot().candidates[0].addresses, ['192.168.10.20'],
     'responses outside the selected interface subnet are ignored')
   h.setNow(9_000)
   h.emit(h.records())
+  assert.equal(h.discovery.getSnapshot().candidates[0].candidateId, initial.candidateId,
+    'an identical DNS-SD answer renews freshness without changing the live UI handle')
   h.setNow(12_000)
   assert.equal(h.discovery.getSnapshot().candidates.length, 1)
   h.setNow(20_000)
   h.emit(h.records('192.168.10.21'))
-  assert.deepEqual(h.discovery.getSnapshot().candidates[0].addresses, ['192.168.10.21'])
-  assert.equal(h.discovery.getSnapshot().candidates[0].verified, false)
+  const afterAddressChange = h.discovery.getSnapshot().candidates[0]
+  assert.deepEqual(afterAddressChange.addresses, ['192.168.10.21'])
+  assert.notEqual(afterAddressChange.candidateId, initial.candidateId,
+    'a changed endpoint receives a new lookup handle so an old card cannot target new discovery data')
+  assert.equal(afterAddressChange.verified, false)
   await h.discovery.stop()
 })
 
@@ -79,8 +89,14 @@ test('goodbye and expiry remove candidates; cache bounds malformed and excessive
   const h = makeHarness()
   await h.discovery.start(['192.168.10.20'])
   h.emit(h.records())
+  const firstCandidateId = h.discovery.getSnapshot().candidates[0]?.candidateId
+  assert.ok(firstCandidateId)
   h.emit(h.records().map(record => ({ ...record, ttl: 0 })))
   assert.equal(h.discovery.getSnapshot().candidates.length, 0)
+  h.emit(h.records())
+  assert.notEqual(h.discovery.getSnapshot().candidates[0]?.candidateId, firstCandidateId,
+    'a service that disappeared and was later observed again receives a fresh handle')
+  h.emit(h.records().map(record => ({ ...record, ttl: 0 })))
 
   for (let batch = 0; batch < 4; batch++) {
     h.emit(Array.from({ length: 256 }, (_, index) => ({

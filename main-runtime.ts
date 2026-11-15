@@ -39,6 +39,7 @@ import { MainManagementCloseCoordinator } from './src/main-management-close'
 import { MainManagementHost } from './src/main-management-host'
 import { MainRemoteRuntime } from './src/main-remote-runtime'
 import { getRemoteDiscoveryInterfaceAddresses } from './src/remote-discovery'
+import { registerMainRemoteUiIpcHandlers } from './src/main-remote-ui-ipc'
 import { getPackagedInstallationContext, getPackagedInstalledRole } from './src/installed-role-context'
 import { confirmInitialRoleThroughUac } from './src/installation-role-broker'
 import { acquirePackagedInstallationState } from './src/installation-bootstrap'
@@ -79,6 +80,8 @@ const hasSingleInstanceLock = true
 registerPlayerMediaScheme(protocol)
 
 let mainWindow: BrowserWindow | null = null
+let managementWindow: BrowserWindow | null = null
+let standalonePlayerWindow: BrowserWindow | null = null
 let welcomeWindow: BrowserWindow | null = null
 let pendingWindowActivation = false
 let operatingMode: OperatingMode | null = null
@@ -92,6 +95,7 @@ let shutdownApprovedAttemptId: string | undefined
 let libraryOperationInProgress = false
 let playerOperationsInProgress = 0
 let disposeControllerIpcHandlers: (() => void) | undefined
+let disposeRemoteUiIpcHandlers: (() => void) | undefined
 let disposeManagementIpcHandlers: (() => void) | undefined
 let managementHost: MainManagementHost | undefined
 let managementStartupLogged = false
@@ -105,13 +109,16 @@ let remoteRuntimeShutdownComplete = false
 let remoteRuntimeShutdownTask: Promise<void> | undefined
 
 const requirePlayerIpcSender = createMainIpcPolicy({
-  getExpectedWebContents: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : undefined,
-  getExpectedDocumentUrl: () => pathToFileURL(path.join(__dirname, 'src', 'index.html')).href,
+  getExpectedWebContents: () => standalonePlayerWindow && !standalonePlayerWindow.isDestroyed()
+    ? standalonePlayerWindow.webContents : mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : undefined,
+  getExpectedDocumentUrl: () => pathToFileURL(path.join(__dirname, 'src',
+    operatingMode === 'player' ? 'standalone-player.html' : 'index.html')).href,
   isEnabled: () => modeCapabilities?.player === true,
   forbiddenCode: 'PLAYER_IPC_FORBIDDEN'
 })
 const requireControllerIpcSender = createMainIpcPolicy({
-  getExpectedWebContents: () => mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : undefined,
+  getExpectedWebContents: () => managementWindow && !managementWindow.isDestroyed()
+    ? managementWindow.webContents : mainWindow && !mainWindow.isDestroyed() ? mainWindow.webContents : undefined,
   getExpectedDocumentUrl: () => pathToFileURL(path.join(__dirname, 'src', 'index.html')).href,
   isEnabled: () => modeCapabilities?.controller === true,
   forbiddenCode: 'CONTROLLER_IPC_FORBIDDEN'
@@ -490,7 +497,9 @@ function createWindow() {
   })
   applyFunctionWindowIdentity(win)
   mainWindow = win
+  managementWindow = win
   win.on('closed', () => {
+    if (managementWindow === win) managementWindow = null
     if (mainWindow === win) mainWindow = null
   })
 
@@ -620,6 +629,7 @@ async function createStandalonePlayerWindow(): Promise<BrowserWindow> {
   }
   applyFunctionWindowIdentity(win)
   mainWindow = win
+  standalonePlayerWindow = win
   win.on('focus', () => { void mainMediaRuntime?.probeLibraryAvailability() })
   win.on('show', () => { void mainMediaRuntime?.probeLibraryAvailability() })
   win.on('close', event => {
@@ -627,7 +637,10 @@ async function createStandalonePlayerWindow(): Promise<BrowserWindow> {
     event.preventDefault()
     if (startupInitializationComplete) requestStandaloneExitConfirmation()
   })
-  win.on('closed', () => { if (mainWindow === win) mainWindow = null })
+  win.on('closed', () => {
+    if (standalonePlayerWindow === win) standalonePlayerWindow = null
+    if (mainWindow === win) mainWindow = null
+  })
   win.webContents.on('render-process-gone', (_event, details) => {
     logger.error('renderer', 'STANDALONE_RENDERER_GONE', 'A interface Standalone terminou inesperadamente.', undefined, {
       reason: details.reason, exitCode: details.exitCode
@@ -895,6 +908,13 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
       info: (event, details) => logger.info('remote', event, event, details),
       warn: (event, details) => logger.warn('remote', event, event, details),
       error: (event, details) => logger.error('remote', event, event, undefined, details)
+    }, getPlayerOperationalObservation: () => {
+      let libraryRevision = 'library-unavailable'
+      try {
+        const revision = mainMediaRuntime?.library?.getSnapshot().revision
+        if (typeof revision === 'string' && /^[a-f0-9]{64}$/.test(revision)) libraryRevision = `library-${revision}`
+      } catch { /* an unavailable library is represented explicitly in the technical snapshot */ }
+      return { playbackStatus: playerPlaybackService?.getState().status ?? 'uncertain', libraryRevision }
     } })
   } catch (error: unknown) {
     fatalMainFailure = true
@@ -911,6 +931,7 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   let databaseInitializationFailed = false
   try {
     licenseService = new LocalLicenseService(path.join(userDataDirectory, 'license-state.json'))
+    let standalonePlayerWindowReady: Promise<BrowserWindow> | undefined
     if (operatingMode === 'player') {
       const disposeLicense = registerMainLicenseIpcHandlers({
         ipcMain, getLicenseService: () => licenseService, logger,
@@ -1114,8 +1135,26 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
           return owner ? dialog.showMessageBox(owner, options) : dialog.showMessageBox(options)
         }
       })
-      await createStandalonePlayerWindow()
+      // Start the window synchronously so its BrowserWindow is available, then
+      // register G5 IPC before awaiting loadFile. The renderer probes this port
+      // during startup and must not race an unregistered handler.
+      standalonePlayerWindowReady = createStandalonePlayerWindow()
     }
+
+    disposeRemoteUiIpcHandlers = registerMainRemoteUiIpcHandlers({
+      ipcMain,
+      mode: operatingMode!,
+      runtime: remoteRuntime!,
+      getPlayerWindow: () => operatingMode === 'player' ? standalonePlayerWindow : null,
+      getManagementWindow: () => operatingMode !== 'player' ? managementWindow : null,
+      assertPlayerSender: requirePlayerIpcSender,
+      assertManagementSender: requireControllerIpcSender,
+      getInterfaceAddresses: getRemoteDiscoveryInterfaceAddresses,
+      getManagementDatabase: () => database,
+      pairingPresentationApprovedForProduction: !app.isPackaged,
+      onError: code => logger.warn('remote', 'REMOTE_UI_ACTION_FAILED', 'Uma ação de pareamento ou conexão não foi concluída.', { code })
+    })
+    if (standalonePlayerWindowReady) await standalonePlayerWindowReady
 
     app.on('child-process-gone', (_event, details) => {
       logger.error('electron', 'CHILD_PROCESS_GONE', 'Um subprocesso do Electron terminou inesperadamente.', undefined, {
@@ -1256,6 +1295,8 @@ if (hasSingleInstanceLock) app.on('before-quit', (event) => {
   }
 })
 if (hasSingleInstanceLock) app.on('will-quit', () => {
+  disposeRemoteUiIpcHandlers?.()
+  disposeRemoteUiIpcHandlers = undefined
   disposeManagementIpcHandlers?.()
   disposeManagementIpcHandlers = undefined
   disposeControllerIpcHandlers?.()

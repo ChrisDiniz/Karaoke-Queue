@@ -1,0 +1,49 @@
+{
+  "owner": "karaoke-queue-windows-test-runner-v1",
+  "runId": "e8c3fccc-3f68-4914-b1f7-53e743105d88",
+  "status": "FAIL",
+  "stage": "TEST",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "00c33a3b3cd27126e7f2e7336e275d5aa0b2b1cf208bb2f8c7817bce5f37f1e0",
+  "focus": "NOT RUN",
+  "profileCleanup": "REMOVED_EMPTY",
+  "testedAt": "2026-11-14T17:38:24.753Z",
+  "suites": [
+    {
+      "name": "remote-ui-contracts-unit",
+      "status": "PASS",
+      "exitCode": 0
+    },
+    {
+      "name": "main-remote-ui-ipc-unit",
+      "status": "PASS",
+      "exitCode": 0
+    },
+    {
+      "name": "remote-runtime-intent-unit",
+      "status": "PASS",
+      "exitCode": 0
+    },
+    {
+      "name": "remote-reconnection-unit",
+      "status": "PASS",
+      "exitCode": 0
+    },
+    {
+      "name": "remote-reconciliation-unit",
+      "status": "PASS",
+      "exitCode": 0
+    },
+    {
+      "name": "remote-devices-electron",
+      "status": "PASS",
+      "exitCode": 0
+    },
+    {
+      "name": "remote-pairing-electron",
+      "status": "FAIL",
+      "exitCode": 1
+    }
+  ]
+}

@@ -23,8 +23,8 @@ export interface OperationalCommandExecutionPort {
 }
 
 export interface OperationalSnapshotPort {
-  snapshot(): Record<string, unknown>
-  mediaAvailability(musicCode: string): Record<string, unknown>
+  snapshot(context: RemoteTransportMessageContext): Record<string, unknown>
+  mediaAvailability(musicCode: string, context: RemoteTransportMessageContext): Record<string, unknown>
 }
 
 export interface OperationalProtocolServiceOptions {
@@ -391,7 +391,7 @@ export class OperationalProtocolService implements RemoteTransportMessagePort {
         return
       }
       const payload = message.body.type === 'media-availability'
-        ? provider.mediaAvailability(String(message.body.payload.musicCode)) : provider.snapshot()
+        ? provider.mediaAvailability(String(message.body.payload.musicCode), context) : provider.snapshot(context)
       if (message.body.type === 'snapshot') {
         const response = this.responseEnvelope(context, correlationId, message.body.type, payload)
         this.options.store.saveCheckpoint({ controllerId: message.controllerId, correlationId, snapshot: response })

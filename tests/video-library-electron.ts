@@ -358,8 +358,9 @@ async function runCombinedReusesControllerAndPlayerOwnership() {
     assert.equal(ready.details.playerLibraryInitialized, true)
     assert.equal(ready.details.operationalDatabaseInitialized, true)
     assert.equal(fs.existsSync(path.join(profile.userData, 'karaoke.sqlite')), true)
-    assert.deepEqual(fs.readdirSync(profile.userData).filter(name => /\.sqlite(?:3)?$/.test(name)), ['karaoke.sqlite'],
-      'Combined mode must keep one authoritative Controller SQLite database')
+    const sqliteFiles = fs.readdirSync(profile.userData).filter(name => /\.sqlite(?:3)?$/.test(name))
+    assert.deepEqual(sqliteFiles.filter(name => name !== 'remote-control-intent.sqlite'), ['karaoke.sqlite'],
+      'Combined mode must keep one authoritative Controller SQLite database; remote intent storage is auxiliary and separate')
     assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1,
       'Phase 3 must reuse the current Controller window and not invent a Player layout')
   } finally { await closeController(app) }

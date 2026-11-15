@@ -12,6 +12,7 @@ import { getElement, getInput, ModalManager, showToast, reportPersistenceFailure
 import { QueueInteractions } from './ui/queue-interactions'
 import { createQueueView, type QueueView } from './ui/queue-view'
 import { TableDialog } from './ui/table-dialog'
+import { RemoteDevicesView } from './ui/remote-devices-view'
 
 function reportRendererError(event: string, message: string, error?: unknown): void {
   const stack = error instanceof Error ? error.stack : undefined
@@ -27,6 +28,7 @@ window.addEventListener('unhandledrejection', event => {
 })
 
 if (!window.karaokeManagement) throw new Error('The Main-process Management host is unavailable.')
+if (window.karaokeRemoteManagement) new RemoteDevicesView(window.karaokeRemoteManagement)
 const application = new ManagementClient(window.karaokeManagement, {
   read: () => Object.fromEntries(Object.values(LEGACY_STATE_STORAGE_KEYS).map(key =>
     [key, window.localStorage.getItem(key)])) as LegacyStateStorageDto,

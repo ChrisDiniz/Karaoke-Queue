@@ -1,0 +1,35 @@
+{
+  "recordType": "sanitized-runner-failure-observation",
+  "runId": "3d898094-9dd1-4993-8789-0cdc82f59e58",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": null,
+  "observedRunnerReport": {
+    "status": "FAIL",
+    "stage": "CLEANUP",
+    "suite": "remote-pairing-electron",
+    "suiteStatus": "NOT RUN",
+    "signal": "SIGTERM",
+    "errorCode": "ETIMEDOUT",
+    "reportedAt": "2026-11-15T00:26:38.143Z"
+  },
+  "e2eFailure": {
+    "stage": "pairing-three-attempt-lockout-ui",
+    "condition": "wrong-pairing-code-retry-1",
+    "managementErrorCode": "PAIRING_RATE_LIMITED",
+    "playerPairing": "revoked",
+    "playerListener": "advertising",
+    "temporaryCodeVisible": true,
+    "playerOutstandingAttemptReservations": 1
+  },
+  "diagnosis": "The lockout UI scenario was placed after the Player restart. PairingStore detected a failed proof reservation from the prior boot and correctly applied its conservative ten-minute restart cooldown before the new session could make three proofs. This was test ordering, not a pairing or network defect.",
+  "cleanupRecovery": {
+    "status": "PASS",
+    "method": "official --cleanup-failed-windows-run",
+    "failedReportPreserved": true,
+    "isolatedProfileRemoved": true,
+    "ownedElectronProcessesRemaining": 0,
+    "runnerLockReleased": true
+  },
+  "limitation": "The original runner JSON was replaced by a subsequent official run; this record preserves the report and sanitized failure details captured before replacement. The original source snapshot manifest was not archived for this failed run."
+}

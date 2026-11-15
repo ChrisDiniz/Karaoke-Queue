@@ -152,6 +152,17 @@ async function waitForSnapshot(page, predicate, message, timeoutMs = 20000) {
   throw new Error(`${message}; último snapshot=${JSON.stringify(latest)}`)
 }
 
+async function waitForPlayerRemoteSnapshot(page, predicate, message, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs
+  let latest
+  while (Date.now() < deadline) {
+    latest = await page.evaluate(() => window.karaokeRemotePlayer?.getSnapshot?.() ?? null).catch(() => undefined)
+    if (latest && predicate(latest)) return latest
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  throw new Error(`${message}; último snapshot remoto=${JSON.stringify(latest)}`)
+}
+
 async function waitForNativeClose(page, app, timeoutMs = 20000) {
   const child = app.process()
   if (child.exitCode !== null) return { code: child.exitCode, signal: child.signalCode }
@@ -559,7 +570,9 @@ async function captureC10IdleState(page, screenshotRoot, name) {
   })
   writeProgress(`C10.1 visual ${name} ${JSON.stringify(visual)}`)
   assert.equal(visual.cardVisible, true, `A caixa Desconectado deve permanecer visível em ${name}.`)
-  assert.match(visual.disconnectedCard, /DESCONECTADO[\s\S]*Sem controlador remoto/)
+  assert.match(visual.disconnectedCard,
+    /DESCONECTADO[\s\S]*Sem vínculo remoto\. O Player continua funcionando localmente\./,
+    'A tela ociosa deve refletir o estado G5 de Player sem vínculo, sem insinuar um controlador remoto.')
   assert.equal(visual.disconnected.fontSize, '14px', 'O rótulo Desconectado aprovado usa 14 px.')
   assert.equal(visual.idle.fontSize, '14px', 'O rótulo do estado do Player aprovado usa 14 px.')
   assert.equal(visual.cardRect.width, 170, 'A caixa Desconectado mantém a largura aprovada de 170 px.')
@@ -1210,6 +1223,9 @@ async function run() {
   const reportDirectory = process.env.KQ_F0_REPORT_DIR ? path.resolve(process.env.KQ_F0_REPORT_DIR) : undefined
   const f0StartupOnly = process.env.KQ_F0_STARTUP_ONLY === '1' && !f0RealLibrary
   const f0SeedPausedRecovery = f0StartupOnly && process.env.KQ_F0_SEED_PAUSED_RECOVERY === '1'
+  const g5PlaybackToastOnly = process.env.KQ_G5_PLAYBACK_TOAST_ONLY === '1'
+  const g5PairingStoreFailureOnly = process.env.KQ_G5_PAIRING_STORE_FAILURE_ONLY === '1'
+  assert.ok(!(g5PlaybackToastOnly && g5PairingStoreFailureOnly), 'Run only one focused G5 Player scenario at a time.')
   const profileRoot = makeProfileRoot()
   if (f0RealLibrary) {
     const configuredRoot = process.env.KQ_F0_LIBRARY_ROOT
@@ -1285,6 +1301,22 @@ async function run() {
     fs.writeFileSync(path.join(userData, 'operating-mode.json'), JSON.stringify({ version: 1, mode: 'player' }))
     fs.writeFileSync(path.join(userData, 'video-library.json'), JSON.stringify({ version: 1, roots: [path.resolve(mediaRoot)] }))
     await seedCatalogDatabase(userData)
+    if (g5PairingStoreFailureOnly) {
+      fs.writeFileSync(path.join(userData, 'remote-authorization.json'), '{invalid-json', 'utf8')
+    }
+    if (g5PlaybackToastOnly || g5PairingStoreFailureOnly) {
+      const { RemoteControlIntentStore } = require(path.join(projectRoot, 'build', 'src', 'remote-control-intent.js'))
+      const intentStore = new RemoteControlIntentStore(userData)
+      if (g5PairingStoreFailureOnly) {
+        assert.deepEqual(await intentStore.set('offline', null),
+          { version: 1, intent: 'offline', revision: 1 },
+          'The isolated profile records an explicit offline choice despite the unavailable G2 journal.')
+      } else {
+        const initialIntent = await intentStore.read()
+        assert.deepEqual(initialIntent, { version: 1, intent: 'disabled', revision: 0 })
+        await intentStore.set('offline', initialIntent.revision)
+      }
+    }
   }
   if (process.env.KQ_F0_BOOTSTRAP_CASE === 'cached-ready') {
     const { VideoLibraryService } = require(path.join(projectRoot, 'build/src/video-library-service'))
@@ -1378,6 +1410,176 @@ async function run() {
     assert.equal(usable.details.fileOpens, 0, 'Production Main must not open candidates before operational readiness')
     const admitted = await waitForF0LogRecord(startupLogPath, 'F0_LIBRARY_RECONCILIATION_ADMITTED', usable.details.runId)
     assert.ok(admitted.details.elapsedMs >= usable.details.elapsedMs)
+    }
+    if (g5PairingStoreFailureOnly) {
+      const unavailable = await page.evaluate(() => window.karaokeRemotePlayer.getSnapshot())
+      assert.deepEqual({ pairingStoreStatus: unavailable.pairingStoreStatus, playerPairing: unavailable.playerPairing,
+        intent: unavailable.intent, listener: unavailable.listener }, {
+        pairingStoreStatus: 'unavailable', playerPairing: 'unavailable', intent: 'offline', listener: 'stopped'
+      }, 'A corrupt persisted G2 journal must remain unavailable rather than being treated as an empty/unpaired store.')
+      assert.equal((await page.locator('#remote-player-connection-status').innerText()).trim(), 'COFRE INDISPONÍVEL')
+      assert.equal((await page.locator('#remote-player-connection-description').innerText()).trim(),
+        'O armazenamento seguro não pôde ser consultado. Nenhum vínculo será presumido.')
+
+      const inventoryDeadline = Date.now() + 20000
+      let inventory
+      while (Date.now() < inventoryDeadline) {
+        inventory = await page.evaluate(() => window.standalonePlayer.getOptionsSnapshot()).catch(() => undefined)
+        if (inventory?.library.scanStatus === 'ready' && (inventory.library.indexedFiles ?? 0) > 0) break
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+      assert.equal(inventory?.library.scanStatus, 'ready',
+        'O inventário real deve estar pronto antes de testar playback com o journal G2 indisponível.')
+      assert.ok((inventory?.library.indexedFiles ?? 0) > 0,
+        'O inventário real deve conter arquivos antes de testar playback com o journal G2 indisponível.')
+      const queued = await page.evaluate(() => window.standalonePlayer.execute({
+        operationId: crypto.randomUUID(), command: { type: 'submit-code', enteredCode: '1001', priority: 'normal' }
+      }))
+      assert.equal(queued.outcome, 'confirmed',
+        `A falha do journal de pareamento não deve bloquear playback local: ${JSON.stringify(queued)}`)
+      await waitForSnapshot(page, snapshot => snapshot.playbackCondition === 'ready' &&
+        snapshot.state.operationalState === 'playing' && snapshot.state.current?.musicCode === '01001',
+      'O MP4 real deve iniciar enquanto o Main informa que o journal de pareamento está indisponível.')
+      await waitForIntegratedPlaybackSurface(app, true)
+      const hostBefore = await playbackHostState(app)
+      assert.equal(hostBefore.paused, false)
+      const advanced = await waitForPlaybackHostTime(app, hostBefore.currentTime + 0.25)
+      assert.equal(advanced.paused, false)
+      assert.equal(advanced.visible, true)
+      assert.ok(advanced.currentTime > hostBefore.currentTime)
+      writeProgress(`G5 pairing-store failure PASS ${JSON.stringify({ pairingStoreStatus: unavailable.pairingStoreStatus,
+        playerPairing: unavailable.playerPairing, intent: unavailable.intent, listener: unavailable.listener,
+        playbackAdvanced: advanced.currentTime > hostBefore.currentTime })}`)
+
+      const close = waitForNativeClose(page, app)
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
+        .find(candidate => candidate.webContents.getURL().includes('standalone-player.html')).close())
+      await waitForExitModalReady(page, app, false)
+      await page.keyboard.press('Enter').catch(error => {
+        if (!/page, context or browser has been closed/i.test(String(error))) throw error
+      })
+      assert.deepEqual(await close, { code: 0, signal: null }, 'O Player encerra normalmente após o cenário de journal indisponível.')
+      app = undefined
+      page = undefined
+      await assertNoLinuxElectronProcesses(profileRoot)
+      process.stdout.write('PASS G5 corrupt pairing journal is surfaced fail-closed while local MP4 playback continues.\n')
+      return
+    }
+    if (g5PlaybackToastOnly) {
+      const remoteBefore = await page.evaluate(() => window.karaokeRemotePlayer?.getSnapshot() ?? null)
+      assert.ok(remoteBefore, 'O Player de produção deve expor o snapshot G5 Main pelo Preload restrito.')
+      assert.equal(remoteBefore.playerPairing, 'unpaired', 'O perfil isolado deve começar sem vínculo G2.')
+      assert.equal(remoteBefore.listener, 'stopped', 'O perfil isolado deve começar sem listener de rede ativo.')
+      assert.equal(remoteBefore.intent, 'offline', 'O Main deve carregar a escolha offline explícita persistida no SQLite real.')
+
+      const interfaces = await page.evaluate(() => window.karaokeRemotePlayer.getNetworkInterfaces())
+      assert.ok(interfaces.length > 0, 'O cenário real precisa de ao menos uma interface privada autorizada pelo Main.')
+      await page.locator('#remote-player-enable').click()
+      const networkDialog = page.getByRole('dialog', { name: 'Permitir descoberta nesta rede?' })
+      await networkDialog.waitFor({ state: 'visible' })
+      const interfaceSelect = page.locator('#remote-player-interface')
+      const invalidSelection = await interfaceSelect.evaluate(element => {
+        const select = element as HTMLSelectElement
+        select.value = '203.0.113.1'
+        return select.value
+      })
+      assert.equal(invalidSelection, '', 'An unavailable address cannot become a selected local interface.')
+      await page.locator('#remote-player-pairing-root [data-action="enable"]').click()
+      const interfaceError = page.locator('#remote-player-action-status')
+      await interfaceError.waitFor({ state: 'visible' })
+      assert.equal(await interfaceError.getAttribute('data-error-code'), 'REMOTE_DISCOVERY_INTERFACE_INVALID')
+      assert.equal((await interfaceError.innerText()).trim(), 'A interface de rede escolhida não está mais disponível.',
+        'The real Player UI explains a stale/invalid interface without echoing internal errors.')
+      const afterInvalidInterface = await page.evaluate(() => window.karaokeRemotePlayer.getSnapshot())
+      assert.deepEqual({ intent: afterInvalidInterface.intent, listener: afterInvalidInterface.listener },
+        { intent: 'offline', listener: 'stopped' },
+        'An invalid interface fails before changing persisted intent or starting the listener.')
+      await page.keyboard.press('Escape')
+      await networkDialog.waitFor({ state: 'detached' })
+      await page.locator('#remote-player-enable').click()
+      await networkDialog.waitFor({ state: 'visible' })
+      await interfaceSelect.selectOption(interfaces[0].address)
+
+      const queued = await page.evaluate(() => window.standalonePlayer.execute({
+        operationId: crypto.randomUUID(), command: { type: 'submit-code', enteredCode: '1001', priority: 'normal' }
+      }))
+      assert.equal(queued.outcome, 'confirmed', 'O MP4 real deve ser admitido enquanto o modal G5 permanece aberto.')
+      const playing = await waitForSnapshot(page, snapshot => snapshot.playbackCondition === 'ready' &&
+        snapshot.state.operationalState === 'playing' && snapshot.state.current?.musicCode === '01001',
+      'O playback real deve continuar até o MP4 selecionado enquanto o modal G5 está aberto.')
+      await waitForIntegratedPlaybackSurface(app, true)
+      assert.equal(await networkDialog.isVisible(), true, 'O modal G5 não deve fechar nem pausar playback antes da ação de rede.')
+      const modalAndVideo = await page.evaluate(() => {
+        const dialog = document.querySelector('#remote-player-pairing-root .remote-player-overlay')
+        const video = document.querySelector('#playback-media-layer video')
+        if (!dialog || !video) return null
+        const dialogRect = dialog.getBoundingClientRect()
+        const videoRect = video.getBoundingClientRect()
+        return {
+          dialogVisible: !dialog.hidden && dialogRect.width > 0 && dialogRect.height > 0,
+          dialogZIndex: Number.parseInt(getComputedStyle(dialog).zIndex, 10),
+          videoZIndex: Number.parseInt(getComputedStyle(video).zIndex, 10) || 0,
+          overlap: dialogRect.left < videoRect.right && dialogRect.right > videoRect.left &&
+            dialogRect.top < videoRect.bottom && dialogRect.bottom > videoRect.top,
+          videoPaused: video.paused,
+          videoTime: video.currentTime
+        }
+      })
+      assert.ok(modalAndVideo?.dialogVisible && modalAndVideo.overlap,
+        'O modal real de descoberta deve se sobrepor à superfície do MP4 na mesma janela.')
+      assert.ok(modalAndVideo.dialogZIndex > modalAndVideo.videoZIndex,
+        'O modal G5 deve permanecer acima do vídeo real.')
+      assert.equal(modalAndVideo.videoPaused, false, 'Abrir o modal de descoberta não deve pausar a engine de playback.')
+      await page.keyboard.press('Escape')
+      await networkDialog.waitFor({ state: 'detached' })
+      const offline = await waitForPlayerRemoteSnapshot(page, snapshot => snapshot.intent === 'offline',
+        'Cancelar a permissão de rede deve preservar o estado offline confirmado no Main.')
+      const toast = page.locator('#remote-player-playback-toast')
+      await toast.waitFor({ state: 'visible', timeout: 10000 })
+      const toastState = await toast.evaluate(element => {
+        const rect = element.getBoundingClientRect()
+        const video = document.querySelector('#playback-media-layer video')
+        const videoRect = video?.getBoundingClientRect()
+        return {
+          text: element.textContent?.trim() ?? '', role: element.getAttribute('role'),
+          live: element.getAttribute('aria-live'), zIndex: Number.parseInt(getComputedStyle(element).zIndex, 10),
+          visible: !element.hidden && rect.width > 0 && rect.height > 0,
+          overlapsVideo: Boolean(videoRect && rect.left < videoRect.right && rect.right > videoRect.left &&
+            rect.top < videoRect.bottom && rect.bottom > videoRect.top),
+          videoPaused: video?.paused ?? null, videoTime: video?.currentTime ?? null
+        }
+      })
+      assert.equal(offline.playerPairing, 'unpaired', 'O estado offline não cria vínculo por si só.')
+      assert.equal(toastState.text, 'Modo offline confirmado')
+      assert.equal(toastState.role, 'status')
+      assert.equal(toastState.live, 'polite')
+      assert.equal(toastState.visible, true)
+      assert.equal(toastState.overlapsVideo, true, 'O toast G5 deve aparecer sobre o mesmo MP4 em reprodução.')
+      assert.equal(toastState.videoPaused, false)
+      assert.ok(toastState.zIndex > modalAndVideo.videoZIndex, 'O toast G5 deve se compor acima do vídeo.')
+      const advanced = await waitForPlaybackHostTime(app, toastState.videoTime + 0.25)
+      assert.equal(advanced.paused, false, 'O toast G5 de modo offline não deve pausar playback.')
+      assert.ok(advanced.visible && advanced.currentTime > toastState.videoTime,
+        'O MP4 real deve permanecer visível e avançar sob o toast G5.')
+      writeProgress(`G5 offline toast PASS ${JSON.stringify({ playerPairing: offline.playerPairing,
+        listener: offline.listener, intent: offline.intent, revision: offline.revision, ...toastState,
+        playbackAdvanced: advanced.currentTime > toastState.videoTime })}`)
+      await page.screenshot({ path: path.join(screenshotRoot, 'g5-offline-toast-over-real-mp4.png') })
+
+      const close = waitForNativeClose(page, app)
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
+        .find(candidate => candidate.webContents.getURL().includes('standalone-player.html')).close())
+      await waitForExitModalReady(page, app, false)
+      await page.keyboard.press('Enter').catch(error => {
+        if (!/page, context or browser has been closed/i.test(String(error))) throw error
+      })
+      const closed = await close
+      assert.deepEqual(closed, { code: 0, signal: null }, 'O Player encerra normalmente após o cenário de toast G5.')
+      app = undefined
+      page = undefined
+      await assertNoLinuxElectronProcesses(profileRoot)
+      process.stdout.write('PASS G5 offline-mode toast over real MP4; playback advanced and Player exited normally.\n')
+      return
     }
     if (process.env.KQ_F0_STRUCTURAL_ONLY === '1') {
       const { validateStructuralPlayback } = require('./f0-production-validation')
@@ -1983,17 +2185,30 @@ async function run() {
       if (!win) throw new Error('A janela de produção Standalone não foi encontrada.')
       win.setContentSize(1280, 800)
     })
-    const bridge = await page.evaluate(() => ({
-      keys: Object.keys(window.standalonePlayer ?? {}).sort(),
-      require: typeof window.require,
-      process: typeof window.process,
-      disconnected: document.querySelector('.connection-card')?.innerText,
-      mode: document.body.dataset.menuScreen
-    }))
+    const bridge = await page.evaluate(async () => {
+      const remote = await window.karaokeRemotePlayer?.getSnapshot().catch(() => null) ?? null
+      return {
+        keys: Object.keys(window.standalonePlayer ?? {}).sort(),
+        require: typeof window.require,
+        process: typeof window.process,
+        disconnected: document.querySelector('.connection-card')?.innerText,
+        remote: remote ? { pairingStoreStatus: remote.pairingStoreStatus, playerPairing: remote.playerPairing,
+          intent: remote.intent, listener: remote.listener, errorCode: remote.errorCode } : null,
+        mode: document.body.dataset.menuScreen
+      }
+    })
     assert.equal(bridge.require, 'undefined', 'O Renderer de produção não recebe require.')
     assert.equal(bridge.process, 'undefined', 'O Renderer de produção não recebe process.')
-    assert.match(bridge.disconnected, /DESCONECTADO[\s\S]*Sem controlador remoto/,
-      'O cartão ocioso aprovado deve aparecer como desconectado.')
+    if (bridge.remote?.playerPairing === 'unavailable') {
+      assert.match(bridge.disconnected, /COFRE INDISPONÍVEL[\s\S]*armazenamento seguro não pôde ser consultado/i,
+        'Quando o Main não consegue consultar o cofre, a UI deve expor o estado G5 fail-closed em vez de presumir que a lista está vazia.')
+    } else {
+      assert.deepEqual(bridge.remote, { pairingStoreStatus: 'available', playerPairing: 'unpaired',
+        intent: 'disabled', listener: 'stopped', errorCode: null },
+      `O perfil limpo deve começar sem vínculo ou intenção remota: ${JSON.stringify(bridge.remote)}`)
+      assert.match(bridge.disconnected, /DESCONECTADO[\s\S]*Sem vínculo remoto\. O Player continua funcionando localmente\./,
+        'O cartão deve renderizar o estado Main real de Player sem vínculo e sem intenção remota.')
+    }
     assert.ok(bridge.keys.includes('execute'), 'O Preload de produção expõe somente o contrato Standalone tipado.')
     await page.screenshot({ path: path.join(screenshotRoot, 'c9-production-idle-1280x800.png') })
 
@@ -2205,6 +2420,25 @@ async function run() {
     writeProgress(`production playback surface screenshot ${playbackScreenshotPath}`)
     const hostBeforeModal = await playbackHostState(app)
     assert.equal(hostBeforeModal.paused, false, 'O elemento de vídeo do host real deve estar reproduzindo.')
+    const g5PlaybackToast = await page.evaluate(async () => {
+      const snapshot = await window.karaokeRemotePlayer?.getSnapshot().catch(() => null)
+      const toast = document.getElementById('remote-player-playback-toast')
+      return {
+        playerPairing: snapshot?.playerPairing ?? null,
+        visible: Boolean(toast && !toast.hidden && toast.getBoundingClientRect().width > 0 &&
+          toast.getBoundingClientRect().height > 0),
+        textPresent: Boolean(toast?.textContent?.trim())
+      }
+    })
+    if (g5PlaybackToast.playerPairing === 'unavailable') {
+      assert.equal(g5PlaybackToast.visible, true,
+        'O aviso G5 de cofre indisponível deve aparecer sobre o MP4 durante playback real.')
+      assert.equal(g5PlaybackToast.textPresent, true, 'O aviso G5 deve ter conteúdo acessível enquanto a música toca.')
+      const advanced = await waitForPlaybackHostTime(app, hostBeforeModal.currentTime + 0.1)
+      assert.equal(advanced.paused, false, 'O aviso G5 não pode pausar a engine nem o elemento de vídeo.')
+      assert.equal(advanced.visible, true, 'O MP4 deve continuar visível sob o aviso G5.')
+      writeProgress(`G5 playback toast PASS ${JSON.stringify({ ...g5PlaybackToast, advanced: advanced.currentTime > hostBeforeModal.currentTime })}`)
+    }
     const queued = await page.evaluate(async () => window.standalonePlayer.execute({
       operationId: crypto.randomUUID(), command: { type: 'submit-code', enteredCode: '1001', priority: 'normal' }
     }))

@@ -1,0 +1,18 @@
+{
+  "sourceRunId": "49fb4d84-a389-48c5-9226-ebbd6c20425f",
+  "rawReportSha256": "c78202d6ff7ebd9c20448ccc3194444ebbb59766714b10ab44ebd77eb1532544",
+  "fingerprint": "c21e11c10fd1cfaa9ae4ba3459cc489a94737aecec817039f05df1fc8e75fffe",
+  "pairingCodesRedacted": true,
+  "eightDigitValuesRedacted": true,
+  "privateAddressesRedacted": true,
+  "windowsPathsRedacted": true,
+  "ephemeralIdsRedacted": true,
+  "redactionCount": 195,
+  "profileCleanup": "REMOVED_EMPTY",
+  "logsPreserved": [
+    "management-app-sanitized.log",
+    "management-error-sanitized.log",
+    "player-app-sanitized.log",
+    "player-error-sanitized.log"
+  ]
+}

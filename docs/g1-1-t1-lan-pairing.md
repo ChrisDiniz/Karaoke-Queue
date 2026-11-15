@@ -155,3 +155,7 @@ Continua impossível garantir descoberta em rede guest isolada ou cofre Linux in
 - [RFC 5054](https://www.rfc-editor.org/rfc/rfc5054), [RFC 9382 — SPAKE2](https://www.rfc-editor.org/rfc/rfc9382.txt): mecanismos estudados. Não afirmar que SRP em HTTPS equivale à integração TLS-SRP do RFC 5054 ou que o binding específico aqui já seja padronizado.
 
 **T1: aprovada. G1.2-A–D: implementadas. G1.3: validação parcial; multicast real local e smoke focalizado do módulo em ASAR PASS; Windows nativo e rebuild ASAR limpo pendentes; LAN física entre computadores não validada. G2: não iniciada.**
+
+## Referência vigente para G5 — 2026-11-13
+
+Esta proposta preserva o histórico SRP; G2 posteriormente aprovou e implementou OPAQUE-3DH/kq-pair/2, conforme contrato G2 e código real. G5 deve consumir esses ports, sem implementar SRP nem seguir nomes de módulos apenas propostos aqui. Código temporário visível na janela principal Player/TV foi expressamente aprovado pelo proprietário; demais proteções permanecem. [Plano integral G5](g5-full-execution-plan.md).

@@ -67,6 +67,36 @@ contextBridge.exposeInMainWorld('karaokePreferences', {
   setSidebarDisplayName: (name: string) => invokeLogged<string>('ui-preferences:sidebar-name:set', name)
 })
 
+contextBridge.exposeInMainWorld('karaokeRemoteManagement', {
+  getSnapshot: () => invokeLogged<import('./src/remote-ui-contracts').RemoteUiSnapshot>('remote-ui:management:get-snapshot'),
+  startDiscovery: () => invokeLogged<import('./src/remote-ui-contracts').RemoteUiActionReply>('remote-ui:management:start-discovery'),
+  refreshDiscovery: () => invokeLogged<import('./src/remote-ui-contracts').RemoteUiActionReply>('remote-ui:management:refresh-discovery'),
+  onSnapshot: (callback: (snapshot: import('./src/remote-ui-contracts').RemoteUiSnapshot) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: import('./src/remote-ui-contracts').RemoteUiSnapshot) => callback(value)
+    ipcRenderer.on('remote-ui:snapshot', listener)
+    return () => ipcRenderer.removeListener('remote-ui:snapshot', listener)
+  },
+  onPairingEvent: (callback: (event: import('./src/remote-ui-contracts').ManagementPairingUiEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: import('./src/remote-ui-contracts').ManagementPairingUiEvent) => callback(value)
+    ipcRenderer.on('remote-ui:management:pairing-event', listener)
+    return () => ipcRenderer.removeListener('remote-ui:management:pairing-event', listener)
+  },
+  pair: (candidateId: string) => invokeLogged<import('./src/remote-ui-contracts').RemoteUiActionReply>('remote-ui:management:pair', candidateId),
+  renewPairing: (candidateId: string) => invokeLogged<import('./src/remote-ui-contracts').RemoteUiActionReply>('remote-ui:management:pair-renewal', candidateId),
+  recoverPairing: (playerId: string, candidateId: string) =>
+    invokeLogged<import('./src/remote-ui-contracts').RemoteUiActionReply>('remote-ui:management:pair-recover', playerId, candidateId),
+  submitPairingCode: (requestId: string, revision: number, code: string) =>
+    ipcRenderer.invoke('remote-ui:management:submit-code', requestId, revision, code) as Promise<boolean>,
+  cancelPairing: (requestId: string, revision: number) =>
+    invokeLogged<boolean>('remote-ui:management:cancel-pairing', requestId, revision),
+  queryOperation: (playerId: string, operationId: string) =>
+    invokeLogged<import('./src/remote-ui-contracts').RemoteUiActionReply>('remote-ui:management:query-operation', playerId, operationId),
+  pairManualAddress: (address: string, port: number) =>
+    invokeLogged<import('./src/remote-ui-contracts').RemoteUiActionReply>('remote-ui:management:pair-manual', address, port),
+  revokePeerLocally: (playerId: string) =>
+    invokeLogged<import('./src/remote-ui-contracts').RemoteUiActionReply>('remote-ui:management:revoke-local', playerId)
+})
+
 contextBridge.exposeInMainWorld('karaokeDiagnostics', {
   openLogsFolder: () => invokeLogged<{ ok: boolean; error?: string }>('diagnostics:open-logs'),
   logSessionEvent: (event: string, sessionId: string | null, result?: string) =>

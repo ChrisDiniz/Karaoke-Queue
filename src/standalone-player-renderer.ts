@@ -29,6 +29,7 @@ import {
   type StandaloneCurrentTrackIdentity,
   type StandaloneCurrentTrackInfoSnapshot
 } from './standalone-player-current-track-info'
+import { StandaloneRemotePairingView } from './standalone-remote-pairing-view'
 
 declare global {
   interface Window {
@@ -232,12 +233,16 @@ class StandalonePlayerRenderer {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (this.disposed || event.isComposing) return
-    // Ctrl/Command+R is not a Standalone command; suppress Chromium's reload shortcut even when an input owns focus.
+    // Ctrl/Command+R is not a Standalone command; keep Chromium reload blocked even inside G5 inputs.
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r') {
       event.preventDefault()
       event.stopImmediatePropagation()
       return
     }
+    // G5 registers its dialog handler after this Player-wide listener. Yield
+    // first so pairing/offline dialogs can contain Tab/Escape and prevent
+    // playback shortcuts while one of their controls owns focus.
+    if (document.querySelector('[data-remote-pairing-dialog="true"]')) return
     const storageModal = document.getElementById('storage-recovery-modal')
     if (storageModal && !storageModal.hidden && !this.stopConfirmationOpen && this.interaction.getSnapshot().menuScreen !== 'exit-confirmation') {
       if (event.ctrlKey && event.code === 'Space') {
@@ -1506,4 +1511,9 @@ function formatCatalogImportDate(value: string): string {
   return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date)
 }
 
+if (window.karaokeRemotePlayer) {
+  void window.karaokeRemotePlayer.isAvailable().then(available => {
+    if (available && window.karaokeRemotePlayer) new StandaloneRemotePairingView(window.karaokeRemotePlayer)
+  }).catch(() => undefined)
+}
 new StandalonePlayerRenderer()

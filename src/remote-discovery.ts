@@ -73,6 +73,21 @@ export function getRemoteDiscoveryInterfaceAddresses(): string[] {
   return [...new Set(addresses)].slice(0, MAX_DISCOVERY_INTERFACES)
 }
 
+/** Build a short-lived manual endpoint candidate only on a private subnet attached to this host. */
+export function createManualDiscoveryCandidate(address: string, port: number, now = Date.now()): DiscoveryCandidate {
+  if (isIP(address) !== 4 || !isPrivateIpv4(address) || !Number.isInteger(port) || port < 1024 || port > 65535) {
+    throw new Error('REMOTE_MANUAL_ENDPOINT_INVALID')
+  }
+  const entries = Object.values(os.networkInterfaces()).flatMap(items => items ?? [])
+    .filter(item => item.family === 'IPv4' && !item.internal && isPrivateIpv4(item.address))
+  const interfaceInfo = entries.map(item => ({ address: item.address, netmask: item.netmask }))
+    .find(item => sameSubnet(address, item.address, item.netmask))
+  if (!interfaceInfo) throw new Error('REMOTE_MANUAL_ENDPOINT_OUTSIDE_LAN')
+  return { candidateId: randomUUID(), instanceName: `manual-${address}`, displayName: 'Endereço manual',
+    deviceIdClaim: null, interfaceAddress: interfaceInfo.address, addresses: [address], port,
+    observedAt: now, expiresAt: now + 30_000, verified: false }
+}
+
 function sameSubnet(left: string, right: string, mask: string): boolean {
   return ((ipv4Number(left) & ipv4Number(mask)) >>> 0) === ((ipv4Number(right) & ipv4Number(mask)) >>> 0)
 }
@@ -112,6 +127,14 @@ export function candidateFromService(service: { name?: string; fqdn?: string; tx
     expiresAt: now + ttlMs,
     verified: false
   }
+}
+
+function sameCandidateTarget(left: DiscoveryCandidate, right: DiscoveryCandidate): boolean {
+  return left.instanceName.toLowerCase() === right.instanceName.toLowerCase() &&
+    left.interfaceAddress === right.interfaceAddress && left.displayName === right.displayName &&
+    left.deviceIdClaim === right.deviceIdClaim && left.port === right.port &&
+    left.addresses.length === right.addresses.length &&
+    left.addresses.every(address => right.addresses.includes(address))
 }
 
 export class BonjourDiscoveryPort implements DiscoveryPort {
@@ -383,7 +406,11 @@ export class BonjourDiscoveryPort implements DiscoveryPort {
       if (!candidate) continue
       const key = `${interfaceInfo.address}|${instance.toLowerCase()}`
       validKeys.add(key)
-      if (this.candidates.has(key) || this.candidates.size < REMOTE_LIMITS.maxCandidates) this.candidates.set(key, candidate)
+      const previous = this.candidates.get(key)
+      const current = previous && sameCandidateTarget(previous, candidate)
+        ? { ...candidate, candidateId: previous.candidateId }
+        : candidate
+      if (previous || this.candidates.size < REMOTE_LIMITS.maxCandidates) this.candidates.set(key, current)
     }
     for (const key of this.candidates.keys()) if (key.startsWith(`${interfaceInfo.address}|`) && !validKeys.has(key)) this.candidates.delete(key)
   }

@@ -8,6 +8,7 @@ import { REMOTE_CONTROL_SUBPROTOCOL, type RemoteAuthorizationPort, type RemoteDe
 import { createBootstrapChannel, connectPinnedControlChannel, requestPinnedHttps } from '../src/remote-clients'
 import { generatePlayerCertificate, isPrivateIpv4, probeBootstrapCertificate } from '../src/remote-tls'
 import { createRemoteTransportServer } from '../src/remote-transport'
+import { RemoteOperationalClient } from '../src/remote-operational-client'
 
 const TOKEN = 'B'.repeat(43)
 
@@ -101,5 +102,39 @@ test('pinned HTTPS/WSS clients and restricted bootstrap work over an explicit pr
     await assert.rejects(requestPinnedHttps({ address, port,
       pin: { certificatePem: attacker.certificatePem, fingerprintSha256: attacker.fingerprintSha256,
         serverName: attacker.serverName }, bearer: TOKEN, method: 'GET', path: '/v1/test' }))
+  } finally { await server.close() }
+})
+
+test('reconnection identifies a staged same-Player certificate as a pin conflict without authorizing WSS', {
+  skip: !firstPrivateInterface() ? 'no eligible private IPv4 interface' : false
+}, async () => {
+  const address = firstPrivateInterface()
+  assert.ok(address)
+  const playerId = randomUUID()
+  const oldCertificate = await generatePlayerCertificate(playerId)
+  const stagedCertificate = await generatePlayerCertificate(playerId)
+  assert.notEqual(stagedCertificate.fingerprintSha256, oldCertificate.fingerprintSha256)
+  const identity: RemoteDeviceIdentity = {
+    schemaVersion: 1, role: 'player', deviceId: playerId, createdAt: new Date().toISOString(),
+    certificatePem: stagedCertificate.certificatePem,
+    certificateFingerprintSha256: stagedCertificate.fingerprintSha256,
+    privateKeyPem: stagedCertificate.privateKeyPem
+  }
+  let authorizationCalls = 0
+  const port = await freeTcpPort(address)
+  const server = createRemoteTransportServer({ identity, address, port,
+    authorization: { async authorizeBearer() { authorizationCalls++; return null }, isCurrent() { return false } },
+    messagePort: { onMessage() {} }
+  })
+  await server.listen()
+  try {
+    await assert.rejects(RemoteOperationalClient.connect({ address, port,
+      pin: { certificatePem: oldCertificate.certificatePem, fingerprintSha256: oldCertificate.fingerprintSha256,
+        serverName: oldCertificate.serverName }, bearer: TOKEN,
+      identity: { playerId, controllerId: 'test-controller', credentialGeneration: 1 },
+      authorizedPeer: { controllerId: 'test-controller', credentialGeneration: 1, scopes: ['transport:control'] }
+    }), /REMOTE_CERTIFICATE_PIN_MISMATCH/)
+    assert.equal(authorizationCalls, 0,
+      'the TLS diagnostic reads only the public certificate and sends no WSS authorization or application request')
   } finally { await server.close() }
 })

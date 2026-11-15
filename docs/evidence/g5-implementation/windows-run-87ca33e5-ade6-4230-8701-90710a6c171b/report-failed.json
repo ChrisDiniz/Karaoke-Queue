@@ -1,0 +1,57 @@
+{
+  "owner": "karaoke-queue-windows-test-runner-v1",
+  "runId": "87ca33e5-ade6-4230-8701-90710a6c171b",
+  "status": "FAIL",
+  "stage": "TEST",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "9b163c87983063c5edf9a512c4360c77231b3d28ff973b650a7a4351ccd339f0",
+  "suites": [
+    {
+      "name": "remote-ui-contracts-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "main-remote-ui-ipc-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconnection-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconciliation-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-devices-electron",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-pairing-electron",
+      "status": "FAIL",
+      "exitCode": 1,
+      "signal": null,
+      "errorCode": null
+    }
+  ],
+  "focus": "NOT RUN",
+  "profileCleanup": "REMOVED_EMPTY",
+  "reason": "E2E Windows remote-pairing-electron falhou com código 1: (node:24972) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\npage.evaluate: TypeError: Cannot read properties of undefined (reading 'slice')\n    at eval (eval at evaluate (:370:30), <anonymous>:6:57)\n    at async <anonymous>:396:30\n    at run ([WINDOWS_PATH_REDACTED]\n  log: []\n}\n",
+  "testedAt": "2026-11-14T13:46:37.073Z"
+}

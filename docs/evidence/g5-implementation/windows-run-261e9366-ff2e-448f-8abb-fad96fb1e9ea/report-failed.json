@@ -1,0 +1,57 @@
+{
+  "owner": "karaoke-queue-windows-test-runner-v1",
+  "runId": "261e9366-ff2e-448f-8abb-fad96fb1e9ea",
+  "status": "FAIL",
+  "stage": "TEST",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "6660ccd4542cea64ce27e524cf218ccd6b77fd901cbf4713b46220bf6607054b",
+  "suites": [
+    {
+      "name": "remote-ui-contracts-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "main-remote-ui-ipc-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconnection-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconciliation-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-devices-electron",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-pairing-electron",
+      "status": "FAIL",
+      "exitCode": 1,
+      "signal": null,
+      "errorCode": null
+    }
+  ],
+  "focus": "NOT RUN",
+  "profileCleanup": "REMOVED_EMPTY",
+  "reason": "E2E Windows remote-pairing-electron falhou com código 1: (node:9308) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nSanitized operation-query availability diagnostics: {\"management\":{\"revision\":19,\"operationPresent\":true,\"operationStatus\":\"unknown\",\"matchingPlayerConnectionCount\":1,\"matchingConnectionState\":\"backoff\",\"matchingConnectionReconciled\":false,\"playerConnectionStates\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_OPERATIONAL_CHANNEL_CLOSED\"}],\"managementConnectionTrace\":[{\"at\":24685,\"revision\":8,\"connections\":[{\"state\":\"connecting\",\"reconciled\":false,\"reason\":null}]},{\"at\":24758,\"revision\":9,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_OPERATIONAL_CHANNEL_CLOSED\"}]},{\"at\":24763,\"revision\":10,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_OPERATIONAL_CHANNEL_CLOSED\"}]},{\"at\":25598,\"revision\":11,\"connections\":[{\"state\":\"connecting\",\"reconciled\":false,\"reason\":null}]},{\"at\":25677,\"revision\":12,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_OPERATIONAL_CHANNEL_CLOSED\"}]},{\"at\":25683,\"revision\":13,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_OPERATIONAL_CHANNEL_CLOSED\"}]},{\"at\":27547,\"revision\":14,\"connections\":[{\"state\":\"connecting\",\"reconciled\":false,\"reason\":null}]},{\"at\":27650,\"revision\":15,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_OPERATIONAL_CHANNEL_CLOSED\"}]},{\"at\":27656,\"revision\":16,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_OPERATIONAL_CHANNEL_CLOSED\"}]},{\"at\":31980,\"revision\":17,\"connections\":[{\"state\":\"connecting\",\"reconciled\":false,\"reason\":null}]},{\"at\":32097,\"revision\":18,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_OPERATIONAL_CHANNEL_CLOSED\"}]},{\"at\":32102,\"revision\":19,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_OPERATIONAL_CHANNEL_CLOSED\"}]}],\"queryButtonRendered\":false},\"player\":{\"controllerConnections\":[],\"connectionTrace\":[{\"at\":27424,\"revision\":7,\"connections\":[{\"state\":\"authorized\",\"reconciled\":false,\"reason\":null}]},{\"at\":27445,\"revision\":8,\"connections\":[]},{\"at\":27465,\"revision\":9,\"connections\":[{\"state\":\"authorized\",\"reconciled\":false,\"reason\":null}]},{\"at\":27479,\"revision\":10,\"connections\":[]},{\"at\":29386,\"revision\":11,\"connections\":[{\"state\":\"authorized\",\"reconciled\":false,\"reason\":null}]},{\"at\":29405,\"revision\":12,\"connections\":[]},{\"at\":29429,\"revision\":13,\"connections\":[{\"state\":\"authorized\",\"reconciled\":false,\"reason\":null}]},{\"at\":29449,\"revision\":14,\"connections\":[]},{\"at\":33828,\"revision\":15,\"connections\":[{\"state\":\"authorized\",\"reconciled\":false,\"reason\":null}]},{\"at\":33857,\"revision\":16,\"connections\":[]},{\"at\":33885,\"revision\":17,\"connections\":[{\"state\":\"authorized\",\"reconciled\":false,\"reason\":null}]},{\"at\":33902,\"revision\":18,\"connections\":[]}]},\"proxy\":{\"accepted\":14,\"closed\":28,\"closureEvents\":[{\"side\":\"client\",\"event\":\"end\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364},{\"side\":\"client\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364},{\"side\":\"upstream\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364},{\"side\":\"client\",\"event\":\"end\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364},{\"side\":\"client\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364},{\"side\":\"upstream\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364},{\"side\":\"client\",\"event\":\"end\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364},{\"side\":\"client\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364},{\"side\":\"upstream\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364},{\"side\":\"client\",\"event\":\"end\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364},{\"side\":\"client\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364},{\"side\":\"upstream\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2364,\"clientBytesWritten\":3254,\"upstreamBytesRead\":3254,\"upstreamBytesWritten\":2364}],\"active\":0}}\nlocator.waitFor: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('region', { name: 'Operações remotas' }).locator('.remote-device-card').filter({ hasText: 'Operação d9ea05a4-3d9' }).getByRole('button', { name: 'Consultar estado' }) to be visible\u001b[22m\n\n    at run ([WINDOWS_PATH_REDACTED]\n  log: [\n    \"  - waiting for getByRole('region', { name: 'Operações remotas' }).locator('.remote-device-card').filter({ hasText: 'Operação d9ea05a4-3d9' }).getByRole('button', { name: 'Consultar estado' }) to be visible\"\n  ],\n  name: 'TimeoutError'\n}\n",
+  "testedAt": "2026-11-14T13:15:19.411Z"
+}

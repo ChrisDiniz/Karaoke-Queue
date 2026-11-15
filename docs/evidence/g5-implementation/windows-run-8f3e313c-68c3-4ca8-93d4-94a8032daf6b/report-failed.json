@@ -1,0 +1,57 @@
+{
+  "owner": "karaoke-queue-windows-test-runner-v1",
+  "runId": "8f3e313c-68c3-4ca8-93d4-94a8032daf6b",
+  "status": "FAIL",
+  "stage": "TEST",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "cffd3af6bda03e1067c2139150a7ef10e1acf244965017e5c12ea072550fe004",
+  "suites": [
+    {
+      "name": "remote-ui-contracts-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "main-remote-ui-ipc-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconnection-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconciliation-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-devices-electron",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-pairing-electron",
+      "status": "FAIL",
+      "exitCode": 1,
+      "signal": null,
+      "errorCode": null
+    }
+  ],
+  "focus": "NOT RUN",
+  "profileCleanup": "REMOVED_EMPTY",
+  "reason": "E2E Windows remote-pairing-electron falhou com código 1: (node:21720) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nSanitized operation-query availability diagnostics: {\"revision\":19,\"operationPresent\":true,\"operationStatus\":\"unknown\",\"matchingPlayerConnectionCount\":1,\"matchingConnectionState\":\"backoff\",\"matchingConnectionReconciled\":false,\"playerConnectionStates\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_OPERATIONAL_CHANNEL_CLOSED\"}],\"queryButtonRendered\":false}\nlocator.waitFor: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('region', { name: 'Operações remotas' }).locator('.remote-device-card').filter({ hasText: 'Operação 1d420e62-1b3' }).getByRole('button', { name: 'Consultar estado' }) to be visible\u001b[22m\n\n    at run ([WINDOWS_PATH_REDACTED]\n  log: [\n    \"  - waiting for getByRole('region', { name: 'Operações remotas' }).locator('.remote-device-card').filter({ hasText: 'Operação 1d420e62-1b3' }).getByRole('button', { name: 'Consultar estado' }) to be visible\"\n  ],\n  name: 'TimeoutError'\n}\n",
+  "testedAt": "2026-11-14T13:05:05.047Z"
+}

@@ -20,6 +20,7 @@ export interface ManagementOutboxRecord {
 
 export interface ManagementOutboxDatabase {
   remoteOutbox: {
+    listAll?(controllerId: string, limit: number): ManagementOutboxRecord[]
     enqueue(input: Omit<ManagementOutboxRecord, 'status' | 'detail' | 'createdAt' | 'updatedAt'>):
       { record: ManagementOutboxRecord; duplicate: boolean }
     get(playerDeviceId: string, controllerId: string, operationId: string): ManagementOutboxRecord | null
@@ -59,6 +60,11 @@ export class ManagementRemoteOutbox {
 
   recoverable(playerDeviceId: string): readonly ManagementOutboxRecord[] {
     return this.database.remoteOutbox.listRecoverable(playerDeviceId, this.identity.controllerId)
+  }
+
+  listAll(limit = 100): readonly ManagementOutboxRecord[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('MANAGEMENT_OUTBOX_LIMIT_INVALID')
+    return this.database.remoteOutbox.listAll?.(this.identity.controllerId, limit) ?? []
   }
 
   /** Persist uncertainty before crossing the SQLite/WSS boundary. A send failure remains unknown. */

@@ -1,0 +1,31 @@
+{
+  "stage": "operation-query-timeout-ui",
+  "occurredAt": "2026-11-15T01:36:42.073Z",
+  "testError": {
+    "name": "TimeoutError",
+    "condition": "visible exact text: A consulta falhou ou expirou. O resultado permanece preservado para nova consulta explícita.",
+    "timeoutMs": 15000
+  },
+  "sourceFlow": {
+    "main": "MainRemoteRuntime.queryRemoteOperationStatus awaits the real adapter query.",
+    "ipc": "remote-ui:management:query-operation catches query errors and resolves a sanitized {outcome: failed, code} reply.",
+    "renderer": "RemoteDevicesView handles outcome failed with the exact text: A consulta não terminou. A operação original continua preservada e não foi reenviada.",
+    "falseClause": "The E2E expected the Renderer catch-path text for an IPC rejection, although Main IPC resolves a failed reply; the expected text is unreachable for this handled timeout path."
+  },
+  "otherObservedProgress": {
+    "pairingCancellationBeforeAdmission": "PASSED: the test advanced beyond the cancellation assertions.",
+    "threeWrongOpaqueAttemptsAndLockoutUi": "PASSED: the test advanced beyond the lockout assertion.",
+    "realPairingAndInitialOperationNotFoundQuery": "PASSED: the test advanced into the following timeout-query stage."
+  },
+  "notObserved": [
+    "The actual inline message at timeout.",
+    "The buffered WSS response byte count at timeout.",
+    "The post-timeout SQLite/outbox state and query-button readiness."
+  ],
+  "cleanup": {
+    "status": "PASS",
+    "profileCleanup": "REMOVED_EMPTY",
+    "residualProcessCheck": "PASS"
+  },
+  "classification": "Confirmed E2E expectation/contract mismatch; this run does not prove a product timeout-state defect. Keep the outbox, response-buffer, reconciled-connection and button assertions enabled after correcting the text expectation."
+}

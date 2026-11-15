@@ -609,3 +609,27 @@ contextBridge.exposeInMainWorld('karaokeLicense', Object.freeze({
   getStatus: () => ipcRenderer.invoke('license:get-status'),
   activate: (token: string) => ipcRenderer.invoke('license:activate', token)
 }))
+
+contextBridge.exposeInMainWorld('karaokeRemotePlayer', Object.freeze({
+  isAvailable: () => ipcRenderer.invoke('remote-ui:player:is-available') as Promise<boolean>,
+  getSnapshot: () => ipcRenderer.invoke('remote-ui:player:get-snapshot') as Promise<import('./src/remote-ui-contracts').RemoteUiSnapshot>,
+  getNetworkInterfaces: () => ipcRenderer.invoke('remote-ui:player:get-interfaces') as Promise<readonly { address: string; label: string }[]>,
+  enableDiscovery: (interfaceAddress: string) => ipcRenderer.invoke('remote-ui:player:enable-discovery', interfaceAddress) as Promise<import('./src/remote-ui-contracts').RemoteUiActionReply>,
+  disableDiscovery: () => ipcRenderer.invoke('remote-ui:player:disable-discovery') as Promise<import('./src/remote-ui-contracts').RemoteUiActionReply>,
+  renewCertificate: (interfaceAddress: string) => ipcRenderer.invoke('remote-ui:player:renew-certificate', interfaceAddress) as Promise<import('./src/remote-ui-contracts').RemoteUiActionReply>,
+  revokePairing: () => ipcRenderer.invoke('remote-ui:player:revoke-pairing') as Promise<import('./src/remote-ui-contracts').RemoteUiActionReply>,
+  answerConsent: (requestId: string, revision: number, accepted: boolean) =>
+    ipcRenderer.invoke('remote-ui:player:answer-consent', requestId, revision, accepted) as Promise<boolean>,
+  cancelPairing: (requestId: string, revision: number) =>
+    ipcRenderer.invoke('remote-ui:player:cancel-pairing', requestId, revision) as Promise<import('./src/remote-ui-contracts').RemoteUiActionReply>,
+  onSnapshot: (callback: (snapshot: import('./src/remote-ui-contracts').RemoteUiSnapshot) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: import('./src/remote-ui-contracts').RemoteUiSnapshot) => callback(value)
+    ipcRenderer.on('remote-ui:snapshot', listener)
+    return () => ipcRenderer.removeListener('remote-ui:snapshot', listener)
+  },
+  onPairingEvent: (callback: (event: import('./src/remote-ui-contracts').PlayerPairingUiEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: import('./src/remote-ui-contracts').PlayerPairingUiEvent) => callback(value)
+    ipcRenderer.on('remote-ui:player:pairing-event', listener)
+    return () => ipcRenderer.removeListener('remote-ui:player:pairing-event', listener)
+  }
+}))

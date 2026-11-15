@@ -1,0 +1,7 @@
+{
+  "stage": "player-confirmed-exit-and-offline-restart",
+  "occurredAt": "2026-11-14T18:00:03.893Z",
+  "errorName": "ReferenceError",
+  "errorCode": null,
+  "assertion": null
+}

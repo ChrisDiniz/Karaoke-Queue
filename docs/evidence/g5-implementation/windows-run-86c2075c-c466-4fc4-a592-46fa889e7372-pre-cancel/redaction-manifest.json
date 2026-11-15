@@ -1,0 +1,16 @@
+{
+  "purpose": "Redact local Windows paths from archived G5 runner evidence before snapshot transfer.",
+  "sourceContentPreservedByHash": true,
+  "entries": [
+    {
+      "file": "player-app.log",
+      "sha256BeforeRedaction": "242583e9613729726c946377dd1720bcb9133c87f83c83a81112de8a362c4dd3",
+      "windowsPathsRedacted": 58
+    },
+    {
+      "file": "player-error.log",
+      "sha256BeforeRedaction": "d17086bb77adad69ca85265515ae8d8d24b7010358f1db84919c273255c5c2a6",
+      "windowsPathsRedacted": 58
+    }
+  ]
+}

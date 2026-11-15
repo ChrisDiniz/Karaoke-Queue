@@ -1,0 +1,33 @@
+{
+  "stage": "pairing-three-attempt-lockout-ui",
+  "occurredAt": "2026-11-15T01:15:19.188Z",
+  "testError": {
+    "name": "TimeoutError",
+    "condition": "visible locator #remote-devices-root [role=\"status\"][data-error-code=\"PAIRING_ATTEMPTS_EXHAUSTED\"]",
+    "timeoutMs": 15000
+  },
+  "player": {
+    "pairing": "unpaired",
+    "listener": "advertising",
+    "temporaryCodeVisible": true,
+    "consentVisible": false,
+    "pairingDialogVisible": true,
+    "authorizedControllerCount": 0
+  },
+  "management": {
+    "revision": 6,
+    "errorCode": null,
+    "errorText": null,
+    "codeInputVisible": false,
+    "initialCandidateCount": 0,
+    "activeSavedDeviceCount": 0
+  },
+  "interpretation": "At the timeout, the Player still displayed an active temporary-code dialog and Management had no exhausted-attempt status. The trace does not reveal whether the third proof was accepted by the Player, whether request/cancel began, or why the Management pairing promise did not publish its terminal result. Root cause UNKNOWN; no product fix or assertion relaxation inferred.",
+  "runner": {
+    "nativeWindowsCompile": "PASS",
+    "e2eAssertion": "FAIL",
+    "officialSuiteStatus": "NOT RUN",
+    "initialCleanup": "FAIL: normal Electron exit timed out and runner found residual processes",
+    "officialCleanupRecovery": "PASS: run-owned processes/profile/lock recovered; result remains FAIL"
+  }
+}

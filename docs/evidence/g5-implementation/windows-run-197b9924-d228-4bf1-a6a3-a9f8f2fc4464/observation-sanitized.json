@@ -1,0 +1,15 @@
+{
+  "runId": "197b9924-d228-4bf1-a6a3-a9f8f2fc4464",
+  "fingerprint": "1d06f944bb81e9a90c514570a40bd9c58f23dff95340215211f698f4c69b3122",
+  "stageWhenRunnerStopped": "renewal-management-ui-observes-pin-conflict",
+  "stageUpdatedAt": "2026-11-15T02:30:59.146Z",
+  "runnerStoppedAt": "2026-11-15T02:31:31.997Z",
+  "suite": "remote-pairing-electron",
+  "suiteStatus": "NOT RUN",
+  "signal": "SIGTERM",
+  "errorCode": "ETIMEDOUT",
+  "runnerStage": "CLEANUP",
+  "profileCleanup": "NOT RUN",
+  "residualElectronProcessesFound": true,
+  "lastCompletedStage": "The E2E advanced beyond the three-attempt lockout and passed the retry after an incorrect OPAQUE proof; it was waiting for Management to observe the Player's staged certificate pin conflict for renewal."
+}

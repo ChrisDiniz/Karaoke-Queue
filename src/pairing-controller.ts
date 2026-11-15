@@ -136,6 +136,14 @@ export class PairingControllerClient {
     let currentAttemptId = ''
     let worker: OpaqueWorkerPort | undefined
     let code = ''
+    const cancelUncommittedSession = async (): Promise<boolean> => {
+      if (!sessionId || !operationId || !sessionCapability || !channel) return false
+      try {
+        const cancel = buildEnvelope('request/cancel', sessionId, operationId, '', { sessionCapability })
+        const result = await this.send(channel, 'request', cancel)
+        return result.type === 'response/state' && result.payload.state === 'cancelled'
+      } catch { return false }
+    }
     const transientSecrets: Buffer[] = []
     try {
       if (signal.aborted) throw new Error('PAIRING_CANCELLED')
@@ -319,7 +327,12 @@ export class PairingControllerClient {
           worker = undefined
           if (error instanceof Error && error.message === 'PAIRING_AUTH_FAILED') {
             lastError = error
-            codeDeadline = this.clock.monotonicNow() + Number((await this.pollState(channel, opened, sessionCapability)).payload.remainingSeconds) * 1000
+            const state = await this.pollState(channel, opened, sessionCapability)
+            codeDeadline = this.clock.monotonicNow() + Number(state.payload.remainingSeconds) * 1000
+            if (state.payload.attemptsRemaining === '0') {
+              if (!await cancelUncommittedSession()) throw new Error('PAIRING_ATTEMPTS_EXHAUSTED_SESSION_UNCLOSED', { cause: error })
+              throw new Error('PAIRING_ATTEMPTS_EXHAUSTED', { cause: error })
+            }
             continue
           }
           throw error
@@ -327,10 +340,7 @@ export class PairingControllerClient {
       }
       throw lastError ?? new Error('PAIRING_ATTEMPTS_EXHAUSTED')
     } catch (error) {
-      if (sessionId && channel && signal.aborted) {
-        const cancel = buildEnvelope('request/cancel', sessionId, operationId, '', { sessionCapability })
-        await this.send(channel, 'request', cancel).catch(() => undefined)
-      }
+      if (signal.aborted) await cancelUncommittedSession()
       throw error
     } finally {
       for (const secret of transientSecrets) secret.fill(0)

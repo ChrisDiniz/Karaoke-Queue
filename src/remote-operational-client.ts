@@ -3,7 +3,7 @@ import WebSocket from 'ws'
 import type { OperationalMessage, OperationalQueryType } from './operational-protocol-contracts'
 import { parseOperationalMessageObject } from './operational-protocol-validation'
 import { connectPinnedControlChannel, type PinnedControlChannel } from './remote-clients'
-import type { PinnedCertificate } from './remote-tls'
+import { probeBootstrapCertificate, type PinnedCertificate } from './remote-tls'
 import type { RemoteAuthorizedPeer } from './remote-contracts'
 import { REMOTE_LIMITS } from './remote-contracts'
 import { ManagementRemoteReconciliationService } from './remote-reconciliation-service'
@@ -25,14 +25,58 @@ function normalizeConnectionError(error: unknown): Error {
   return error instanceof Error ? error : new Error('REMOTE_OPERATIONAL_CONNECT_FAILED')
 }
 
+const TLS_CERTIFICATE_REJECTION_CODES = new Set([
+  'CERT_HAS_EXPIRED', 'CERT_NOT_YET_VALID', 'CERT_SIGNATURE_FAILURE', 'CERT_UNTRUSTED',
+  'DEPTH_ZERO_SELF_SIGNED_CERT', 'ERR_TLS_CERT_ALTNAME_INVALID', 'SELF_SIGNED_CERT_IN_CHAIN',
+  'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE'
+])
+
+function isTlsCertificateRejection(error: unknown): boolean {
+  const pending: unknown[] = [error]
+  const seen = new Set<unknown>()
+  while (pending.length && seen.size < 4) {
+    const value = pending.shift()
+    if (!value || typeof value !== 'object' || seen.has(value)) continue
+    seen.add(value)
+    const item = value as { code?: unknown; message?: unknown; cause?: unknown }
+    if (typeof item.code === 'string' && TLS_CERTIFICATE_REJECTION_CODES.has(item.code)) return true
+    if (typeof item.message === 'string' && /self[- ]signed certificate|unable to verify|certificate verify failed|unable to get .*issuer|certificate (?:has expired|signature failure|is not yet valid)|hostname\/ip.*does not match/i.test(item.message)) return true
+    if (item.cause) pending.push(item.cause)
+  }
+  return false
+}
+
+async function classifyPinnedCertificateFailure(error: unknown, options: {
+  address: string; port: number; pin: PinnedCertificate; playerId: string; signal?: AbortSignal
+}): Promise<Error> {
+  if (options.signal?.aborted || !isTlsCertificateRejection(error)) return normalizeConnectionError(error)
+  try {
+    const observed = await probeBootstrapCertificate(options.address, options.port,
+      { timeoutMs: 3000, allowExpiredForRenewal: true })
+    if (options.signal?.aborted) return new Error('REMOTE_OPERATIONAL_CONNECT_ABORTED')
+    if (observed.deviceIdClaim !== options.playerId || observed.serverName !== options.pin.serverName) {
+      return new Error('REMOTE_IDENTITY_MISMATCH', { cause: error })
+    }
+    if (observed.fingerprintSha256 !== options.pin.fingerprintSha256) {
+      return new Error('REMOTE_CERTIFICATE_PIN_MISMATCH', { cause: error })
+    }
+    if (observed.expired) return new Error('REMOTE_CERTIFICATE_EXPIRED', { cause: error })
+  } catch {
+    // A diagnostic probe never makes an invalid/unknown peer acceptable; retain
+    // the original pinned-channel error when it cannot verify a candidate cert.
+  }
+  return normalizeConnectionError(error)
+}
+
 /** Real pinned WSS client. G1 transport-ready is followed by the G3 operational hello/ready. */
 export class RemoteOperationalClient implements OperationalQueryPort {
   private readonly pending = new Map<string, { resolve(value: OperationalMessage): void; reject(error: Error): void;
     timer: ReturnType<typeof setTimeout> }>()
   private readonly readyTask: Promise<Extract<OperationalMessage, { kind: 'ready' }>>
   private closed = false
+  private lastCloseCode: number | undefined
   private closeTask: Promise<void> | undefined
-  private readonly closeListeners = new Set<() => void>()
+  private readonly closeListeners = new Set<(closeCode?: number) => void>()
 
   private constructor(private readonly socket: WebSocket, readonly peer: OperationalPeerIdentity,
     readonly authorizedPeer: RemoteAuthorizedPeer, private readonly timeoutMs: number = REMOTE_LIMITS.httpRequestTimeoutMs) {
@@ -48,7 +92,10 @@ export class RemoteOperationalClient implements OperationalQueryPort {
     try {
       transport = await connectPinnedControlChannel({ address: options.address, port: options.port,
         pin: options.pin, bearer: options.bearer, timeoutMs: options.timeoutMs, signal: options.signal })
-    } catch (error) { throw normalizeConnectionError(error) }
+    } catch (error) {
+      throw await classifyPinnedCertificateFailure(error, { address: options.address, port: options.port,
+        pin: options.pin, playerId: options.identity.playerId, signal: options.signal })
+    }
     if (options.signal?.aborted) { transport.close(); throw new Error('REMOTE_OPERATIONAL_CONNECT_ABORTED') }
     const client = new RemoteOperationalClient(transport.socket, options.identity, options.authorizedPeer,
       options.timeoutMs ?? REMOTE_LIMITS.httpRequestTimeoutMs)
@@ -72,8 +119,8 @@ export class RemoteOperationalClient implements OperationalQueryPort {
 
   async ready(): Promise<Extract<OperationalMessage, { kind: 'ready' }>> { return this.readyTask }
 
-  onDisconnect(listener: () => void): () => void {
-    if (this.closed) { listener(); return () => undefined }
+  onDisconnect(listener: (closeCode?: number) => void): () => void {
+    if (this.closed) { listener(this.lastCloseCode); return () => undefined }
     this.closeListeners.add(listener)
     return () => this.closeListeners.delete(listener)
   }
@@ -168,10 +215,11 @@ export class RemoteOperationalClient implements OperationalQueryPort {
     }
   }
 
-  private readonly onClose = (): void => {
+  private readonly onClose = (closeCode: number): void => {
     this.closed = true
+    this.lastCloseCode = Number.isInteger(closeCode) && closeCode >= 1000 && closeCode <= 4999 ? closeCode : undefined
     for (const id of [...this.pending.keys()]) this.settle(id, new Error('REMOTE_OPERATIONAL_CHANNEL_CLOSED'))
-    for (const listener of [...this.closeListeners]) { try { listener() } catch { /* lifecycle observer isolation */ } }
+    for (const listener of [...this.closeListeners]) { try { listener(this.lastCloseCode) } catch { /* lifecycle observer isolation */ } }
     this.closeListeners.clear()
   }
   private readonly onError = (error: Error): void => {

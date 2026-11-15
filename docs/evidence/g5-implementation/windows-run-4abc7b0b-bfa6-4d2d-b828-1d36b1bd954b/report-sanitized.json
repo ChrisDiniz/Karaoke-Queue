@@ -1,0 +1,21 @@
+{
+  "owner": "karaoke-queue-windows-test-runner-v1",
+  "runId": "4abc7b0b-bfa6-4d2d-b828-1d36b1bd954b",
+  "status": "PASS",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "105012adc31c707631493dbf2431185c726e1b4d329170b771b356d2b40c03ee",
+  "node": "v24.11.0",
+  "focus": "NOT APPLICABLE",
+  "suites": [
+    {
+      "name": "remote-pairing-electron",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    }
+  ],
+  "profileCleanup": "REMOVED_EMPTY",
+  "testedAt": "2026-11-15T01:53:07.796Z"
+}

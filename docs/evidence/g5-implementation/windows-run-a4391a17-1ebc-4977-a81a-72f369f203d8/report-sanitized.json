@@ -1,0 +1,72 @@
+{
+  "runId": "a4391a17-1ebc-4977-a81a-72f369f203d8",
+  "status": "FAIL",
+  "stage": "TEST",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "9b00e35a13a572efeb5ec0a6cecc4d2104ad5699e1c59481cfccfe87bff1adf0",
+  "suites": [
+    {
+      "name": "remote-ui-contracts-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "main-remote-ui-ipc-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-runtime-intent-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconnection-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconciliation-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-devices-electron",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-pairing-electron",
+      "status": "FAIL",
+      "exitCode": 1,
+      "signal": null,
+      "errorCode": null
+    }
+  ],
+  "focus": "NOT RUN",
+  "profileCleanup": "REMOVED_EMPTY",
+  "testedAt": "2026-11-14T16:31:15.412Z",
+  "failure": {
+    "stage": "rendered-connection-after-normal-restart",
+    "errorName": "AssertionError",
+    "assertion": {
+      "operator": "==",
+      "actual": false,
+      "expected": true
+    },
+    "classification": "connection reached synchronized and then returned to backoff during the rendered-connection check"
+  }
+}

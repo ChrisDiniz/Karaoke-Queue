@@ -1,0 +1,57 @@
+{
+  "owner": "karaoke-queue-windows-test-runner-v1",
+  "runId": "22bc105a-d154-4806-81eb-9916435bfa10",
+  "status": "FAIL",
+  "stage": "TEST",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "8476106e3aa49e851e94df7d3c4a13a7dc64d463fc91fcb80c7c4c46880a9834",
+  "testedAt": "2026-11-14T15:41:01.228Z",
+  "suites": [
+    {
+      "name": "remote-ui-contracts-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "main-remote-ui-ipc-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconnection-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconciliation-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-devices-electron",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-pairing-electron",
+      "status": "FAIL",
+      "exitCode": 1,
+      "signal": null,
+      "errorCode": null
+    }
+  ],
+  "focus": "NOT RUN",
+  "profileCleanup": "REMOVED_EMPTY",
+  "failureSummary": "O PID dono do listener no endereço exato era electron.exe, diferente do PID retornado pela instância Player que o harness considera atual. O owner tinha marcador Karaoke Queue e perfil temporário de teste; a query não persistiu command line ou IP. Gestão exibiu synchronized brevemente e voltou a backoff; Player não registrou Controller ativo. A relação de parentesco/processType e a associação ao runId exato ainda precisam ser coletadas."
+}

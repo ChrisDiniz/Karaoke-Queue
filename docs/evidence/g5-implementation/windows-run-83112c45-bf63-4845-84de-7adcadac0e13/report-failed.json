@@ -1,0 +1,57 @@
+{
+  "owner": "karaoke-queue-windows-test-runner-v1",
+  "runId": "83112c45-bf63-4845-84de-7adcadac0e13",
+  "status": "FAIL",
+  "stage": "TEST",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "dd553154a0ab56b60ac9e4f1470779aa8903f253055e9f60c4502aee637f6134",
+  "suites": [
+    {
+      "name": "remote-ui-contracts-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "main-remote-ui-ipc-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconnection-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconciliation-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-devices-electron",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-pairing-electron",
+      "status": "FAIL",
+      "exitCode": 1,
+      "signal": null,
+      "errorCode": null
+    }
+  ],
+  "focus": "NOT RUN",
+  "profileCleanup": "REMOVED_EMPTY",
+  "reason": "E2E Windows remote-pairing-electron falhou com código 1: (node:22016) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nlocator.waitFor: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByRole('region', { name: 'Operações remotas' }).locator('.remote-device-card').filter({ hasText: 'Operação 210fbd9a-696' }) to be visible\u001b[22m\n\n    at run ([WINDOWS_PATH_REDACTED]\n  log: [\n    \"  - waiting for getByRole('region', { name: 'Operações remotas' }).locator('.remote-device-card').filter({ hasText: 'Operação 210fbd9a-696' }) to be visible\"\n  ],\n  name: 'TimeoutError'\n}\n",
+  "testedAt": "2026-11-14T13:50:20.345Z"
+}

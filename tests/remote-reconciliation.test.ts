@@ -6,6 +6,7 @@ import test from 'node:test'
 import { createKaraokeDatabase } from '../database'
 import { ManagementRemoteJournalInbox } from '../src/management-remote-journal'
 import { ManagementRemoteOutbox } from '../src/management-remote-outbox'
+import { MainRemoteReconnectionAdapter } from '../src/main-remote-reconnection'
 import { operationalCommandFingerprint } from '../src/operational-command-fingerprint'
 import { ManagementRemoteReconciliationService } from '../src/remote-reconciliation-service'
 import type { OperationalMessage } from '../src/operational-protocol-contracts'
@@ -24,6 +25,25 @@ function response(type: 'snapshot' | 'journal-page', correlationId: string, hwm 
   }
   return item
 }
+
+test('G5.2 query scoped to the wrong Player cannot read or transmit another peer operation', async () => {
+  const directory = temp(), db = createKaraokeDatabase(directory)
+  const outbox = new ManagementRemoteOutbox(db, { deviceId: controllerId, controllerId })
+  const command = structuredClone(fixture.find(value => value.kind === 'command')!) as any
+  command.deviceId = playerDeviceId
+  command.controllerId = controllerId
+  const operationId = command.body.operationId
+  outbox.prepare(playerDeviceId, command)
+  outbox.transmit(playerDeviceId, operationId, { send() { return true } })
+  const adapter = new MainRemoteReconnectionAdapter({ read: async () => ({ controllerAuthorities: {} }) } as any,
+    controllerId, db as any)
+  try {
+    await assert.rejects(adapter.queryOperationStatus('device-player-02', operationId, new AbortController().signal),
+      /MANAGEMENT_OUTBOX_NOT_FOUND/)
+    assert.equal(outbox.get(playerDeviceId, operationId)?.status, 'unknown',
+      'the original peer operation remains uncertain after a mismatched-peer query')
+  } finally { db.close(); fs.rmSync(directory, { recursive: true, force: true }) }
+})
 
 test('reconciliation commits contiguous SQLite inbox before snapshot and never emits business ACK', async () => {
   const directory = temp(), db = createKaraokeDatabase(directory)

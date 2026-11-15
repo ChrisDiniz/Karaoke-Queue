@@ -804,6 +804,9 @@ function generatedBuildPaths(manifests) {
       if (file.path === 'src/standalone-player.html' || file.path === 'src/standalone-player.css') {
         expected.add('build/src/' + file.path.slice(4))
       }
+      if (file.path === 'src/remote-ui.css') {
+        expected.add('build/src/remote-ui.css')
+      }
       if (file.path === 'src/player-playback-renderer.ts') {
         expected.add('build/src/player-playback.js')
       }
@@ -908,6 +911,7 @@ function focusResult(text) {
 
 function requiresWindowFocus(playbackMode) {
   return ![
+    '--remote-pairing',
     '--playback-chromium-final',
     '--playback-chromium-interactive',
     '--player-playback',
@@ -915,8 +919,43 @@ function requiresWindowFocus(playbackMode) {
     '--standalone-integration',
     '--player-recovery',
     '--standalone-options',
-    '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection'
+    '--standalone-production', '--g5-playback-overlay', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection'
   ].includes(playbackMode)
+}
+
+function cleanupEmptyTestProfileRoot(profileRoot) {
+  if (typeof profileRoot !== 'string' || !path.isAbsolute(profileRoot)) {
+    fail('Raiz de perfil temporário inválida para limpeza segura.')
+  }
+  if (!fs.existsSync(profileRoot)) return { status: 'ABSENT', entryCount: 0 }
+  const stat = fs.lstatSync(profileRoot)
+  if (!stat.isDirectory() || stat.isSymbolicLink() ||
+      (process.platform === 'win32' && (stat.attributes & 0x400))) {
+    fail('A raiz de perfil do runner não é um diretório regular; preservada para inspeção.')
+  }
+  const entryCount = fs.readdirSync(profileRoot).length
+  if (entryCount > 0) return { status: 'PRESERVED_NONEMPTY', entryCount }
+  fs.rmdirSync(profileRoot)
+  if (fs.existsSync(profileRoot)) fail('A raiz vazia do perfil temporário não pôde ser removida.')
+  return { status: 'REMOVED_EMPTY', entryCount: 0 }
+}
+
+function summarizeSuiteResults(results) {
+  return results.map(result => ({
+    name: result.name,
+    status: result.status === 0 ? 'PASS' : result.status === null || result.status === undefined ? 'NOT RUN' : 'FAIL',
+    exitCode: Number.isInteger(result.status) ? result.status : null,
+    signal: typeof result.signal === 'string' ? result.signal : null,
+    errorCode: typeof result.error?.code === 'string' ? result.error.code : null
+  }))
+}
+
+function suiteTimeoutMs(suiteName) {
+  // The pairing E2E now includes restart/recovery and renewal. Its previous
+  // 180 s outer cap expired 32 s into an explicitly bounded 60 s certificate
+  // discovery wait. Keep each Playwright assertion bounded; give the entire
+  // sequence enough measured budget to reach those assertions and teardown.
+  return suiteName === 'remote-pairing-electron' ? 360_000 : undefined
 }
 
 function requiresStandaloneProductionMedia(f0StartupOnly, f0RealLibrary = false) {
@@ -924,6 +963,19 @@ function requiresStandaloneProductionMedia(f0StartupOnly, f0RealLibrary = false)
 }
 
 function selectWindowsTestSuites(playbackMode) {
+  if (playbackMode === '--remote-pairing') return [{ name: 'remote-pairing-electron', script: 'build/tests/remote-pairing-electron.js' }]
+  if (playbackMode === '--g5-playback-overlay') return [{ name: 'g5-playback-overlay-electron', script: 'build/tests/standalone-player-production-electron.js' }]
+  if (playbackMode === '--remote-ui') return [
+    { name: 'remote-ui-contracts-unit', script: 'build/tests/remote-ui-contracts.test.js' },
+    { name: 'main-remote-ui-ipc-unit', script: 'build/tests/main-remote-ui-ipc.test.js' },
+    { name: 'remote-operation-query-timeout-unit', script: 'tests/remote-operation-query-timeout.test.cjs' },
+    { name: 'remote-runtime-intent-unit', script: 'build/tests/remote-control-intent.test.js' },
+    { name: 'remote-reconnection-unit', script: 'build/tests/remote-reconnection.test.js' },
+    { name: 'remote-reconciliation-unit', script: 'build/tests/remote-reconciliation.test.js' },
+    { name: 'remote-devices-electron', script: 'build/tests/remote-devices-electron.test.js' },
+    { name: 'remote-pairing-electron', script: 'build/tests/remote-pairing-electron.js' },
+    { name: 'multi-instance', script: 'build/tests/multi-instance-electron.js' }
+  ]
   if (playbackMode === '--remote-infrastructure') return [
     { name: 'pairing-opaque-worker', script: 'scripts/pairing-opaque-worker.test.cjs' },
     { name: 'pairing-bootstrap-integration', script: 'scripts/pairing-bootstrap-integration.test.cjs' },
@@ -1000,6 +1052,7 @@ function selectWindowsTestSuites(playbackMode) {
   const focusedPlayerRecovery = playbackMode === '--player-recovery'
   const focusedStandaloneOptions = playbackMode === '--standalone-options'
   const focusedStandaloneProduction = playbackMode === '--standalone-production'
+  const focusedG5PlaybackOverlay = playbackMode === '--g5-playback-overlay'
   if (focusedPlayerRecovery) return [
     { name: 'player-playback-recovery-unit', script: 'build/tests/player-playback-recovery.test.js' },
     { name: 'player-playback-recovery-electron', script: 'build/tests/player-playback-recovery-electron.js' }
@@ -1433,6 +1486,9 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
   let marker
   let reportStage = 'SYNC'
   let reportInitialized = false
+  let suiteResults = []
+  let focusStatus = 'NOT RUN'
+  let profileCleanupStatus = 'NOT RUN'
   try {
     if (!manualOptions && fs.existsSync(reportPath)) {
       let previousReport
@@ -1609,6 +1665,7 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
     const focusedPlayerRecovery = playbackMode === '--player-recovery'
     const focusedStandaloneOptions = playbackMode === '--standalone-options'
     const focusedStandaloneProduction = playbackMode === '--standalone-production'
+    const focusedG5PlaybackOverlay = playbackMode === '--g5-playback-overlay'
     const focusedRemoteInfrastructure = playbackMode === '--remote-infrastructure'
     const focusedG4 = playbackMode === '--g4-reconnection'
     if (focusedPlayerPlayback && !process.env.KQ_PLAYER_TEST_MEDIA_DIR) {
@@ -1651,7 +1708,7 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       }
       process.stdout.write('T2/T4 PREFLIGHT: diretório real acessível; perfil e relatórios novos em unidade interna distinta.\n')
     }
-    if (focusedStandaloneProduction && requiresStandaloneProductionMedia(
+    if ((focusedStandaloneProduction || focusedG5PlaybackOverlay) && requiresStandaloneProductionMedia(
       process.env.KQ_F0_STARTUP_ONLY === '1', f0RealLibraryCampaign)) {
       const mediaPath = process.env.KQ_PLAYER_TEST_MEDIA_DIR
       if (!mediaPath || !path.isAbsolute(mediaPath) || !fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isDirectory() ||
@@ -1680,13 +1737,15 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       : focusedRemoteInfrastructure ? 'TEST START HTTPS/WSS and discovery unit suites + real Electron safeStorage; isolated profile\n'
       : focusedG4 ? 'TEST START G4 reconnection, durable offline intent, replay and real G2/G3 WSS between independent processes; native safeStorage regressions\n'
       : focusedStandaloneProduction ? 'TEST START C9 production Standalone Main/Preload/IPC/shutdown with real Electron, MP4 and isolated SQLite\n'
+      : focusedG5PlaybackOverlay ? 'TEST START focused G5 modal/toast overlay over real MP4; C10.1 visual campaign not run\n'
       : 'TEST START Electron real + Playwright + SQLite temporário; sessão gráfica Windows\n')
     if (focusedStandaloneOptions) env.KQ_STANDALONE_C8_ONLY = '1'
+    if (focusedG5PlaybackOverlay) env.KQ_G5_PLAYBACK_TOAST_ONLY = '1'
     if (f0RealLibraryCampaign) {
       env.KQ_F0_SNAPSHOT_HEAD = manifest.head
       env.KQ_F0_SNAPSHOT_FINGERPRINT = manifest.fingerprint
     }
-    const suiteResults = []
+    suiteResults = []
     let suites = selectWindowsTestSuites(playbackMode)
     if (playbackEvaluation || focusedChromium) {
       const playbackArgs = playbackMode === '--playback-chromium-final'
@@ -1696,17 +1755,25 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
     }
     for (const suite of suites) {
       const result = spawnSync(process.execPath, [suite.script, ...(suite.args || [])], {
-        cwd: root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: false
+        cwd: root, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: false,
+        timeout: suiteTimeoutMs(suite.name)
       })
       suiteResults.push({ ...suite, ...result })
       if (result.stdout) process.stdout.write(result.stdout)
       if (result.stderr) process.stderr.write(result.stderr)
       if (result.status !== 0) break
     }
+    for (const result of summarizeSuiteResults(suiteResults)) {
+      process.stdout.write('SUITE_RESULT ' + result.name + ' ' + result.status +
+        (result.exitCode === null ? '' : ' exit=' + result.exitCode) +
+        (result.signal ? ' signal=' + result.signal : '') + '\n')
+    }
     const multiInstance = suiteResults.find(result => result.name === 'multi-instance')
+    const failedSuite = suiteResults.find(result => result.status !== 0)
     const focus = requiresWindowFocus(playbackMode)
-      ? focusResult(multiInstance?.stdout || '')
+      ? multiInstance ? focusResult(multiInstance.stdout || '') : { status: 'NOT RUN', rows: [] }
       : { status: 'NOT APPLICABLE', rows: [] }
+    focusStatus = focus.status
     process.stdout.write('WINDOW_FOCUS ' + focus.status + ' evidence=' + JSON.stringify(focus.rows) + '\n')
     reportStage = 'CLEANUP'
     const residuals = residualProcessCheck(profileRoot)
@@ -1715,10 +1782,22 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       preserveLock = true
       fail('Verificação de processos residuais incompleta ou falhou: ' + residuals.detail)
     }
-    if (fs.existsSync(profileRoot)) fail('O teste deixou o perfil temporário: ' + profileRoot)
+    const profileCleanup = cleanupEmptyTestProfileRoot(profileRoot)
+    profileCleanupStatus = profileCleanup.status
+    if (profileCleanup.status === 'PRESERVED_NONEMPTY') {
+      process.stdout.write('PROFILE RETAINED entries=' + profileCleanup.entryCount + ' (não vazio; preservado para inspeção)\n')
+    }
+    if (failedSuite) {
+      reportStage = 'TEST'
+      const retained = profileCleanup.status === 'PRESERVED_NONEMPTY'
+        ? ` Perfil temporário preservado com ${profileCleanup.entryCount} entradas.` : ''
+      fail('E2E Windows ' + failedSuite.name + ' falhou com código ' + failedSuite.status + ': ' +
+        (failedSuite.stderr || failedSuite.error || 'sem detalhe de erro') + retained)
+    }
+    if (profileCleanup.status === 'PRESERVED_NONEMPTY') {
+      fail('A execução terminou sem erro de suíte, mas deixou perfil temporário não vazio; dados preservados para inspeção.')
+    }
     process.stdout.write('CLEANUP PASS perfis temporários removidos; nenhum processo residual\n')
-    const failedSuite = suiteResults.find(result => result.status !== 0)
-    if (failedSuite) fail('E2E Windows ' + failedSuite.name + ' falhou com código ' + failedSuite.status + ': ' + (failedSuite.stderr || failedSuite.error || ''))
     if (requiresWindowFocus(playbackMode) && focus.status !== 'PASS') fail('Foco da janela não foi observado como confirmado; causa não presumida.')
     verifyBuildOutput(root, manifest)
     process.stdout.write(playbackMode === '--installation-coordination' ? 'TEST PASS focused installation unit + native Electron/NSIS fixtures; unrelated regression not run\n' : focusedChromium
@@ -1731,6 +1810,8 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
       : focusedRemoteInfrastructure ? 'TEST PASS HTTPS/WSS and discovery unit suites + real Electron safeStorage; unrelated regressions not run\n'
       : focusedG4 ? 'TEST PASS focused G4 reconnection/runtime, durable replay, G2/G3 WSS process integration, and native safeStorage regressions\n'
       : focusedStandaloneProduction ? 'TEST PASS production C9 Standalone Electron lifecycle with real MP4 and recovery; unrelated Controller/Combined suites not run by request\n'
+      : focusedG5PlaybackOverlay ? 'TEST PASS focused G5 modal/toast overlay over real MP4; C10.1 visual campaign intentionally not run\n'
+      : playbackMode === '--remote-ui' ? 'TEST PASS focused G5 UI contracts/IPC, reconnection/reconciliation, real Electron pairing, multi-instance focus and cleanup; unrelated suites not run\n'
       : 'TEST PASS database migration, operating-mode, video-library and music-catalog unit; multi-instance, operating-modes, video-library and music-catalog Electron suites\n')
     restorePreviousBuild(root, buildState, manifest)
     buildState = null
@@ -1738,7 +1819,9 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
     const finalState = gitState(root)
     if (finalState.branch !== manifest.branch || finalState.head !== manifest.head) fail('Branch/HEAD do checkout mudou durante os testes.')
     verifySnapshotDirectory(root, manifest)
-    saveReport({ status: 'PASS', node: process.version, focus: focus.status, testedAt: new Date().toISOString() })
+    saveReport({ status: 'PASS', node: process.version, focus: focus.status,
+      suites: summarizeSuiteResults(suiteResults), profileCleanup: profileCleanupStatus,
+      testedAt: new Date().toISOString() })
     const releaseLock = release
     release = null
     try { releaseLock() } catch (error) {
@@ -1767,6 +1850,10 @@ async function windowsWorker(root, stage, playbackEvaluation = false, playbackMo
           branch: manifest.branch,
           head: manifest.head,
           fingerprint: manifest.fingerprint,
+          suites: summarizeSuiteResults(suiteResults),
+          focus: focusStatus,
+          profileCleanup: profileCleanupStatus,
+          profileName: profileRoot ? path.basename(profileRoot) : undefined,
           reason: error.message,
           testedAt: new Date().toISOString()
         }))
@@ -1863,7 +1950,7 @@ function powershellManualLauncher(stagePath, runId, profileKind, profileName) {
 
 function powershellLauncher(stagePath, runId, playbackEvaluation = false, playbackMode = null, manualOptions = null, screenshotRoot = null, packageCandidate = false) {
   if (manualOptions) return powershellManualLauncher(stagePath, runId, manualOptions.profileKind, manualOptions.profileName)
-  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection'].includes(playbackMode)) {
+  if (playbackMode !== null && !['--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--g5-playback-overlay', '--installation-coordination', '--video-library', '--remote-ui', '--remote-pairing', '--remote-infrastructure', '--operational-store', '--g4-reconnection'].includes(playbackMode)) {
     fail('Modo de playback não permitido para o worker Windows.')
   }
   if (screenshotRoot !== null && (typeof screenshotRoot !== 'string' || !/^[A-Za-z]:\\/.test(screenshotRoot) || screenshotRoot.startsWith('\\\\'))) {
@@ -1916,8 +2003,11 @@ function powershellLauncher(stagePath, runId, playbackEvaluation = false, playba
     '    elseif ($payload.playbackMode -eq "--player-recovery") { $workerArgs += "--player-recovery" }',
     '    elseif ($payload.playbackMode -eq "--standalone-options") { $workerArgs += "--standalone-options" }',
     '    elseif ($payload.playbackMode -eq "--standalone-production") { $workerArgs += "--standalone-production" }',
+    '    elseif ($payload.playbackMode -eq "--g5-playback-overlay") { $workerArgs += "--g5-playback-overlay" }',
     '    elseif ($payload.playbackMode -eq "--installation-coordination") { $workerArgs += "--installation-coordination" }',
     '    elseif ($payload.playbackMode -eq "--video-library") { $workerArgs += "--video-library" }',
+    '    elseif ($payload.playbackMode -eq "--remote-pairing") { $workerArgs += "--remote-pairing" }',
+    '    elseif ($payload.playbackMode -eq "--remote-ui") { $workerArgs += "--remote-ui" }',
     '    elseif ($payload.playbackMode -eq "--remote-infrastructure") { $workerArgs += "--remote-infrastructure" }',
     '    elseif ($payload.playbackMode -eq "--operational-store") { $workerArgs += "--operational-store" }',
     '    elseif ($payload.playbackMode -eq "--g4-reconnection") { $workerArgs += "--g4-reconnection" }',
@@ -1932,15 +2022,17 @@ function powershellLauncher(stagePath, runId, playbackEvaluation = false, playba
   ].join('\n')
 }
 
-function powershellCancellation(runId, recoveryOnly = false) {
+function powershellCancellation(runId, recoveryOnly = false, failedRunCleanup = false) {
   if (typeof runId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runId)) {
     fail('runId inválido para recuperação de cancelamento.')
   }
-  if (typeof recoveryOnly !== 'boolean') fail('Modo de recuperação do runner inválido.')
+  if (typeof recoveryOnly !== 'boolean' || typeof failedRunCleanup !== 'boolean' ||
+      (recoveryOnly && failedRunCleanup)) fail('Modo de recuperação do runner inválido.')
   return [
     "$ErrorActionPreference = 'Stop'",
     "$runId = '" + runId + "'",
     '$recoveryOnly = $' + String(recoveryOnly).toLowerCase(),
+    '$failedRunCleanup = $' + String(failedRunCleanup).toLowerCase(),
     '$checkout = $env:KARAOKE_QUEUE_WIN_CHECKOUT',
     "if ([string]::IsNullOrWhiteSpace($checkout)) { $checkout = Join-Path $env:USERPROFILE 'source\\karaoke-queue-win' }",
     '$checkout = [IO.Path]::GetFullPath($checkout)',
@@ -1977,7 +2069,9 @@ function powershellCancellation(runId, recoveryOnly = false) {
     '  $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json',
     '  $validReportStatuses = @("RUNNING")',
     '  if ($recoveryOnly) { $validReportStatuses += "CANCELLED_RECOVERY_REQUIRED" }',
+    '  if ($failedRunCleanup) { $validReportStatuses += "FAIL" }',
     '  if ($report.owner -ne "' + REPORT_OWNER + '" -or $report.runId -ne $runId -or $report.status -notin $validReportStatuses) { Write-Output "CANCEL NOT VERIFIED: report owner/runId/status mismatch."; exit 8 }',
+    '  if ($failedRunCleanup -and [string]$report.stage -ne "CLEANUP") { Write-Output "CLEANUP NOT VERIFIED: failed run has not recorded its final cleanup stage."; exit 8 }',
     '  if ($recoveryOnly -and $worker) { Write-Output "CANCEL NOT VERIFIED: the matching worker is still active; use the normal runner cancellation path."; exit 3 }',
     '  if ($worker) {',
     '    $processes = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
@@ -2015,7 +2109,8 @@ function powershellCancellation(runId, recoveryOnly = false) {
     '  if (-not $profilePath.StartsWith($tempRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Profile path escaped the Windows temp directory." }',
     '  $electronPath = [IO.Path]::GetFullPath((Join-Path $checkout "node_modules\\electron\\dist\\electron.exe"))',
     '  $matchesProfile = { param($process) $process.Name -eq "electron.exe" -and $process.CommandLine -and $process.CommandLine.IndexOf($profilePath, [StringComparison]::OrdinalIgnoreCase) -ge 0 }',
-    '  if (-not $report.profileName -and (Test-Path -LiteralPath $profilePath)) { throw "An unrecorded test profile exists; preserving it for manual inspection." }',
+    '  if (-not $report.profileName -and (Test-Path -LiteralPath $profilePath) -and -not $failedRunCleanup) { throw "An unrecorded test profile exists; preserving it for manual inspection." }',
+    '  if ($failedRunCleanup -and -not $report.profileName) { $report | Add-Member -NotePropertyName profileName -NotePropertyValue $expectedProfileName -Force }',
     '  $allProfileCheckProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop)',
     '  $profileProcesses = @($allProfileCheckProcesses | Where-Object { & $matchesProfile $_ })',
     '  foreach ($process in $profileProcesses) { if ($process.CommandLine.IndexOf($electronPath, [StringComparison]::OrdinalIgnoreCase) -lt 0) { throw "A process referenced the isolated profile but did not match the expected Electron binary." } }',
@@ -2071,23 +2166,25 @@ function powershellCancellation(runId, recoveryOnly = false) {
     '    $ownedLock = ($currentLock.runId -eq $lockInfo.runId -and [int]$currentLock.pid -eq [int]$lockInfo.pid -and $currentLock.token -eq $lockInfo.token)',
     '  }',
     '  $canRelease = $ownedLock -and -not $syncRecoveryRequired -and $profileClean',
-    '  $finalStatus = if ($canRelease) { "CANCELLED" } else { "CANCELLED_RECOVERY_REQUIRED" }',
-    '  $finalReason = if ($syncRecoveryRequired) { "Interrupted sync requires checkout recovery." } elseif (-not $profileClean) { "Temporary profile requires review." } elseif (-not $ownedLock) { "Runner lock ownership could not be confirmed." } else { "Owned worker and Electron profile processes stopped; temporary data cleaned." }',
+    '  $finalStatus = if ($failedRunCleanup) { "FAIL" } elseif ($canRelease) { "CANCELLED" } else { "CANCELLED_RECOVERY_REQUIRED" }',
+    '  $finalReason = if ($failedRunCleanup) { [string]$report.reason } elseif ($syncRecoveryRequired) { "Interrupted sync requires checkout recovery." } elseif (-not $profileClean) { "Temporary profile requires review." } elseif (-not $ownedLock) { "Runner lock ownership could not be confirmed." } else { "Owned worker and Electron profile processes stopped; temporary data cleaned." }',
     '  $report | Add-Member -NotePropertyName status -NotePropertyValue $finalStatus -Force',
     '  $report | Add-Member -NotePropertyName reason -NotePropertyValue $finalReason -Force',
-    '  $report | Add-Member -NotePropertyName cancelledAt -NotePropertyValue ((Get-Date).ToUniversalTime().ToString("o")) -Force',
+    '  if ($failedRunCleanup) { $report | Add-Member -NotePropertyName cleanupRecovery -NotePropertyValue ([pscustomobject]@{status=$(if ($canRelease) { "PASS" } else { "RECOVERY_REQUIRED" }); completedAt=(Get-Date).ToUniversalTime().ToString("o"); detail=$(if ($canRelease) { "Run-owned processes stopped, isolated profile cleaned, and owned lock released." } else { $finalReason })}) -Force }',
+    '  else { $report | Add-Member -NotePropertyName cancelledAt -NotePropertyValue ((Get-Date).ToUniversalTime().ToString("o")) -Force }',
     '  $report | Add-Member -NotePropertyName lockRelease -NotePropertyValue $(if ($canRelease) { "attempted after PID/runId/token and process-tree verification" } else { "retained for manual recovery" }) -Force',
     '  Save-CancelReport $reportPath $report',
-    '  if (-not $canRelease) { Write-Output ("CANCEL NOT VERIFIED: " + $finalReason); exit 10 }',
+    '  if (-not $canRelease) { Write-Output ($(if ($failedRunCleanup) { "POST-FAILURE CLEANUP NOT VERIFIED: " } else { "CANCEL NOT VERIFIED: " }) + $finalReason); exit 10 }',
     '  Remove-Item -LiteralPath $lock -Force',
     '  if (Test-Path -LiteralPath $lock) { throw "Verified runner lock could not be removed." }',
-    '  Write-Output "CANCEL PASS: worker tree stopped, temporary data recovered, owned lock released."',
+    '  if ($failedRunCleanup) { Write-Output "POST-FAILURE CLEANUP PASS: failed report preserved; run-owned processes stopped, temporary profile cleaned, and owned lock released." }',
+    '  else { Write-Output "CANCEL PASS: worker tree stopped, temporary data recovered, owned lock released." }',
     '  exit 0',
     '} catch {',
     '  $cancelError = $_.Exception.Message',
     '  try {',
     '    $reportPath = Join-Path (Join-Path $checkout ".git") "' + REPORT + '"',
-    '    if (Test-Path -LiteralPath $reportPath) { $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json; if ($report.owner -eq "' + REPORT_OWNER + '" -and $report.runId -eq $runId) { $report | Add-Member -NotePropertyName status -NotePropertyValue "CANCELLED_RECOVERY_REQUIRED" -Force; $report | Add-Member -NotePropertyName reason -NotePropertyValue $cancelError -Force; $report | Add-Member -NotePropertyName cancelledAt -NotePropertyValue ((Get-Date).ToUniversalTime().ToString("o")) -Force; Save-CancelReport $reportPath $report } }',
+    '    if (Test-Path -LiteralPath $reportPath) { $report = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json; if ($report.owner -eq "' + REPORT_OWNER + '" -and $report.runId -eq $runId) { if ($failedRunCleanup) { $report | Add-Member -NotePropertyName status -NotePropertyValue "FAIL" -Force; $report | Add-Member -NotePropertyName cleanupRecovery -NotePropertyValue ([pscustomobject]@{status="RECOVERY_REQUIRED"; detail=$cancelError; attemptedAt=(Get-Date).ToUniversalTime().ToString("o")}) -Force } else { $report | Add-Member -NotePropertyName status -NotePropertyValue "CANCELLED_RECOVERY_REQUIRED" -Force; $report | Add-Member -NotePropertyName reason -NotePropertyValue $cancelError -Force; $report | Add-Member -NotePropertyName cancelledAt -NotePropertyValue ((Get-Date).ToUniversalTime().ToString("o")) -Force }; Save-CancelReport $reportPath $report } }',
     '  } catch { }',
     '  Write-Output ("CANCEL NOT VERIFIED: " + $cancelError)',
     '  exit 7',
@@ -2095,12 +2192,14 @@ function powershellCancellation(runId, recoveryOnly = false) {
   ].join('\n')
 }
 
-function runWindowsCancellation(runId, recoveryOnly) {
-  const result = spawnPowerShellScript(powershellCancellation(runId, recoveryOnly))
+function runWindowsCancellation(runId, recoveryOnly, failedRunCleanup = false) {
+  const result = spawnPowerShellScript(powershellCancellation(runId, recoveryOnly, failedRunCleanup))
   if (result.stdout) process.stdout.write(result.stdout)
   if (result.stderr) process.stderr.write(result.stderr)
   if (result.status !== 0) {
-    fail(recoveryOnly
+    fail(failedRunCleanup
+      ? 'A limpeza pós-falha do runner Windows não foi confirmada.'
+      : recoveryOnly
       ? 'A recuperação do cancelamento Windows não foi confirmada.'
       : 'O cancelamento do runner Windows não foi confirmado.', result.status || 1)
   }
@@ -2246,12 +2345,12 @@ async function runOrchestrator() {
     fail('O build candidato não combina com launcher manual, testes ou harnesses.')
   }
   const unexpectedArguments = process.argv.slice(2).filter(argument =>
-    !['--approve-untracked', '--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection', '--manual-launch', '--manual-profile-kind', '--manual-profile-name'].includes(argument) &&
+    !['--approve-untracked', '--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--g5-playback-overlay', '--installation-coordination', '--video-library', '--remote-ui', '--remote-pairing', '--remote-infrastructure', '--operational-store', '--g4-reconnection', '--manual-launch', '--manual-profile-kind', '--manual-profile-name'].includes(argument) &&
     argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName
   )
   if (unexpectedArguments.length) fail('Argumento não permitido: ' + unexpectedArguments.join(' '))
   const playbackModes = process.argv.slice(2).filter(argument =>
-    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection'].includes(argument)
+    ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--g5-playback-overlay', '--installation-coordination', '--video-library', '--remote-ui', '--remote-pairing', '--remote-infrastructure', '--operational-store', '--g4-reconnection'].includes(argument)
   )
   if (playbackModes.length > 1) fail('Escolha apenas um modo de avaliação de playback.')
   const playbackEvaluation = process.argv.includes('--playback-evaluation')
@@ -2398,6 +2497,12 @@ async function divergenceSelfTest() {
 }
 
 async function main() {
+  const failedCleanupIndex = process.argv.indexOf('--cleanup-failed-windows-run')
+  if (failedCleanupIndex >= 0) {
+    const args = process.argv.slice(failedCleanupIndex)
+    if (failedCleanupIndex !== 2 || args.length !== 2) fail('Uso: --cleanup-failed-windows-run <runId>.')
+    return runWindowsCancellation(args[1], false, true)
+  }
   const cancellationIndex = process.argv.indexOf('--cancel-windows-run')
   if (cancellationIndex >= 0) {
     const args = process.argv.slice(cancellationIndex)
@@ -2428,13 +2533,13 @@ async function main() {
       fail('O worker manual requer uma seleção de perfil válida.')
     }
     if (!manualLaunch && (profileKindIndex >= 0 || profileNameIndex >= 0)) fail('Perfil manual sem --manual-launch.')
-    const allowedWorkerArguments = ['--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection', '--manual-launch', '--manual-profile-kind', '--manual-profile-name']
+    const allowedWorkerArguments = ['--package-candidate', '--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--g5-playback-overlay', '--installation-coordination', '--video-library', '--remote-ui', '--remote-pairing', '--remote-infrastructure', '--operational-store', '--g4-reconnection', '--manual-launch', '--manual-profile-kind', '--manual-profile-name']
     if (workerArguments.some(argument => !allowedWorkerArguments.includes(argument) &&
         argument !== manualOptions?.profileKind && argument !== manualOptions?.profileName)) {
       fail('O worker recebeu argumentos não permitidos.')
     }
     const playbackModes = workerArguments.filter(argument =>
-      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--installation-coordination', '--video-library', '--remote-infrastructure', '--operational-store', '--g4-reconnection'].includes(argument)
+      ['--playback-evaluation', '--playback-chromium-final', '--playback-chromium-interactive', '--player-playback', '--standalone-playback', '--standalone-integration', '--player-recovery', '--standalone-options', '--standalone-production', '--g5-playback-overlay', '--installation-coordination', '--video-library', '--remote-ui', '--remote-pairing', '--remote-infrastructure', '--operational-store', '--g4-reconnection'].includes(argument)
     )
     if (playbackModes.length > 1) fail('O worker recebeu modos de playback conflitantes.')
     if (workerArguments.includes('--package-candidate') && (playbackModes.length || workerArguments.includes('--playback-evaluation'))) fail('O worker recebeu build candidato combinado com testes.')
@@ -2472,9 +2577,12 @@ module.exports = {
   requiresWindowFocus,
   requiresStandaloneProductionMedia,
   selectWindowsTestSuites,
+  suiteTimeoutMs,
   restorePreviousBuild,
   stageSnapshot,
   cleanupSyncBackup,
+  cleanupEmptyTestProfileRoot,
+  summarizeSuiteResults,
   syncSnapshot,
   validateLegacyManifest,
   validateManifest,

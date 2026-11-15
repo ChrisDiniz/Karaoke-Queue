@@ -1,0 +1,28 @@
+{
+  "owner": "karaoke-queue-windows-test-runner-v1",
+  "runId": "5190d7ca-15f0-4685-aa1d-416aa8c5508c",
+  "stage": "CLEANUP",
+  "status": "FAIL",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "abc8a075b22f25c0c426a2e5de23b500712cd97959f03ec18abf95995af4f062",
+  "suites": [
+    {
+      "name": "remote-pairing-electron",
+      "status": "NOT RUN",
+      "exitCode": null,
+      "signal": "SIGTERM",
+      "errorCode": "ETIMEDOUT"
+    }
+  ],
+  "focus": "NOT APPLICABLE",
+  "profileCleanup": "NOT RUN",
+  "profileName": "karaoke-queue-windows-e2e-5190d7ca-15f0-4685-aa1d-416aa8c5508c",
+  "testedAt": "2026-11-15T01:17:16.144Z",
+  "cleanupRecovery": {
+    "status": "PASS",
+    "completedAt": "2026-11-15T01:20:11.1937101Z",
+    "detail": "Run-owned processes stopped, isolated profile cleaned, and owned lock released."
+  },
+  "lockRelease": "attempted after PID/runId/token and process-tree verification"
+}

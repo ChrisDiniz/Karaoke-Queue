@@ -22,11 +22,14 @@ const {
   requiresStandaloneProductionMedia,
   requiresWindowFocus,
   selectWindowsTestSuites,
+  suiteTimeoutMs,
   stageSnapshot,
   verifyBuildOutput,
   restorePreviousBuild,
   syncSnapshot,
   cleanupSyncBackup,
+  cleanupEmptyTestProfileRoot,
+  summarizeSuiteResults,
   validateLegacyManifest,
   validateManifest,
   verifySnapshotDirectory,
@@ -34,6 +37,44 @@ const {
 } = require('./run-windows-native-tests.cjs')
 
 const head = '0123456789abcdef0123456789abcdef01234567'
+
+test('runner removes only an empty owned profile root and preserves populated diagnostic profiles', t => {
+  const root = tempDirectory(t)
+  const empty = path.join(root, 'owned-empty-profile')
+  fs.mkdirSync(empty)
+  assert.deepEqual(cleanupEmptyTestProfileRoot(empty), { status: 'REMOVED_EMPTY', entryCount: 0 })
+  assert.equal(fs.existsSync(empty), false)
+
+  const populated = path.join(root, 'owned-diagnostic-profile')
+  fs.mkdirSync(populated)
+  fs.writeFileSync(path.join(populated, 'diagnostic.txt'), 'preserve')
+  assert.deepEqual(cleanupEmptyTestProfileRoot(populated), { status: 'PRESERVED_NONEMPTY', entryCount: 1 })
+  assert.equal(fs.readFileSync(path.join(populated, 'diagnostic.txt'), 'utf8'), 'preserve')
+})
+
+test('runner report summarizes every executed suite without persisting console output', () => {
+  const result = summarizeSuiteResults([
+    { name: 'unit', status: 0, stdout: 'no secrets here' },
+    { name: 'electron', status: 1, stderr: 'not copied to the report' },
+    { name: 'not-started', status: null, signal: 'SIGTERM' },
+    { name: 'spawn-error', status: null, error: Object.assign(new Error('not copied'), { code: 'ENOENT' }) }
+  ])
+  assert.deepEqual(result, [
+    { name: 'unit', status: 'PASS', exitCode: 0, signal: null, errorCode: null },
+    { name: 'electron', status: 'FAIL', exitCode: 1, signal: null, errorCode: null },
+    { name: 'not-started', status: 'NOT RUN', exitCode: null, signal: 'SIGTERM', errorCode: null },
+    { name: 'spawn-error', status: 'NOT RUN', exitCode: null, signal: null, errorCode: 'ENOENT' }
+  ])
+  assert.equal(Object.hasOwn(result[0], 'stdout'), false)
+  assert.equal(Object.hasOwn(result[1], 'stderr'), false)
+})
+
+test('pairing E2E outer budget reaches its bounded certificate-discovery wait and teardown', () => {
+  assert.equal(suiteTimeoutMs('remote-pairing-electron'), 360_000,
+    'the measured 180 s cap terminated the expanded suite before its 60 s renewal-discovery assertion could finish')
+  assert.equal(suiteTimeoutMs('remote-ui-contracts-unit'), undefined,
+    'the larger budget applies only to the long real-process pairing/restart E2E')
+})
 
 test('manual launch confirms PID, exact image, app root and profile even when WMI omits ExecutablePath', () => {
   const expected = {
@@ -88,7 +129,9 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   const playerRecovery = powershellLauncher('C:\\stage', 'run-player-recovery', false, '--player-recovery')
   const standaloneOptions = powershellLauncher('C:\\stage', 'run-standalone-options', false, '--standalone-options')
   const standaloneProduction = powershellLauncher('C:\\stage', 'run-standalone-production', false, '--standalone-production')
+  const g5PlaybackOverlay = powershellLauncher('C:\\stage', 'run-g5-playback-overlay', false, '--g5-playback-overlay')
   const videoLibrary = powershellLauncher('C:\\stage', 'run-video-library', false, '--video-library')
+  const remoteUi = powershellLauncher('C:\\stage', 'run-remote-ui', false, '--remote-ui')
   const remoteInfrastructure = powershellLauncher('C:\\stage', 'run-remote-infrastructure', false, '--remote-infrastructure')
   const operationalStore = powershellLauncher('C:\\stage', 'run-operational-store', false, '--operational-store')
   const g4Reconnection = powershellLauncher('C:\\stage', 'run-g4-reconnection', false, '--g4-reconnection')
@@ -106,7 +149,9 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.equal(launcherPayload(playerRecovery).playbackMode, '--player-recovery')
   assert.equal(launcherPayload(standaloneOptions).playbackMode, '--standalone-options')
   assert.equal(launcherPayload(standaloneProduction).playbackMode, '--standalone-production')
+  assert.equal(launcherPayload(g5PlaybackOverlay).playbackMode, '--g5-playback-overlay')
   assert.equal(launcherPayload(videoLibrary).playbackMode, '--video-library')
+  assert.equal(launcherPayload(remoteUi).playbackMode, '--remote-ui')
   assert.equal(launcherPayload(remoteInfrastructure).playbackMode, '--remote-infrastructure')
   assert.equal(launcherPayload(operationalStore).playbackMode, '--operational-store')
   assert.equal(launcherPayload(g4Reconnection).playbackMode, '--g4-reconnection')
@@ -121,7 +166,9 @@ test('native playback evaluation is forwarded only as an explicit allowlisted wo
   assert.match(playerRecovery, /\$workerArgs \+= "--player-recovery"/)
   assert.match(standaloneOptions, /\$workerArgs \+= "--standalone-options"/)
   assert.match(standaloneProduction, /\$workerArgs \+= "--standalone-production"/)
+  assert.match(g5PlaybackOverlay, /\$workerArgs \+= "--g5-playback-overlay"/)
   assert.match(videoLibrary, /\$workerArgs \+= "--video-library"/)
+  assert.match(remoteUi, /\$workerArgs \+= "--remote-ui"/)
   assert.match(remoteInfrastructure, /\$workerArgs \+= "--remote-infrastructure"/)
   assert.match(operationalStore, /\$workerArgs \+= "--operational-store"/)
   assert.match(g4Reconnection, /\$workerArgs \+= "--g4-reconnection"/)
@@ -144,6 +191,7 @@ test('focused playback recovery harness does not require unrelated window-focus 
   assert.equal(requiresWindowFocus('--standalone-integration'), false)
   assert.equal(requiresWindowFocus('--standalone-options'), false)
   assert.equal(requiresWindowFocus('--standalone-production'), false)
+  assert.equal(requiresWindowFocus('--g5-playback-overlay'), false)
   assert.equal(requiresWindowFocus('--video-library'), false)
   assert.equal(requiresWindowFocus('--playback-chromium-final'), false)
   assert.equal(requiresWindowFocus(null), true)
@@ -162,6 +210,7 @@ test('runner cancellation scopes cleanup to the owned run and recovers orphan El
   const runId = '1d1c3a83-3396-46b6-8bab-10acdaaeb462'
   const cancellation = powershellCancellation(runId)
   const recovery = powershellCancellation(runId, true)
+  const failedRunCleanup = powershellCancellation(runId, false, true)
 
   assert.match(cancellation, /\$lockInfo = \$info/,
     'the runner retains the lock identity even when its worker has already exited')
@@ -195,6 +244,17 @@ test('runner cancellation scopes cleanup to the owned run and recovers orphan El
     'cleanup terminates the confirmed isolated Electron tree')
   assert.doesNotMatch(cancellation, /taskkill\.exe \/IM electron\.exe/i,
     'the runner never kills unrelated Electron processes by image name')
+  assert.match(failedRunCleanup, /\$failedRunCleanup = \$true/,
+    'post-failure cleanup is an explicit runner mode')
+  assert.match(failedRunCleanup, /\$failedRunCleanup -and \[string\]\$report\.stage -ne "CLEANUP"/,
+    'post-failure cleanup requires a recorded final cleanup stage')
+  assert.match(failedRunCleanup, /\$finalStatus = if \(\$failedRunCleanup\) \{ "FAIL" \}/,
+    'post-failure cleanup preserves the test FAIL status')
+  assert.match(failedRunCleanup, /cleanupRecovery/,
+    'post-failure cleanup records its own recovery result without replacing the test result')
+  assert.doesNotMatch(failedRunCleanup, /NotePropertyName status -NotePropertyValue "CANCELLED"/,
+    'cleanup after a test failure cannot convert the recorded failure to cancellation')
+  assert.throws(() => powershellCancellation(runId, true, true), /Modo de recuperação do runner inválido/)
   assert.throws(() => powershellCancellation('invalid;taskkill'), /runId inválido/)
 })
 
@@ -230,6 +290,9 @@ test('focused Windows Player recovery mode runs recovery unit coverage before re
     'build/tests/f0-bootstrap-electron.js',
     'build/tests/main-management-host.test.js',
     'build/tests/manual-playback.test.js'
+  ])
+  assert.deepEqual(selectWindowsTestSuites('--g5-playback-overlay').map(suite => suite.script), [
+    'build/tests/standalone-player-production-electron.js'
   ])
 })
 
@@ -337,12 +400,28 @@ test('focused Windows G4 mode includes runtime intent, reconnect, replay, two-pr
     'build/tests/operational-protocol-service.test.js',
     'build/tests/management-remote-journal.test.js',
     'build/tests/database-migration.test.js',
+    'scripts/g4-reaudit-cross-process-intent.cjs',
     'scripts/pairing-process-integration.test.cjs',
     'build/tests/remote-infrastructure.test.js',
     'scripts/pairing-safe-storage-restart-electron.test.cjs',
     'scripts/remote-safe-storage-electron.test.cjs'
   ])
-  assert.deepEqual(selectWindowsTestSuites('--g4-reconnection')[8].args, ['--operational'])
+  assert.deepEqual(selectWindowsTestSuites('--g4-reconnection')[9].args, ['--operational'])
+})
+
+test('focused Windows G5 remote UI mode runs real Electron Management coverage', () => {
+  assert.equal(requiresWindowFocus('--remote-ui'), true)
+  assert.deepEqual(selectWindowsTestSuites('--remote-ui').map(suite => suite.script), [
+    'build/tests/remote-ui-contracts.test.js',
+    'build/tests/main-remote-ui-ipc.test.js',
+    'tests/remote-operation-query-timeout.test.cjs',
+    'build/tests/remote-control-intent.test.js',
+    'build/tests/remote-reconnection.test.js',
+    'build/tests/remote-reconciliation.test.js',
+    'build/tests/remote-devices-electron.test.js',
+    'build/tests/remote-pairing-electron.js',
+    'build/tests/multi-instance-electron.js'
+  ])
 })
 
 function hash(content) {
@@ -507,6 +586,11 @@ test('recognizes Standalone UI harness documents, restricted preloads, bundles a
     'build/src/assets/standalone-empty-stage.png',
     'build/tests/standalone-player-ui-electron.js'
   ]) assert.ok(generated.has(filePath), filePath)
+})
+
+test('recognizes the shared remote UI stylesheet copied by the G5 asset bundler', () => {
+  const manifest = manifestFor([{ path: 'src/remote-ui.css', content: '.remote-ui {}' }])
+  assert.deepEqual([...generatedBuildPaths([manifest])], ['build/src/remote-ui.css'])
 })
 
 test('current build inventory omits outputs belonging only to the retired Player control shell', () => {

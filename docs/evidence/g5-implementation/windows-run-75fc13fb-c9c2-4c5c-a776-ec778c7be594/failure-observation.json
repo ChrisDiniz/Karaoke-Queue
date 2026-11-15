@@ -1,0 +1,371 @@
+{
+  "stage": "rendered-connection-after-normal-restart",
+  "occurredAt": "2026-11-14T18:04:02.391Z",
+  "errorName": "AssertionError",
+  "errorCode": null,
+  "assertion": {
+    "operator": "==",
+    "actual": false,
+    "expected": true,
+    "message": "Management presents the real restored transport state, received backoff"
+  },
+  "management": {
+    "trace": [
+      {
+        "revision": 2,
+        "states": []
+      },
+      {
+        "revision": 4,
+        "states": []
+      },
+      {
+        "revision": 4,
+        "states": []
+      },
+      {
+        "revision": 8,
+        "states": [
+          {
+            "state": "connecting",
+            "reconciled": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 8,
+        "states": [
+          {
+            "state": "connecting",
+            "reconciled": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 8,
+        "states": [
+          {
+            "state": "connecting",
+            "reconciled": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 8,
+        "states": [
+          {
+            "state": "connecting",
+            "reconciled": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 10,
+        "states": [
+          {
+            "state": "reconciling",
+            "reconciled": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 10,
+        "states": [
+          {
+            "state": "reconciling",
+            "reconciled": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 12,
+        "states": [
+          {
+            "state": "reconciling",
+            "reconciled": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 12,
+        "states": [
+          {
+            "state": "reconciling",
+            "reconciled": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 13,
+        "states": [
+          {
+            "state": "synchronized",
+            "reconciled": true,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 14,
+        "states": [
+          {
+            "state": "synchronized",
+            "reconciled": true,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 16,
+        "states": [
+          {
+            "state": "backoff",
+            "reconciled": false,
+            "reason": "REMOTE_CHANNEL_CLOSED"
+          }
+        ]
+      },
+      {
+        "revision": 16,
+        "states": [
+          {
+            "state": "backoff",
+            "reconciled": false,
+            "reason": "REMOTE_CHANNEL_CLOSED"
+          }
+        ]
+      },
+      {
+        "revision": 17,
+        "states": [
+          {
+            "state": "backoff",
+            "reconciled": false,
+            "reason": "REMOTE_CHANNEL_CLOSED"
+          }
+        ]
+      },
+      {
+        "revision": 18,
+        "states": [
+          {
+            "state": "connecting",
+            "reconciled": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 20,
+        "states": [
+          {
+            "state": "backoff",
+            "reconciled": false,
+            "reason": "REMOTE_CONNECTION_ERROR"
+          }
+        ]
+      },
+      {
+        "revision": 20,
+        "states": [
+          {
+            "state": "backoff",
+            "reconciled": false,
+            "reason": "REMOTE_CONNECTION_ERROR"
+          }
+        ]
+      },
+      {
+        "revision": 21,
+        "states": [
+          {
+            "state": "backoff",
+            "reconciled": false,
+            "reason": "REMOTE_CONNECTION_ERROR"
+          }
+        ]
+      }
+    ],
+    "renderedState": "backoff",
+    "currentConnections": []
+  },
+  "player": {
+    "intent": "enabled",
+    "listener": "advertising",
+    "pairing": "active",
+    "controllerConnectionCount": 0
+  },
+  "proxy": {
+    "accepted": 12,
+    "active": 0,
+    "paused": false,
+    "lifecycle": [
+      {
+        "event": "transport-dropped",
+        "elapsedMs": 0
+      },
+      {
+        "event": "transport-restored",
+        "elapsedMs": 56
+      },
+      {
+        "event": "target-updated",
+        "elapsedMs": 3345
+      }
+    ],
+    "closureEvents": [
+      {
+        "connection": 8,
+        "side": "client",
+        "event": "close",
+        "code": null,
+        "hadError": false,
+        "elapsedMs": -690,
+        "bytesClientToProxy": 2044,
+        "bytesProxyToClient": 5291,
+        "bytesProxyToTarget": 2044,
+        "bytesTargetToProxy": 5291
+      },
+      {
+        "connection": 9,
+        "side": "upstream",
+        "event": "end",
+        "code": null,
+        "hadError": false,
+        "elapsedMs": -615,
+        "bytesClientToProxy": 2056,
+        "bytesProxyToClient": 3445,
+        "bytesProxyToTarget": 2056,
+        "bytesTargetToProxy": 3445
+      },
+      {
+        "connection": 9,
+        "side": "upstream",
+        "event": "close",
+        "code": null,
+        "hadError": false,
+        "elapsedMs": -613,
+        "bytesClientToProxy": 2056,
+        "bytesProxyToClient": 3445,
+        "bytesProxyToTarget": 2056,
+        "bytesTargetToProxy": 3445
+      },
+      {
+        "connection": 9,
+        "side": "client",
+        "event": "close",
+        "code": null,
+        "hadError": false,
+        "elapsedMs": -612,
+        "bytesClientToProxy": 2056,
+        "bytesProxyToClient": 3445,
+        "bytesProxyToTarget": 2056,
+        "bytesTargetToProxy": 3445
+      },
+      {
+        "connection": 10,
+        "side": "upstream",
+        "event": "end",
+        "code": null,
+        "hadError": false,
+        "elapsedMs": -528,
+        "bytesClientToProxy": 2050,
+        "bytesProxyToClient": 3439,
+        "bytesProxyToTarget": 2050,
+        "bytesTargetToProxy": 3439
+      },
+      {
+        "connection": 10,
+        "side": "upstream",
+        "event": "close",
+        "code": null,
+        "hadError": false,
+        "elapsedMs": -524,
+        "bytesClientToProxy": 2050,
+        "bytesProxyToClient": 3439,
+        "bytesProxyToTarget": 2050,
+        "bytesTargetToProxy": 3439
+      },
+      {
+        "connection": 10,
+        "side": "client",
+        "event": "close",
+        "code": null,
+        "hadError": false,
+        "elapsedMs": -523,
+        "bytesClientToProxy": 2050,
+        "bytesProxyToClient": 3439,
+        "bytesProxyToTarget": 2050,
+        "bytesTargetToProxy": 3439
+      },
+      {
+        "connection": 11,
+        "side": "client",
+        "event": "close",
+        "code": null,
+        "hadError": false,
+        "elapsedMs": 7,
+        "bytesClientToProxy": 3331,
+        "bytesProxyToClient": 5742,
+        "bytesProxyToTarget": 3331,
+        "bytesTargetToProxy": 5742
+      },
+      {
+        "connection": 11,
+        "side": "upstream",
+        "event": "close",
+        "code": null,
+        "hadError": false,
+        "elapsedMs": 8,
+        "bytesClientToProxy": 3331,
+        "bytesProxyToClient": 5742,
+        "bytesProxyToTarget": 3331,
+        "bytesTargetToProxy": 5742
+      },
+      {
+        "connection": 12,
+        "side": "upstream",
+        "event": "error",
+        "code": "ECONNREFUSED",
+        "hadError": false,
+        "elapsedMs": 2978,
+        "bytesClientToProxy": 1520,
+        "bytesProxyToClient": 0,
+        "bytesProxyToTarget": 1520,
+        "bytesTargetToProxy": 0
+      },
+      {
+        "connection": 12,
+        "side": "upstream",
+        "event": "close",
+        "code": null,
+        "hadError": true,
+        "elapsedMs": 2978,
+        "bytesClientToProxy": 1520,
+        "bytesProxyToClient": 0,
+        "bytesProxyToTarget": 1520,
+        "bytesTargetToProxy": 0
+      },
+      {
+        "connection": 12,
+        "side": "client",
+        "event": "close",
+        "code": null,
+        "hadError": false,
+        "elapsedMs": 3005,
+        "bytesClientToProxy": 1520,
+        "bytesProxyToClient": 0,
+        "bytesProxyToTarget": 1520,
+        "bytesTargetToProxy": 0
+      }
+    ]
+  }
+}

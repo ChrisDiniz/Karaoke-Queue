@@ -1,0 +1,39 @@
+{
+  "sourceRunId": "6561f6d2-5ece-44c4-88d5-03c2f0f7687a",
+  "rawReportSha256": "f3e725c5699732cfa7ad368375af4268c094f45af94316a45179e58bd3d0bb48",
+  "fingerprint": "0abee880cbf3b30a1b093b0001a01ae8083d75f11e3967476a916556b7f9acb7",
+  "pairingCodesRedacted": true,
+  "eightDigitValuesRedacted": true,
+  "privateAddressesRedacted": true,
+  "windowsPathsRedacted": true,
+  "ephemeralIdsRedacted": true,
+  "redactionCount": 50,
+  "profileCleanup": "REMOVED_EMPTY",
+  "logsPreserved": [
+    {
+      "name": "management-app-sanitized.log",
+      "sourceSha256": "ba05e754cf9ecd39951d804604b6643befd423462607976ecdd6715c0a4c03c5",
+      "redactions": 25
+    },
+    {
+      "name": "management-error-sanitized.log",
+      "sourceSha256": "7a4730ff33ed043acf2c344eff56e73ee5eb2e562f9f351e5ea3143849096320",
+      "redactions": 1
+    },
+    {
+      "name": "player-app-sanitized.log",
+      "sourceSha256": "98b024c75bc7ddbdb54222c534f6f7a92155bc12e70a301e98cce806ae93e3ec",
+      "redactions": 16
+    },
+    {
+      "name": "player-error-sanitized.log",
+      "sourceSha256": "601c42c564c7a0b013cb9bb7570c6e20e02e72467972e51dd40d45add3583865",
+      "redactions": 8
+    },
+    {
+      "name": "manifest.json",
+      "sourceSha256": "b89d4ac5e2134dd60f2cf3514a580c779e1a5b4c7b7611c715396fc1f03b93d5",
+      "redactions": 0
+    }
+  ]
+}

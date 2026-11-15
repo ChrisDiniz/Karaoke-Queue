@@ -1,0 +1,15 @@
+{
+  "sourceRunId": "17cb897f-de98-42b4-80c7-a02e8d7861de",
+  "rawReportSha256": "9459f3e0784ae4c36c6f8621b8de3532ab9dabd6680be11deb6960f980e0bcbb",
+  "pairingCodesRedacted": true,
+  "eightDigitValuesRedacted": true,
+  "privateAddressesRedacted": true,
+  "windowsPathsRedacted": true,
+  "profileCleanup": "REMOVED_EMPTY",
+  "logsPreserved": [
+    "management-app.log",
+    "management-error.log",
+    "player-app.log",
+    "player-error.log"
+  ]
+}

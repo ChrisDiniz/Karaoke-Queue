@@ -1,0 +1,33 @@
+{
+  "stage": "pairing-three-attempt-lockout-ui",
+  "occurredAt": "2026-11-15T01:42:55.626Z",
+  "testError": {
+    "name": "TimeoutError",
+    "condition": "Management dialog 'Confirme no Player' did not appear after selecting the current discovery card",
+    "timeoutMs": 10000
+  },
+  "player": {
+    "revision": 5,
+    "pairing": "unpaired",
+    "listener": "advertising",
+    "temporaryCodeVisible": false,
+    "consentVisible": false,
+    "pairingDialogVisible": false,
+    "authorizedControllerCount": 0
+  },
+  "management": {
+    "revision": 6,
+    "errorCode": "REMOTE_CANDIDATE_STALE",
+    "errorText": "Este dispositivo saiu da descoberta. Atualize a busca antes de solicitar o vínculo.",
+    "pairingDialogVisible": false,
+    "codeInputVisible": false,
+    "initialCandidateCount": 1,
+    "activeSavedDeviceCount": 0
+  },
+  "sourceCause": "BonjourDiscoveryPort.rebuildCandidates calls candidateFromService on each sweep; candidateFromService creates a random candidateId, and rebuildCandidates overwrites the map entry every time. The UI can submit the prior snapshot's candidateId while Main's current snapshot already contains a new ID for the same live service target.",
+  "classification": "Confirmed discovery-handle race in application code. No pairing authority was created; candidate identity remains only an unverified locator.",
+  "cleanup": {
+    "profileCleanup": "REMOVED_EMPTY",
+    "residualProcessCheck": "PASS"
+  }
+}

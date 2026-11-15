@@ -8,6 +8,7 @@ const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
 const { prepareControllerModeProfile } = require('./electron-test-profile')
+const { closeElectronTestAppNormally } = require('./electron-test-lifecycle')
 
 const projectRoot = path.resolve(__dirname, '../..')
 const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-session-close-'))
@@ -124,8 +125,8 @@ async function run() {
     await page.waitForFunction(() => window.__kqueue.queueLength() === 1)
 
     // B: leave the new session open and persist, then verify startup offers continue/new.
-    await setCloseResponses([1])
-    await closeWindow()
+    await closeElectronTestAppNormally(app, 'management')
+    app = undefined
     assert.equal(readDb(db => db.prepare('SELECT ended_at FROM sessions WHERE id = ?').get(resumedSession).ended_at), null)
     assert.equal(readDb(db => db.prepare("SELECT COUNT(*) AS n FROM entries WHERE session_id = ? AND status = 'pending'").get(resumedSession).n), 1)
 

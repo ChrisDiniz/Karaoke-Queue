@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { encodeBase64Url } from './pairing-crypto'
 import type { ManagementOutboxDatabase } from './management-remote-outbox'
 import { ManagementRemoteOutbox } from './management-remote-outbox'
+import type { ManagementOutboxRecord } from './management-remote-outbox'
 import type { ManagementRemoteJournalDatabase } from './management-remote-journal'
 import { ManagementRemoteJournalInbox } from './management-remote-journal'
 import { ManagementRemoteReconciliationService } from './remote-reconciliation-service'
@@ -15,6 +16,7 @@ export type ManagementRemoteDatabase = ManagementOutboxDatabase & ManagementRemo
 /** Main-owned adapter joining saved G2 authorities, the pinned G1 WSS client and G3 durable ports. */
 export class MainRemoteReconnectionAdapter implements RemoteReconnectPort {
   private readonly clients = new WeakMap<RemotePeerChannel, ClientType>()
+  private readonly clientsByPeer = new Map<string, ClientType>()
   private readonly inbox: ManagementRemoteJournalInbox
   private readonly outbox: ManagementRemoteOutbox
 
@@ -31,6 +33,35 @@ export class MainRemoteReconnectionAdapter implements RemoteReconnectPort {
       .map(authority => ({ playerId: authority.playerId, fingerprintSha256: authority.certificateFingerprintSha256,
         serverName: authority.serverName, port: authority.port, lastAddress: authority.address,
         active: true, credentialGeneration: authority.credentialGeneration }))
+  }
+
+  listOperations(): readonly ManagementOutboxRecord[] {
+    return this.outbox.listAll(100)
+  }
+
+  async queryOperationStatus(playerDeviceId: string, operationId: string,
+    signal: AbortSignal): Promise<{ record: ManagementOutboxRecord; outcome: 'updated' | 'not-found' | 'terminal' }> {
+    const record = this.outbox.get(playerDeviceId, operationId)
+    if (!record) throw new Error('MANAGEMENT_OUTBOX_NOT_FOUND')
+    if (record.status === 'completed' || record.status === 'rejected') return { record, outcome: 'terminal' }
+    if (record.status === 'not-sent') throw new Error('MANAGEMENT_OUTBOX_NOT_TRANSMITTED')
+    const client = this.clientsByPeer.get(playerDeviceId)
+    if (!client) throw new Error('REMOTE_OPERATIONAL_CHANNEL_UNAVAILABLE')
+    const authority = (await this.pairingStore.read()).controllerAuthorities[playerDeviceId]
+    if (!authority || authority.phase !== 'active' || authority.playerId !== client.peer.playerId ||
+        authority.credentialGeneration !== client.peer.credentialGeneration) {
+      throw new Error('REMOTE_AUTHORIZATION_REVOKED')
+    }
+    const query = this.outbox.statusQuery(playerDeviceId, operationId)
+    if (query.kind !== 'query') throw new Error('MANAGEMENT_OUTBOX_QUERY_INVALID')
+    const response = await client.query(query, signal)
+    if (response.kind === 'error') throw new Error(`REMOTE_OPERATION_QUERY_${response.body.code}`)
+    if (response.kind !== 'response' || response.body.type !== 'operation-status' ||
+        response.body.payload.operationId !== operationId) throw new Error('MANAGEMENT_OUTBOX_STATUS_INVALID')
+    const accepted = this.outbox.acceptStatus(playerDeviceId, response)
+    if (!accepted) throw new Error('MANAGEMENT_OUTBOX_STATUS_INVALID')
+    return { record: accepted,
+      outcome: response.body.payload.status === 'not-found' ? 'not-found' : 'updated' }
   }
 
   async connect(peer: SavedRemotePeer, address: string, signal: AbortSignal, candidatePort = peer.port): Promise<RemotePeerChannel> {
@@ -52,6 +83,10 @@ export class MainRemoteReconnectionAdapter implements RemoteReconnectPort {
     const ready = await client.ready()
     const channel = client as unknown as RemotePeerChannel
     this.clients.set(channel, client)
+    this.clientsByPeer.set(peer.playerId, client)
+    client.onDisconnect(() => {
+      if (this.clientsByPeer.get(peer.playerId) === client) this.clientsByPeer.delete(peer.playerId)
+    })
     Object.defineProperties(channel, {
       connectionId: { value: randomUUID(), enumerable: true },
       playerId: { value: peer.playerId, enumerable: true },

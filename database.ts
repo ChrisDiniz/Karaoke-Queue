@@ -1279,6 +1279,13 @@ export function createKaraokeDatabase(userDataPath: string): KaraokeDatabase {
         ORDER BY created_at,operation_id`).all(playerDeviceId, controllerId)
         .map(row => readOutboxRow(row as Record<string, unknown>))
     },
+    listAll(controllerId: string, limit: number): ManagementOutboxRecord[] {
+      if (database.isTransaction) throw new Error('MANAGEMENT_OUTBOX_UNRESOLVED_TRANSACTION')
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('MANAGEMENT_OUTBOX_LIMIT_INVALID')
+      return database.prepare(`SELECT * FROM management_remote_outbox WHERE controller_id=?
+        ORDER BY updated_at DESC,operation_id LIMIT ?`).all(controllerId, limit)
+        .map(row => readOutboxRow(row as Record<string, unknown>))
+    },
     markTransmissionStarted(playerDeviceId: string, controllerId: string, operationId: string): ManagementOutboxRecord {
       const prior = findOutbox(playerDeviceId, controllerId, operationId)
       if (!prior) throw new Error('MANAGEMENT_OUTBOX_NOT_FOUND')

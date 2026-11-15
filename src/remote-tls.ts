@@ -138,6 +138,10 @@ export function createPinnedHttpsAgent(pin: PinnedCertificate): https.Agent {
   }
   return new https.Agent({
     ca: pin.certificatePem,
+    // The exact peer leaf is the trust anchor for bootstrap/pairing. Allow
+    // OpenSSL to terminate at that pinned leaf across Windows Node builds;
+    // the callback still enforces SAN, validity and the exact SHA-256 pin.
+    allowPartialTrustChain: true,
     rejectUnauthorized: true,
     servername: pin.serverName,
     minVersion: 'TLSv1.2',
@@ -149,13 +153,14 @@ export function createPinnedHttpsAgent(pin: PinnedCertificate): https.Agent {
 
 export interface BootstrapCertificateCandidate extends PinnedCertificate {
   deviceIdClaim: string | null
+  expired: boolean
 }
 
 /** The one intentional unauthenticated TLS probe: it sends no HTTP or application bytes. */
 export function probeBootstrapCertificate(
   host: string,
   port: number,
-  options: { timeoutMs?: number; connect?: typeof tls.connect } = {}
+  options: { timeoutMs?: number; connect?: typeof tls.connect; allowExpiredForRenewal?: boolean; now?: Date } = {}
 ): Promise<BootstrapCertificateCandidate> {
   if (!isPrivateIpv4(host) || !Number.isInteger(port) || port < 1024 || port > 65535) {
     return Promise.reject(new Error('REMOTE_ENDPOINT_INVALID'))
@@ -180,9 +185,12 @@ export function probeBootstrapCertificate(
       try {
         const certificatePem = new X509Certificate(peer.raw).toString()
         const certificate = parseCertificate(certificatePem)
-        const validated = validatePlayerCertificate(certificatePem)
+        const now = options.now ?? new Date()
+        const validated = validatePlayerCertificate(certificatePem, undefined, undefined, now,
+          options.allowExpiredForRenewal === true)
         const deviceClaim = /^player-(.+)\.karaoke\.invalid$/.exec(validated.serverName)?.[1] ?? null
-        finish(undefined, { ...validated, deviceIdClaim: deviceClaim })
+        finish(undefined, { ...validated, deviceIdClaim: deviceClaim,
+          expired: new Date(certificate.validTo).valueOf() <= now.valueOf() })
       } catch (error) {
         finish(error instanceof Error ? error : new Error('REMOTE_CERTIFICATE_INVALID'))
       }

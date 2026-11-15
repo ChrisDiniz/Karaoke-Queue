@@ -16,7 +16,7 @@ import { ElectronSafeStorageSecretProtector, type SafeStoragePort, type SecretPr
 import { createRemoteTransportServer } from '../src/remote-transport'
 import { candidateFromService, BonjourPlayerAdvertisementPort } from '../src/remote-discovery'
 import { MainRemoteRuntime } from '../src/main-remote-runtime'
-import { RemoteOperationalClient } from '../src/remote-operational-client'
+import { createOperationalQuery, RemoteOperationalClient } from '../src/remote-operational-client'
 import { REMOTE_CONTROL_PATH, REMOTE_CONTROL_SUBPROTOCOL, type RemoteAuthorizationPort,
   type RemoteDeviceIdentity, type RemoteHttpRoute, type RemoteTransportMessagePort } from '../src/remote-contracts'
 
@@ -89,13 +89,15 @@ async function startServer(options: {
   authorization?: RemoteAuthorizationPort
   routes?: readonly RemoteHttpRoute[]
   messagePort?: RemoteTransportMessagePort
+  onPeerState?: Parameters<typeof createRemoteTransportServer>[0]['onPeerState']
 } = {}) {
   const identity = await createPlayerIdentity()
   const server = createRemoteTransportServer({
     identity, address: options.address ?? '127.0.0.1', port: options.port ?? 0,
     authorization: options.authorization,
     routes: options.routes,
-    messagePort: options.messagePort
+    messagePort: options.messagePort,
+    onPeerState: options.onPeerState
   })
   await server.listen()
   const address = server.address()
@@ -442,6 +444,30 @@ test('transport denies control by default and enforces authenticated closed-vers
   } finally { await authorized.server.close() }
 })
 
+test('Player transport reports authorized and closed peer lifecycle with the numeric close code', async () => {
+  const observed: Array<{ state: string; closeCode?: number }> = []
+  let resolvePeerClosed!: (closeCode: number | undefined) => void
+  const peerClosed = new Promise<number | undefined>(resolve => { resolvePeerClosed = resolve })
+  const fixture = await startServer({ authorization: authorizedPort(),
+    onPeerState: event => {
+      observed.push({ state: event.state, ...(event.closeCode === undefined ? {} : { closeCode: event.closeCode }) })
+      if (event.state === 'closed') resolvePeerClosed(event.closeCode)
+    } })
+  try {
+    const client = openWebSocket('127.0.0.1', fixture.address.port, fixture.identity, { Authorization: `Bearer ${TOKEN}` })
+    client.on('error', () => undefined)
+    await new Promise<void>((resolve, reject) => { client.once('open', resolve); client.once('error', reject) })
+    const closed = waitForClose(client)
+    client.close(1000, 'G5_TEST_CLOSE')
+    assert.equal((await closed).code, 1000)
+    assert.equal(await peerClosed, 1000)
+    assert.deepEqual(observed, [
+      { state: 'authorized' },
+      { state: 'closed', closeCode: 1000 }
+    ])
+  } finally { await fixture.server.close() }
+})
+
 test('transport rejects incompatible hello and invalid payload without dispatching messages', async () => {
   let dispatched = 0
   const state = { current: true }
@@ -745,6 +771,122 @@ test('Main remote runtime waits for an in-flight Player start and cleans resourc
   } finally {
     releaseAdvertiser?.()
     await runtime.close().catch(() => undefined)
+    await fs.rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('Player listener stays starting until the real listener and advertiser startup have completed', async () => {
+  const directory = await temporaryDirectory()
+  let advertiserStarted: (() => void) | undefined
+  let releaseAdvertiser: (() => void) | undefined
+  const started = new Promise<void>(resolve => { advertiserStarted = resolve })
+  const advertiserGate = new Promise<void>(resolve => { releaseAdvertiser = resolve })
+  const storage: SafeStoragePort = {
+    async isAsyncEncryptionAvailable() { return true }, isEncryptionAvailable() { return true },
+    getSelectedStorageBackend() { return 'gnome_libsecret' },
+    async encryptStringAsync(value) { return Buffer.from(`safe:${value}`) },
+    async decryptStringAsync(value) { return { result: Buffer.from(value).toString().slice(5), shouldReEncrypt: false } },
+    encryptString(value) { return Buffer.from(`safe:${value}`) },
+    decryptString(value) { return Buffer.from(value).toString().slice(5) }
+  }
+  const runtime = new MainRemoteRuntime({ mode: 'player', userDataDirectory: directory, safeStorage: storage,
+    createAdvertiser: () => ({
+      async start() { advertiserStarted?.(); await advertiserGate },
+      async update() {},
+      async stop() {}
+    }) })
+  try {
+    const start = runtime.startPlayer({ interfaceAddress: '127.0.0.1', displayName: 'Test Player', port: 0,
+      authorization: { async authorizeBearer() { return null }, isCurrent() { return false } } })
+    await started
+    const starting = await runtime.getRemoteUiSnapshot('player')
+    assert.equal(starting.listener, 'starting', 'an allocated server object is not yet an advertised listener')
+    assert.ok(starting.listenerEndpoint?.port, 'the bound endpoint is available while advertisement startup is pending')
+    releaseAdvertiser?.()
+    await start
+    const ready = await runtime.getRemoteUiSnapshot('player')
+    assert.equal(ready.listener, 'advertising', 'the UI transitions only after startup has fully resolved')
+    assert.ok(ready.revision > starting.revision, 'Main publishes a snapshot after clearing the start task')
+  } finally {
+    releaseAdvertiser?.()
+    await runtime.close()
+    await fs.rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('Main does not report advertising after the Player socket stops listening', async () => {
+  const directory = await temporaryDirectory()
+  const storage: SafeStoragePort = {
+    async isAsyncEncryptionAvailable() { return true }, isEncryptionAvailable() { return true },
+    getSelectedStorageBackend() { return 'gnome_libsecret' },
+    async encryptStringAsync(value) { return Buffer.from(`safe:${value}`) },
+    async decryptStringAsync(value) { return { result: Buffer.from(value).toString().slice(5), shouldReEncrypt: false } },
+    encryptString(value) { return Buffer.from(`safe:${value}`) },
+    decryptString(value) { return Buffer.from(value).toString().slice(5) }
+  }
+  const runtime = new MainRemoteRuntime({ mode: 'player', userDataDirectory: directory, safeStorage: storage,
+    createAdvertiser: () => ({ async start() {}, async update() {}, async stop() {} }) })
+  try {
+    await runtime.startPlayer({ interfaceAddress: '127.0.0.1', displayName: 'Test Player', port: 0,
+      authorization: { async authorizeBearer() { return null }, isCurrent() { return false } } })
+    const active = await runtime.getRemoteUiSnapshot('player')
+    assert.equal(active.listener, 'advertising')
+    assert.ok(active.listenerEndpoint?.port)
+
+    const server = (runtime as unknown as { server?: { close(): Promise<void> } }).server
+    assert.ok(server, 'the runtime owns the Player transport server')
+    await server.close()
+
+    const stopped = await runtime.getRemoteUiSnapshot('player')
+    assert.equal(stopped.listener, 'error', 'an allocated but unbound server is not advertised as ready')
+    assert.equal(stopped.listenerEndpoint, null, 'a stale endpoint is not published after the socket closes')
+    assert.equal(stopped.errorCode, 'REMOTE_LISTENER_NOT_BOUND')
+  } finally {
+    await runtime.close()
+    await fs.rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('Player snapshot captures listener and endpoint after asynchronous pairing-store reads', async () => {
+  const directory = await temporaryDirectory()
+  let pairingReadStarted: (() => void) | undefined
+  let releasePairingRead: (() => void) | undefined
+  let gateNextPairingRead = true
+  const readStarted = new Promise<void>(resolve => { pairingReadStarted = resolve })
+  const readGate = new Promise<void>(resolve => { releasePairingRead = resolve })
+  const storage: SafeStoragePort = {
+    async isAsyncEncryptionAvailable() { return true }, isEncryptionAvailable() { return true },
+    getSelectedStorageBackend() { return 'gnome_libsecret' },
+    async encryptStringAsync(value) { return Buffer.from(`safe:${value}`) },
+    async decryptStringAsync(value) { return { result: Buffer.from(value).toString().slice(5), shouldReEncrypt: false } },
+    encryptString(value) { return Buffer.from(`safe:${value}`) },
+    decryptString(value) { return Buffer.from(value).toString().slice(5) }
+  }
+  const runtime = new MainRemoteRuntime({ mode: 'player', userDataDirectory: directory, safeStorage: storage,
+    createAdvertiser: () => ({ async start() {}, async update() {}, async stop() {} }) })
+  try {
+    const pairingStore = runtime.createPairingStore()
+    const originalRead = pairingStore.read.bind(pairingStore)
+    pairingStore.read = async () => {
+      if (gateNextPairingRead) {
+        gateNextPairingRead = false
+        pairingReadStarted?.()
+        await readGate
+      }
+      return originalRead()
+    }
+    const snapshotTask = runtime.getRemoteUiSnapshot('player')
+    await readStarted
+    await runtime.startPlayer({ interfaceAddress: '127.0.0.1', displayName: 'Test Player', port: 0,
+      authorization: { async authorizeBearer() { return null }, isCurrent() { return false } } })
+    releasePairingRead?.()
+    const snapshot = await snapshotTask
+    assert.equal(snapshot.listener, 'advertising')
+    assert.ok(snapshot.listenerEndpoint?.port,
+      'the endpoint and listener state are captured from one live runtime state after awaits')
+  } finally {
+    releasePairingRead?.()
+    await runtime.close()
     await fs.rm(directory, { recursive: true, force: true })
   }
 })

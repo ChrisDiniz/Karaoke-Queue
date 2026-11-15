@@ -11,7 +11,7 @@ import { encodePairingEnvelope, parsePairingEnvelope, type PairingEnvelope } fro
 import { canCancelPairing, transitionPlayerPairing, type PlayerPairingState } from './pairing-state-machine'
 
 export interface PairingPresentationPort {
-  /** Must be a locally trusted, non-projected surface approved for code entry/consent. */
+  /** Must be a Main-controlled operator surface with explicit consent and ephemeral code display. */
   readonly approvedForProduction: boolean
   requestConsent(input: { displayName: string; purpose: 'initial' | 'renewal'; expiresAt: number }): Promise<boolean>
   showTemporaryCode(input: { groupedCode: string; expiresAt: number }): Promise<void> | void

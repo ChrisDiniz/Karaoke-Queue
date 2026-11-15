@@ -1,0 +1,71 @@
+{
+  "runId": "6d2a4b4d-1b67-4d87-a690-6f2564c14d78",
+  "status": "PASS",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "64dbfdfa9aefba6d2d97acfd407bff72bd9e5695d24b8650da170eba6044dcc7",
+  "testedAt": "2026-11-14T20:48:54.078Z",
+  "profileCleanup": "REMOVED_EMPTY",
+  "focusStatus": null,
+  "stage": null,
+  "rawReportSha256": "b9648f9864dfd724e06a9175962f4a620b2eba291a3d79877f13a87b4b691047",
+  "suites": [
+    {
+      "name": "remote-ui-contracts-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "main-remote-ui-ipc-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-runtime-intent-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconnection-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconciliation-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-devices-electron",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-pairing-electron",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "multi-instance",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    }
+  ],
+  "focus": "PASS"
+}

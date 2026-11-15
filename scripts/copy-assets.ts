@@ -22,6 +22,7 @@ fs.copyFileSync(path.join(projectRoot, 'src', 'welcome.css'), path.join(renderer
 fs.copyFileSync(path.join(projectRoot, 'src', 'catalog-import-dialog.css'), path.join(rendererOutput, 'catalog-import-dialog.css'))
 fs.copyFileSync(path.join(projectRoot, 'src', 'standalone-player.html'), path.join(rendererOutput, 'standalone-player.html'))
 fs.copyFileSync(path.join(projectRoot, 'src', 'standalone-player.css'), path.join(rendererOutput, 'standalone-player.css'))
+fs.copyFileSync(path.join(projectRoot, 'src', 'remote-ui.css'), path.join(rendererOutput, 'remote-ui.css'))
 fs.cpSync(path.join(projectRoot, 'src', 'assets'), path.join(rendererOutput, 'assets'), { recursive: true })
 
 // Keep the privileged media Renderer separate from the Controller UI bundle.
@@ -43,6 +44,8 @@ fs.writeFileSync(path.join(rendererOutput, 'standalone-player-renderer.bundle.js
     'standalone-player-interaction-transport',
     'standalone-player-metadata-preview',
     'standalone-player-current-track-info',
+    'remote-ui-contracts',
+    'standalone-remote-pairing-view',
     'standalone-player-renderer'
   ], './standalone-player-renderer'))
 
@@ -73,6 +76,7 @@ fs.writeFileSync(path.join(projectRoot, 'build', 'standalone-player-preload.bund
 const moduleNames = [
   'queue-rules', 'debut-cadence-rules', 'round-robin-rules', 'fixed-turn-rules', 'frozen-queue-rules', 'history-rules', 'singer-suggestions', 'persistence-contracts', 'licensing', 'management-projections', 'management-client',
   'ui/dom', 'ui/queue-view', 'ui/history-view', 'ui/queue-interactions',
-  'ui/table-dialog', 'ui/app-shell', 'ui/navigation', 'ui/sidebar-display-name', 'ui/settings-view', 'ui/previous-sessions-view', 'app'
+  'ui/table-dialog', 'ui/app-shell', 'ui/navigation', 'ui/sidebar-display-name', 'ui/settings-view', 'ui/previous-sessions-view',
+  'remote-ui-contracts', 'ui/remote-devices-view', 'app'
 ]
 fs.writeFileSync(path.join(rendererOutput, 'app.js'), bundleCommonJsModules(moduleNames, './app'))

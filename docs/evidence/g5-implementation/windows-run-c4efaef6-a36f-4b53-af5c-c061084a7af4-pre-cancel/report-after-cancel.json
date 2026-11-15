@@ -1,0 +1,15 @@
+{
+    "owner":  "karaoke-queue-windows-test-runner-v1",
+    "runId":  "c4efaef6-a36f-4b53-af5c-c061084a7af4",
+    "branch":  "feature/remote-player-lan-integration-3",
+    "head":  "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+    "fingerprint":  "709e862e214299b8e167faaecaba1debc9881093b4873e3ed0ee3fa03a579d74",
+    "stage":  "TEST",
+    "startedAt":  "2026-11-14T03:12:00.793Z",
+    "profileName":  "karaoke-queue-windows-e2e-c4efaef6-a36f-4b53-af5c-c061084a7af4",
+    "buildRecovery":  "Original build restored; interrupted build preserved under .git/karaoke-queue-build-cancelled-\u003crunId\u003e.",
+    "status":  "CANCELLED",
+    "reason":  "Owned worker and Electron profile processes stopped; temporary data cleaned.",
+    "cancelledAt":  "2026-11-14T12:40:23.9510397Z",
+    "lockRelease":  "attempted after PID/runId/token and process-tree verification"
+}

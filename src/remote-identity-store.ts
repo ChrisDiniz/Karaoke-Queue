@@ -93,6 +93,11 @@ export class RemoteIdentityStore {
     return this.coalesce('controller', () => this.loadOrCreateController())
   }
 
+  async loadControllerIdentity(): Promise<RemoteDeviceIdentity | undefined> {
+    const existing = await this.read('controller') as StoredControllerIdentity | undefined
+    return existing ? { schemaVersion: 1, role: 'controller', deviceId: existing.deviceId, createdAt: existing.createdAt } : undefined
+  }
+
   /** Reads the retained identity for local renewal recovery; callers must never expose it over TLS. */
   async loadPlayerIdentityForRenewal(): Promise<RemoteDeviceIdentity> {
     await this.secretProtector.assertAvailable()

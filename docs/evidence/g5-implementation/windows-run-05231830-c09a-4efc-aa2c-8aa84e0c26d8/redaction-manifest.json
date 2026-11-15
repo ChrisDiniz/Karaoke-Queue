@@ -1,0 +1,11 @@
+{
+  "purpose": "Redact local Windows paths from archived G5 runner evidence before snapshot transfer.",
+  "sourceContentPreservedByHash": true,
+  "entries": [
+    {
+      "file": "report-failed.json",
+      "sha256BeforeRedaction": "4a2edb68f1a705c59632c1b9e99c375a7ae6aa7b1824655fe6691bf12e3536d8",
+      "windowsPathsRedacted": 1
+    }
+  ]
+}

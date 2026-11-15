@@ -151,6 +151,9 @@ export interface RemoteTransportServerOptions {
   routes?: readonly RemoteHttpRoute[]
   messagePort?: RemoteTransportMessagePort
   logger?: RemoteTransportLogger
+  /** Sanitized lifecycle observation for Player UI; transport authentication does not imply reconciliation. */
+  onPeerState?(event: { readonly state: 'authorized' | 'closed'; readonly controllerId: string;
+    readonly closeCode?: number }): void
 }
 
 export interface RemoteTransportServer {
@@ -394,6 +397,7 @@ export function createRemoteTransportServer(options: RemoteTransportServerOption
         reservedId = undefined
         const channelInfo = { connectionId, peer, controllerId: peer.controllerId }
         activeChannels.set(webSocket, channelInfo)
+        try { options.onPeerState?.({ state: 'authorized', controllerId: peer.controllerId }) } catch { /* UI observer is isolated. */ }
         let handshakeComplete = false
         let pendingSendCount = 0
         const helloTimer = setTimeout(() => webSocket.close(1008, 'HELLO_TIMEOUT'), REMOTE_LIMITS.helloTimeoutMs)
@@ -468,13 +472,15 @@ export function createRemoteTransportServer(options: RemoteTransportServerOption
             await options.messagePort.onMessage({ channel, payload: operationalMessage })
           }).catch(() => webSocket.close(1011, 'INTERNAL_ERROR')).finally(() => { pendingMessages-- })
         })
-        webSocket.on('close', () => {
+        webSocket.on('close', (closeCode: number) => {
           connectionAbort.abort()
           clearTimeout(helloTimer)
           const pongTimeout = heartbeatTimeouts.get(webSocket)
           if (pongTimeout) clearTimeout(pongTimeout)
           heartbeatTimeouts.delete(webSocket)
           activeChannels.delete(webSocket)
+          try { options.onPeerState?.({ state: 'closed', controllerId: peer.controllerId, closeCode }) }
+          catch { /* UI observer is isolated. */ }
           if (controlSocket === webSocket) controlSocket = undefined
         })
       })

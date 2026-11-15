@@ -1,1 +1,5 @@
 tests/fixtures/operational-v1/oversized-utf8.json.txt whitespace=-blank-at-eol
+# Preserve native PowerShell evidence bytes and their historical SHA-256 hashes.
+docs/evidence/g5-implementation/windows-run-197b9924-d228-4bf1-a6a3-a9f8f2fc4464/report-after-cleanup.json whitespace=cr-at-eol
+docs/evidence/g5-implementation/windows-run-86c2075c-c466-4fc4-a592-46fa889e7372-pre-cancel/report-after-cancel.json whitespace=cr-at-eol
+docs/evidence/g5-implementation/windows-run-c4efaef6-a36f-4b53-af5c-c061084a7af4-pre-cancel/report-after-cancel.json whitespace=cr-at-eol

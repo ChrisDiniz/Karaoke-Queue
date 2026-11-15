@@ -58,6 +58,8 @@ type UiScalePreference = import('./src/ui/ui-scale').UiScalePreference
 type UiScaleState = import('./src/ui/ui-scale').UiScaleState
 type KaraokePlayerBridge = import('./src/player-ui-contracts').KaraokePlayerBridge
 type StandalonePlayerRendererBridge = import('./src/standalone-player-ipc-contracts').StandalonePlayerRendererApi
+type ManagementRemoteUiBridge = import('./src/remote-ui-contracts').ManagementRemoteUiBridge
+type PlayerRemoteUiBridge = import('./src/remote-ui-contracts').PlayerRemoteUiBridge
 
 interface KaraokeUiScaleBridge {
   getState: () => Promise<UiScaleState>
@@ -91,6 +93,8 @@ interface Window {
   karaokeLicense?: KaraokeLicenseBridge
   karaokePlayer?: KaraokePlayerBridge
   standalonePlayer?: StandalonePlayerRendererBridge
+  karaokeRemoteManagement?: ManagementRemoteUiBridge
+  karaokeRemotePlayer?: PlayerRemoteUiBridge
   __kqueue?: {
     queueLength: () => number
     sessionEnded: () => boolean

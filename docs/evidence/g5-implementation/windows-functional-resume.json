@@ -1,0 +1,29 @@
+{
+  "runId": "8aaf4447-a971-4e94-94ed-530b2e6e0557",
+  "status": "PASS",
+  "mode": "--remote-ui",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "3fe0fb9f977864be65fe1d18510e08b1706af7271d78507b98431d31d7ebccff",
+  "trackedPathCount": 496,
+  "snapshotFileCount": 630,
+  "testedAt": "2026-11-14T21:49:09.517Z",
+  "node": "v24.11.0",
+  "focus": "PASS",
+  "profileCleanup": "REMOVED_EMPTY",
+  "residualProcessCheck": "PASS",
+  "sourceSnapshot": "windows-run-8aaf4447-a971-4e94-94ed-530b2e6e0557/source-snapshot.json",
+  "sourceSnapshotSha256": "d15321088184ce5bf9647370406286a43a59e99b7b1d787062d5aed88fad1ba4",
+  "sanitizedReport": "windows-run-8aaf4447-a971-4e94-94ed-530b2e6e0557/report-sanitized.json",
+  "rawReportSha256": "b23e7b3a34acd1c8ed364e328938a3da7e7f8cb9c10dc1cbc6f4b8724ccf9be2",
+  "suites": [
+    { "name": "remote-ui-contracts-unit", "status": "PASS", "exitCode": 0 },
+    { "name": "main-remote-ui-ipc-unit", "status": "PASS", "exitCode": 0 },
+    { "name": "remote-runtime-intent-unit", "status": "PASS", "exitCode": 0 },
+    { "name": "remote-reconnection-unit", "status": "PASS", "exitCode": 0 },
+    { "name": "remote-reconciliation-unit", "status": "PASS", "exitCode": 0 },
+    { "name": "remote-devices-electron", "status": "PASS", "exitCode": 0 },
+    { "name": "remote-pairing-electron", "status": "PASS", "exitCode": 0 },
+    { "name": "multi-instance", "status": "PASS", "exitCode": 0 }
+  ]
+}

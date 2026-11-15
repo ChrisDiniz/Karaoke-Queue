@@ -75,7 +75,7 @@ body {
 
 .license-trial-controls {
   position: absolute;
-  right: 60px;
+  right: 104px;
   top: 50%;
   transform: translateY(-50%);
   display: flex;

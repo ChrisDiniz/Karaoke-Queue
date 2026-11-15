@@ -1,0 +1,88 @@
+#remote-devices-root { position: relative; z-index: 9000; color: #edeaf3; font-family: inherit; }
+#remote-devices-root [hidden] { display: none !important; }
+.remote-device-scrim { position: fixed; z-index: 0; inset: 64px 0 0; background: rgba(7, 6, 10, .58); }
+.remote-device-panel { position: fixed; z-index: 1; top: 64px; right: 0; bottom: 0; width: 510px; max-width: calc(100vw - 76px); display: flex; flex-direction: column; padding: 26px 28px 20px; border-left: 1px solid #37343e; background: #1a191f; box-shadow: -18px 0 50px rgba(0,0,0,.42); }
+.remote-device-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.remote-device-header h1, .remote-pairing-dialog h1 { margin: 5px 0 0; color: #f3f1f7; font-size: 22px; font-weight: 720; letter-spacing: -.02em; }
+.remote-device-kicker { color: #aaa3ff; font-size: 11px; font-weight: 750; letter-spacing: .13em; }
+.remote-icon-button { width: 38px; height: 38px; border: 1px solid #484550; border-radius: 9px; background: #24222a; color: #dedbe5; font-size: 23px; line-height: 1; cursor: pointer; }
+.remote-icon-button:hover, .remote-button:hover { filter: brightness(1.12); }
+.remote-device-description { margin: 12px 0 18px; color: #b8b4c0; font-size: 14px; line-height: 1.55; }
+.remote-discovery-status { min-height: 42px; display: flex; align-items: center; padding: 0 12px; border: 1px solid #393640; border-radius: 8px; background: #232128; color: #c5c0d0; font-size: 13px; }
+.remote-inline-state { margin: 12px 0 0; padding: 11px 13px; border: 1px solid #484550; border-radius: 8px; font-size: 13px; line-height: 1.45; }
+.remote-inline-state--info { background: #23212d; color: #c7c2ff; }
+.remote-inline-state--warning { border-color: #6e5631; background: #30281d; color: #efd399; }
+.remote-inline-state--error { border-color: #704347; background: #2e2023; color: #ffaaa9; }
+.remote-inline-state--success { border-color: #315d49; background: #1e2c25; color: #9ce1b8; }
+.remote-device-list { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 2px 14px 0; }
+.remote-device-card { position: relative; margin: 0 0 11px; padding: 15px; border: 1px solid #393640; border-radius: 10px; background: #211f26; }
+.remote-operation-list { min-height: 0; max-height: 40%; overflow-y: auto; margin-top: 24px; padding-top: 18px; border-top: 1px solid #393640; }
+.remote-operation-list h2 { margin: 0 0 12px; color: #c9c5ce; font-size: 13px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.remote-device-title { color: #f1eef6; font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
+.remote-device-subtitle { margin-top: 6px; color: #aaa6b2; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.remote-device-state { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; margin-top: 9px; padding: 5px 9px; border: 1px solid; border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 1.35; overflow-wrap: anywhere; }
+.remote-device-state::before { width: 7px; height: 7px; flex: none; border-radius: 50%; background: currentColor; content: ""; }
+.remote-device-state--info { border-color: #514b74; background: #28253a; color: #c8c2ff; }
+.remote-device-state--pending { border-color: #6e5631; background: #30281d; color: #efd399; }
+.remote-device-state--offline { border-color: #484550; background: #24222a; color: #b9b5c1; }
+.remote-device-state--error { border-color: #704347; background: #2e2023; color: #ffaaa9; }
+.remote-device-reason { margin-top: 7px; color: #e4bd79; font-size: 11px; overflow-wrap: anywhere; }
+.remote-device-unverified { display: block; margin-top: 12px; color: #e8bd68; font-size: 10px; font-weight: 750; letter-spacing: .06em; }
+.remote-button { min-height: 40px; padding: 0 14px; border: 1px solid #484550; border-radius: 8px; background: #24222a; color: #f0edf5; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.remote-button:focus-visible, .remote-icon-button:focus-visible, .remote-code-input:focus-visible { outline: 3px solid rgba(165,166,255,.72); outline-offset: 2px; }
+.remote-button--primary { border-color: #625cf3; background: #625cf3; color: #fff; }
+.remote-candidate-button { display: block; margin: 13px 0 0 auto; }
+.remote-device-actions { display: flex; justify-content: flex-end; gap: 9px; padding-top: 12px; border-top: 1px solid #302e37; }
+.remote-empty-state { display: grid; justify-items: center; gap: 10px; margin-top: 8px; padding: 28px 18px; border: 1px solid #393640; border-radius: 10px; background: #211f26; text-align: center; }
+.remote-empty-state > span { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: #29263a; color: #b7afff; font-size: 22px; }
+.remote-empty-state strong { color: #eeeaf4; font-size: 14px; }
+.remote-empty-state p { max-width: 320px; color: #aaa6b2; font-size: 12px; line-height: 1.45; }
+.remote-device-scrim--modal { inset: 0; z-index: 2; background: rgba(5, 4, 9, .74); }
+.remote-pairing-dialog { position: fixed; z-index: 3; top: 50%; left: calc(50% + 38px); width: 580px; max-width: calc(100vw - 110px); max-height: calc(100vh - 40px); overflow-y: auto; transform: translate(-50%, -50%); padding: 30px 32px 26px; border: 1px solid #494551; border-radius: 15px; background: #1a191f; box-shadow: 0 24px 80px rgba(0,0,0,.66); }
+.remote-pairing-dialog .remote-device-description { margin-bottom: 20px; }
+.remote-pairing-dialog .remote-device-actions { margin-top: 18px; border-top: 0; }
+.remote-waiting { padding: 14px; border: 1px solid #514b74; border-radius: 8px; background: #28253a; color: #d2ceff; font-size: 13px; line-height: 1.45; }
+.remote-code-label { display: block; margin: 18px 0 8px; color: #f0edf5; font-size: 13px; font-weight: 650; }
+.remote-code-input { width: 100%; height: 58px; border: 1px solid #625cf3; border-radius: 9px; background: #24222a; color: #fff; font-family: ui-monospace, Consolas, monospace; font-size: 24px; letter-spacing: .24em; text-align: center; }
+@media (max-width: 1000px) {
+  .remote-device-panel { width: min(510px, calc(100vw - 76px)); padding: 20px 18px 14px; }
+  .remote-device-scrim { inset: 64px 0 0 76px; }
+  .remote-pairing-dialog { left: calc(50% + 38px); max-width: calc(100vw - 110px); padding: 24px 20px 18px; }
+  .remote-device-actions { flex-wrap: wrap; }
+}
+@media (max-height: 650px) {
+  .remote-device-panel { padding-top: 14px; }
+  .remote-device-description { margin: 8px 0 10px; }
+  .remote-device-list { padding-top: 8px; }
+}
+.remote-player-enable, .remote-player-disable { min-height: 26px; align-self: flex-start; padding: 3px 9px; border: 1px solid rgba(165,166,255,.52); border-radius: 6px; background: rgba(79,77,170,.28); color: #e0ddff; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+.remote-player-disable { border-color: rgba(230,196,147,.38); background: rgba(104,75,38,.2); color: #efd399; }
+.remote-player-enable:focus-visible, .remote-player-disable:focus-visible { outline: 3px solid rgba(165,166,255,.72); outline-offset: 2px; }
+.remote-player-overlay { position: fixed; z-index: 1000; background: rgba(6,6,11,.82); }
+.remote-player-dialog { width: 600px; max-width: calc(100% - 24px); padding: 30px 32px 24px; }
+.remote-player-dialog h1 { color: #f1f1f4; font-size: 24px; font-weight: 720; letter-spacing: -.02em; line-height: 1.25; }
+.remote-player-dialog p { margin: 10px 0 0; color: #b9b9c4; font-size: 14px; line-height: 1.55; }
+.remote-player-label { display: block; margin: 20px 0 8px; color: #eceaf2; font-size: 13px; font-weight: 650; }
+.remote-player-select { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid #494651; border-radius: 8px; background: #222127; color: #f1eef6; font: inherit; }
+.remote-player-warning { padding: 12px 14px; border: 1px solid #514530; border-radius: 8px; background: #2a251d; color: #e7ca92 !important; font-size: 12px !important; }
+.remote-player-eyebrow { margin-bottom: 12px; color: #aaa6ff; font-size: 11px; font-weight: 750; letter-spacing: .14em; }
+.remote-player-requester { display: grid; gap: 4px; margin: 18px 0; padding: 13px 15px; border: 1px solid #3b3843; border-radius: 8px; background: #24222a; }
+.remote-player-requester strong { color: #f1eef6; font-size: 14px; }
+.remote-player-requester span { color: #e8bd68; font-size: 12px; }
+.remote-player-temporary-code { margin: 22px 0 14px; padding: 19px 12px; border: 1px solid #625cf3; border-radius: 10px; background: #211e2a; color: #fff; font-family: ui-monospace, Consolas, monospace; font-size: clamp(30px, 6vw, 42px); font-weight: 650; letter-spacing: .2em; line-height: 1.1; text-align: center; user-select: text; }
+.remote-player-countdown { color: #aaa6b2 !important; font-size: 12px !important; }
+.remote-player-result { margin-top: 16px !important; padding: 13px 15px; border: 1px solid #484550; border-radius: 8px; background: #24222a; }
+.remote-player-result--success { border-color: #315d49; background: #1e2c25; color: #9ce1b8 !important; }
+.remote-player-result--warning { border-color: #6e5631; background: #30281d; color: #efd399 !important; }
+.remote-player-result--error { border-color: #704347; background: #2e2023; color: #ffaaa9 !important; }
+.remote-player-playback-toast, .remote-player-action-toast { position: fixed; z-index: 8500; top: 26px; left: 50%; transform: translateX(-50%); min-height: 44px; max-width: calc(100vw - 32px); padding: 0 16px; display: flex; align-items: center; gap: 10px; border: 1px solid rgba(228,187,112,.38); border-radius: 9px; background: rgba(19,20,25,.94); backdrop-filter: blur(10px); box-shadow: 0 10px 32px rgba(0,0,0,.28); color: #f0d29e; font-size: 12px; font-weight: 650; text-align: center; }
+.remote-player-playback-toast[hidden], .remote-player-action-toast[hidden] { display: none !important; }
+.remote-player-playback-toast[data-tone="success"], .remote-player-action-toast[data-tone="success"] { border-color: rgba(69,206,128,.34); color: #baf0cd; }
+.remote-player-playback-toast svg, .remote-player-action-toast svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 560px) {
+  .remote-player-dialog { padding: 22px 18px 16px; }
+  .remote-player-dialog .stop-confirmation-actions { gap: 8px; }
+  .remote-player-dialog .stop-confirmation-button { min-width: 0; flex: 1; padding: 0 8px; }
+  .remote-player-temporary-code { letter-spacing: .12em; }
+  .remote-player-playback-toast, .remote-player-action-toast { min-height: 40px; padding: 0 12px; font-size: 11px; white-space: normal; }
+}

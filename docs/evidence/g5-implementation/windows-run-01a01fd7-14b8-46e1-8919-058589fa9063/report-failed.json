@@ -1,0 +1,57 @@
+{
+  "owner": "karaoke-queue-windows-test-runner-v1",
+  "runId": "01a01fd7-14b8-46e1-8919-058589fa9063",
+  "status": "FAIL",
+  "stage": "TEST",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "fingerprint": "2512c07f03782191336e1d128f8839812a81059de26b3f8dbd148c11c4f1fcc2",
+  "suites": [
+    {
+      "name": "remote-ui-contracts-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "main-remote-ui-ipc-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconnection-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-reconciliation-unit",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-devices-electron",
+      "status": "PASS",
+      "exitCode": 0,
+      "signal": null,
+      "errorCode": null
+    },
+    {
+      "name": "remote-pairing-electron",
+      "status": "FAIL",
+      "exitCode": 1,
+      "signal": null,
+      "errorCode": null
+    }
+  ],
+  "focus": "NOT RUN",
+  "profileCleanup": "REMOVED_EMPTY",
+  "reason": "E2E Windows remote-pairing-electron falhou com código 1: (node:11124) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\nSanitized restored-connection diagnostics: {\"management\":{\"snapshot\":{\"connections\":[{\"deviceId\":\"d32ab061-ecbd-4109-872e-87c138d023d5\",\"deviceRole\":\"player\",\"state\":\"backoff\",\"reason\":\"REMOTE_CONNECTION_ERROR\",\"retryAt\":1794664534630,\"reconciled\":false}],\"trace\":[{\"at\":2324,\"revision\":1,\"connections\":[]},{\"at\":2327,\"revision\":2,\"connections\":[]},{\"at\":25274,\"revision\":3,\"connections\":[]},{\"at\":25321,\"revision\":4,\"connections\":[]},{\"at\":25428,\"revision\":5,\"connections\":[{\"state\":\"connecting\",\"reconciled\":false,\"reason\":null}]},{\"at\":25430,\"revision\":6,\"connections\":[{\"state\":\"connecting\",\"reconciled\":false,\"reason\":null}]},{\"at\":25435,\"revision\":7,\"connections\":[{\"state\":\"connecting\",\"reconciled\":false,\"reason\":null}]},{\"at\":25439,\"revision\":8,\"connections\":[{\"state\":\"connecting\",\"reconciled\":false,\"reason\":null}]},{\"at\":25516,\"revision\":9,\"connections\":[{\"state\":\"reconciling\",\"reconciled\":false,\"reason\":null}]},{\"at\":25522,\"revision\":10,\"connections\":[{\"state\":\"reconciling\",\"reconciled\":false,\"reason\":null}]},{\"at\":25619,\"revision\":11,\"connections\":[{\"state\":\"reconciling\",\"reconciled\":false,\"reason\":null}]},{\"at\":25625,\"revision\":12,\"connections\":[{\"state\":\"reconciling\",\"reconciled\":false,\"reason\":null}]},{\"at\":25631,\"revision\":13,\"connections\":[{\"state\":\"synchronized\",\"reconciled\":true,\"reason\":null}]},{\"at\":25754,\"revision\":14,\"connections\":[{\"state\":\"synchronized\",\"reconciled\":true,\"reason\":null}]},{\"at\":25844,\"revision\":15,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_CHANNEL_CLOSED\"}]},{\"at\":25852,\"revision\":16,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_CHANNEL_CLOSED\"}]},{\"at\":26083,\"revision\":17,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_CHANNEL_CLOSED\"}]},{\"at\":26954,\"revision\":18,\"connections\":[{\"state\":\"connecting\",\"reconciled\":false,\"reason\":null}]},{\"at\":29009,\"revision\":19,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_CONNECTION_ERROR\"}]},{\"at\":29014,\"revision\":20,\"connections\":[{\"state\":\"backoff\",\"reconciled\":false,\"reason\":\"REMOTE_CONNECTION_ERROR\"}]}]},\"renderedState\":\"backoff\"},\"player\":{\"snapshot\":{\"listener\":\"advertising\",\"intent\":\"enabled\",\"pairing\":\"active\",\"connections\":[]},\"trace\":[]},\"proxy\":{\"accepted\":12,\"closed\":24,\"closureEvents\":[{\"side\":\"client\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2044,\"clientBytesWritten\":5291,\"upstreamBytesRead\":5291,\"upstreamBytesWritten\":2044},{\"side\":\"upstream\",\"event\":\"end\",\"hadError\":false,\"clientBytesRead\":2056,\"clientBytesWritten\":3445,\"upstreamBytesRead\":3445,\"upstreamBytesWritten\":2056},{\"side\":\"upstream\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2056,\"clientBytesWritten\":3445,\"upstreamBytesRead\":3445,\"upstreamBytesWritten\":2056},{\"side\":\"client\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2056,\"clientBytesWritten\":3445,\"upstreamBytesRead\":3445,\"upstreamBytesWritten\":2056},{\"side\":\"upstream\",\"event\":\"end\",\"hadError\":false,\"clientBytesRead\":2050,\"clientBytesWritten\":3439,\"upstreamBytesRead\":3439,\"upstreamBytesWritten\":2050},{\"side\":\"upstream\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2050,\"clientBytesWritten\":3439,\"upstreamBytesRead\":3439,\"upstreamBytesWritten\":2050},{\"side\":\"client\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":2050,\"clientBytesWritten\":3439,\"upstreamBytesRead\":3439,\"upstreamBytesWritten\":2050},{\"side\":\"client\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":3331,\"clientBytesWritten\":5742,\"upstreamBytesRead\":5742,\"upstreamBytesWritten\":3331},{\"side\":\"upstream\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":3331,\"clientBytesWritten\":5742,\"upstreamBytesRead\":5742,\"upstreamBytesWritten\":3331},{\"side\":\"upstream\",\"event\":\"error\",\"hadError\":false,\"clientBytesRead\":1520,\"clientBytesWritten\":0,\"upstreamBytesRead\":0,\"upstreamBytesWritten\":1520},{\"side\":\"upstream\",\"event\":\"close\",\"hadError\":true,\"clientBytesRead\":1520,\"clientBytesWritten\":0,\"upstreamBytesRead\":0,\"upstreamBytesWritten\":1520},{\"side\":\"client\",\"event\":\"close\",\"hadError\":false,\"clientBytesRead\":1520,\"clientBytesWritten\":0,\"upstreamBytesRead\":0,\"upstreamBytesWritten\":1520}],\"active\":0}}\nAssertionError [ERR_ASSERTION]: Management presents the real restored transport state, received backoff\n    at run ([WINDOWS_PATH_REDACTED]\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: false,\n  expected: true,\n  operator: '==',\n  diff: 'simple'\n}\n",
+  "testedAt": "2026-11-14T13:55:35.899Z"
+}

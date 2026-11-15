@@ -80,7 +80,7 @@ test('DHCP discovery supplies a new address and port only as a candidate for the
 })
 
 test('temporary WSS close schedules reconnect and elects one replacement channel', async () => {
-  const clock = new Clock(); let connectionCount = 0; let notifyClose: (() => void) | undefined
+  const clock = new Clock(); let connectionCount = 0; let notifyClose: ((closeCode?: number) => void) | undefined
   const service = new RemoteReconnectionService({
     async connect() {
       connectionCount++
@@ -94,8 +94,10 @@ test('temporary WSS close schedules reconnect and elects one replacement channel
   }, clock)
   await service.start([peer]); await clock.tick()
   assert.equal(service.status(peer.playerId)?.state, 'synchronized')
-  notifyClose?.()
+  notifyClose?.(1006)
   assert.equal(service.status(peer.playerId)?.state, 'backoff')
+  assert.equal(service.status(peer.playerId)?.closeCode, 1006,
+    'the sanitized numeric WSS close code remains available to Main diagnostics')
   assert.equal(clock.timers.size, 1)
   await clock.tick()
   assert.equal(connectionCount, 2)

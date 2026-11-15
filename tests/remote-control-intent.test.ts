@@ -498,3 +498,157 @@ test('A4: a newer enabled choice fences Player startup awaiting the persisted in
     assert.equal(await isListening(port), false, 'the stale startup never opens a listener after the new transition')
   } finally { release(); await runtime.close(); await fs.rm(directory, { recursive: true, force: true }) }
 })
+
+test('G5 Main snapshots and operation queries read the live G4 connection state', async () => {
+  const directory = await temporaryDirectory()
+  const runtime = new MainRemoteRuntime({ mode: 'combined', userDataDirectory: directory, safeStorage: safeStorage() })
+  const playerId = '6f6aaf36-d647-43a1-9157-d6387ebed9ac'
+  const synchronized = { playerId, state: 'synchronized', reason: null, connectionId: 'current-channel',
+    synchronized: true, retryAt: null }
+  const internal = runtime as any
+  const pairingState: any = {
+    controllerAuthorities: { [playerId]: { playerId, phase: 'active', address: '127.0.0.1', port: 47831 } }, journals: []
+  }
+  internal.pairingStore = { read: async () => pairingState }
+  internal.remoteUiConnections.set(playerId, { ...synchronized, state: 'backoff', synchronized: false,
+    reason: 'REMOTE_CONNECTION_ERROR', retryAt: 1 })
+  let currentStatus: any = synchronized
+  const service: any = { status: () => currentStatus, close: async () => undefined }
+  internal.managementReconnect = service
+  let queriedOperationId: string | undefined
+  internal.managementReconnectAdapter = {
+    listOperations: () => [],
+    queryOperationStatus: async (_peerId: string, operationId: string) => {
+      queriedOperationId = operationId
+      return { outcome: 'not-found', record: {} }
+    }
+  }
+
+  try {
+    const snapshot = await runtime.getRemoteUiSnapshot('management')
+    assert.equal(snapshot.connections[0]?.state, 'synchronized',
+      'a delayed UI cache cannot overwrite the live G4 service state')
+    assert.equal(snapshot.connections[0]?.reconciled, true)
+    assert.equal(await runtime.queryRemoteOperationStatus(playerId, 'original-operation-id'), 'not-found',
+      'operation status remains available only through the current synchronized connection')
+    assert.equal(queriedOperationId, 'original-operation-id', 'the Main facade preserves the original operationId')
+
+    currentStatus = { ...synchronized, state: 'recovery_required', reason: 'PAIRING_RECOVERY_REQUIRED',
+      connectionId: null, synchronized: false }
+    for (const [phase, recoveryActionAvailable] of [['bound', true], ['uncertain', false]] as const) {
+      pairingState.journals = [{ role: 'controller', context: { playerId }, phase }]
+      const recoverySnapshot = await runtime.getRemoteUiSnapshot('management')
+      assert.deepEqual(recoverySnapshot.savedDevices[0] && {
+        playerId: recoverySnapshot.savedDevices[0].playerId,
+        recoveryRequired: recoverySnapshot.savedDevices[0].recoveryRequired,
+        recoveryActionAvailable: recoverySnapshot.savedDevices[0].recoveryActionAvailable
+      }, { playerId, recoveryRequired: true, recoveryActionAvailable },
+      `Main carries the ${phase} G2 journal into the saved-device recovery state without inventing an action`)
+      assert.equal(recoverySnapshot.connections[0]?.state, 'recovery_required',
+        'the recovery-required G4 service state takes precedence over a delayed backoff cache')
+      assert.equal(recoverySnapshot.connections[0]?.reconciled, false,
+        'a recovery-required connection is never exposed as technically reconciled')
+    }
+
+    delete pairingState.controllerAuthorities[playerId]
+    pairingState.journals = [{ role: 'controller', context: { playerId, purpose: 'initial' }, phase: 'bound',
+      operationId: 'must-not-cross-the-renderer-boundary' }]
+    const initialPairingRecovery = await runtime.getRemoteUiSnapshot('management')
+    assert.deepEqual(initialPairingRecovery.savedDevices, [],
+      'a pre-authority initial pairing journal is not fabricated into an active saved device')
+    assert.deepEqual(initialPairingRecovery.pairingRecoveries,
+      [{ playerId, recoveryActionAvailable: true }],
+      'Main exposes only the identity and supported recovery affordance for a journal without an authority')
+    assert.equal(JSON.stringify(initialPairingRecovery.pairingRecoveries).includes('must-not-cross-the-renderer-boundary'), false,
+      'operation and journal internals do not cross into the Renderer recovery projection')
+
+    pairingState.journals = [{ role: 'controller', context: { playerId, purpose: 'initial' }, phase: 'uncertain' }]
+    const uncertainInitialPairing = await runtime.getRemoteUiSnapshot('management')
+    assert.deepEqual(uncertainInitialPairing.pairingRecoveries,
+      [{ playerId, recoveryActionAvailable: false }],
+      'an uncertain pre-authority journal blocks duplicate pairing without inventing a G2 recovery action')
+    pairingState.controllerAuthorities[playerId] = { playerId, phase: 'active', address: '127.0.0.1', port: 47831 }
+    pairingState.journals = []
+    currentStatus = synchronized
+
+    let notifications = 0
+    const unsubscribe = runtime.subscribeRemoteUi(() => notifications++)
+    const finalStatus = { ...synchronized, state: 'closed', connectionId: null, synchronized: false,
+      reason: 'REMOTE_DISABLED' }
+    service.status = () => finalStatus
+    service.close = async () => {
+      internal.publishManagementReconnectStatus(service, 0, { ...synchronized, state: 'stopping', synchronized: false })
+      internal.publishManagementReconnectStatus(service, 0, finalStatus)
+    }
+    await internal.stopManagementReconnection()
+    const stoppedSnapshot = await runtime.getRemoteUiSnapshot('management')
+    assert.equal(stoppedSnapshot.connections[0]?.state, 'closed',
+      'the stopped service publishes its final state after fencing callbacks')
+    assert.equal(notifications, 1, 'late close callbacks do not publish stale snapshots')
+
+    internal.pairingStore = { read: async () => { throw new Error('/private/profile/remote-authorization.json') } }
+    const unreadablePairingStore = await runtime.getRemoteUiSnapshot('management')
+    assert.equal(unreadablePairingStore.pairingStoreStatus, 'unavailable',
+      'Main marks an unreadable durable G2 store unavailable instead of treating it as an empty list')
+    assert.deepEqual(unreadablePairingStore.savedDevices, [])
+    assert.deepEqual(unreadablePairingStore.pairingRecoveries, [])
+    assert.equal(JSON.stringify(unreadablePairingStore).includes('/private/profile'), false,
+      'a filesystem path or store exception never crosses the Renderer boundary')
+
+    await runtime.close()
+    internal.publishManagementReconnectStatus(service, 0, synchronized)
+    assert.equal(notifications, 1, 'callbacks after Main shutdown are ignored')
+    unsubscribe()
+  } finally {
+    await runtime.close()
+    await fs.rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('G5 pairing renewal restarts peer reconciliation without fencing the current Main callback generation', async () => {
+  const directory = await temporaryDirectory()
+  const runtime = new MainRemoteRuntime({ mode: 'combined', userDataDirectory: directory, safeStorage: safeStorage() })
+  const playerId = '5d97d098-7c9f-4ba1-a21c-8eebf513a260'
+  const authority: any = { playerId, phase: 'active', address: '127.0.0.1', port: 47831,
+    certificateFingerprintSha256: 'b'.repeat(64), serverName: `player-${playerId}.karaoke.invalid`,
+    credentialGeneration: 2 }
+  const peer = { playerId, fingerprintSha256: authority.certificateFingerprintSha256,
+    serverName: authority.serverName, port: authority.port, lastAddress: authority.address,
+    active: true, credentialGeneration: authority.credentialGeneration }
+  const internal = runtime as any
+  internal.pairingStore = { read: async () => ({ controllerAuthorities: { [playerId]: authority }, journals: [] }) }
+  await runtime.setRemoteControlIntent('enabled')
+  const serviceGeneration = internal.managementReconnectGeneration
+  let removedPeer = false
+  let startedPeers: unknown[] = []
+  const service = {
+    removePeer: async (id: string) => { assert.equal(id, playerId); removedPeer = true },
+    start: async (peers: readonly unknown[]) => { startedPeers = [...peers] },
+    updateDiscovery: () => undefined,
+    status: () => null,
+    close: async () => undefined
+  }
+  internal.managementReconnect = service
+  internal.managementReconnectAdapter = { savedPeers: async () => [peer], listOperations: () => [] }
+
+  try {
+    await runtime.acceptG2PairingUpdate(playerId)
+    await runtime.enableManagementReconnection({} as any, ['127.0.0.1'])
+    assert.equal(removedPeer, true, 'the old channel is fenced when the persisted pairing authority changes')
+    assert.deepEqual(startedPeers, [peer], 'the existing service is restarted with the new persisted credential generation')
+    assert.equal(internal.managementReconnectGeneration, serviceGeneration,
+      'idempotent enable does not invalidate the callback captured by the active Main service')
+
+    internal.publishManagementReconnectStatus(service, serviceGeneration, {
+      playerId, state: 'synchronized', reason: null, connectionId: 'renewed-channel', synchronized: true, retryAt: null
+    })
+    const snapshot = await runtime.getRemoteUiSnapshot('management')
+    assert.deepEqual(snapshot.connections.map(connection => ({ playerId: connection.deviceId,
+      state: connection.state, reconciled: connection.reconciled })),
+    [{ playerId, state: 'synchronized', reconciled: true }],
+    'the renewed peer reconciliation reaches the Main snapshot instead of being discarded as stale')
+  } finally {
+    await runtime.close()
+    await fs.rm(directory, { recursive: true, force: true })
+  }
+})

@@ -41,6 +41,7 @@
     "test:e2e:multi-instance:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/multi-instance-electron.js",
     "test:e2e:multi-instance:windows": "node scripts/run-windows-native-tests.cjs",
     "test:e2e:remote-infrastructure:windows": "node scripts/run-windows-native-tests.cjs --remote-infrastructure",
+    "test:e2e:remote-ui:windows": "node scripts/run-windows-native-tests.cjs --remote-ui",
     "test:e2e:operational-store:windows": "node scripts/run-windows-native-tests.cjs --operational-store",
     "package:windows:candidate": "node scripts/run-windows-native-tests.cjs --package-candidate",
     "test:e2e:operating-modes:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/operating-modes-electron.js",
@@ -52,9 +53,12 @@
     "test:e2e:standalone-exit-ipc:headless": "npm run compile && env -u WAYLAND_DISPLAY KQ_STANDALONE_IPC_EXIT_ONLY=1 xvfb-run -a node build/tests/standalone-player-ipc-electron.js",
     "test:e2e:standalone-integration:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/standalone-player-integration-electron.js",
     "test:e2e:standalone-ui:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/standalone-player-ui-electron.js",
+    "test:e2e:remote-ui:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/remote-devices-electron.test.js",
     "test:e2e:standalone-options:headless": "npm run compile && env -u WAYLAND_DISPLAY KQ_STANDALONE_C8_ONLY=1 xvfb-run -a node build/tests/standalone-player-ui-electron.js",
     "test:e2e:standalone-exit:headless": "npm run compile && env -u WAYLAND_DISPLAY KQ_STANDALONE_C9_ONLY=1 xvfb-run -a node build/tests/standalone-player-ui-electron.js",
     "test:e2e:standalone-production:headless": "npm run compile && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/standalone-player-production-electron.js",
+    "test:e2e:g5-playback-toast:headless": "npm run compile && env -u WAYLAND_DISPLAY KQ_G5_PLAYBACK_TOAST_ONLY=1 xvfb-run -a node build/tests/standalone-player-production-electron.js",
+    "test:e2e:g5-pairing-store-failure:headless": "npm run compile && env -u WAYLAND_DISPLAY KQ_G5_PAIRING_STORE_FAILURE_ONLY=1 xvfb-run -a node build/tests/standalone-player-production-electron.js",
     "test:e2e:f0-structural:headless": "npm run compile && env -u WAYLAND_DISPLAY KQ_F0_STRUCTURAL_ONLY=1 xvfb-run -a node build/tests/standalone-player-production-electron.js && env -u WAYLAND_DISPLAY xvfb-run -a node build/tests/f0-bootstrap-electron.js",
     "test:e2e:standalone-production:windows": "npm run test:e2e:multi-instance:windows -- --standalone-production",
     "test:e2e:standalone-playback:windows": "npm run test:e2e:multi-instance:windows -- --standalone-playback",
@@ -90,7 +94,8 @@
     "test:unit:remote-reconciliation": "npm run compile && node --test build/tests/remote-reconciliation.test.js",
     "test:unit:g4": "npm run compile && node --test build/tests/remote-control-intent.test.js build/tests/remote-reconnection.test.js build/tests/remote-reconciliation.test.js build/tests/player-operational-store.test.js build/tests/management-remote-journal.test.js build/tests/database-migration.test.js",
     "test:e2e:g4": "npm run compile && node scripts/pairing-process-integration.test.cjs --operational",
-    "test:e2e:g4:windows": "node scripts/run-windows-native-tests.cjs --g4-reconnection"
+    "test:e2e:g4:windows": "node scripts/run-windows-native-tests.cjs --g4-reconnection",
+    "test:unit:remote-query-timeout": "npm run compile && node --test tests/remote-operation-query-timeout.test.cjs"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

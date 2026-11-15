@@ -1,0 +1,21 @@
+{
+  "purpose": "Redact local Windows paths from archived G5 runner evidence before snapshot transfer.",
+  "sourceContentPreservedByHash": true,
+  "entries": [
+    {
+      "file": "report-failed.json",
+      "sha256BeforeRedaction": "298c77e10ab836e254eddad1af9338b37b3aa4be3d0a2f55042d4813031771df",
+      "windowsPathsRedacted": 1
+    },
+    {
+      "file": "cleanup-before-profile-removal.json",
+      "sha256BeforeRedaction": "0b649c23f7c35074af91883872e3faa5bd37fe794f12c9ba22bee0e6e507d452",
+      "windowsPathsRedacted": 1
+    },
+    {
+      "file": "failure-observation.md",
+      "sha256BeforeRedaction": "06b317aa074becca4f2be480eae377abfde69e33bd150d85610852e432254f77",
+      "windowsPathsRedacted": 1
+    }
+  ]
+}

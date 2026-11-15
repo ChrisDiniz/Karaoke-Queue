@@ -4,22 +4,15 @@ export {}
 const assert = require('node:assert/strict')
 const { spawn } = require('node:child_process')
 const fs = require('node:fs')
-const os = require('node:os')
 const path = require('node:path')
 const { DatabaseSync } = require('node:sqlite')
 const { _electron: electron } = require('playwright')
 const { prepareControllerModeProfile } = require('./electron-test-profile')
+const { createElectronTestTempRoot } = require('./electron-test-lifecycle')
 
 const projectRoot = path.resolve(__dirname, '../..')
 const electronPath = require('electron')
-const configuredTempRoot = process.env.KARAOKE_TEST_TEMP_ROOT
-const tempRoot = configuredTempRoot
-  ? path.resolve(configuredTempRoot)
-  : fs.mkdtempSync(path.join(os.tmpdir(), 'karaoke-multi-instance-'))
-if (configuredTempRoot) {
-  if (fs.existsSync(tempRoot)) throw new Error('The requested isolated test root already exists: ' + tempRoot)
-  fs.mkdirSync(tempRoot, { recursive: false })
-}
+const tempRoot = createElectronTestTempRoot('karaoke-multi-instance-')
 process.stdout.write('TEST_PROFILE_RUN ' + path.basename(tempRoot) + '\n')
 
 function makeProfile(name) {

@@ -61,7 +61,7 @@ function options(userDataDirectory: string, extra: Partial<PlayerOperationalStor
   return { userDataDirectory, journalId, deviceId, ...extra }
 }
 
-/** Recreates the schema-1 checkpoint key so the real in-place v1→v2 migration is exercised. */
+/** Recreates the schema-1 checkpoint key so the real in-place v1→v3 migrations are exercised. */
 function downgradeOperationalStoreToSchema1(userDataDirectory: string): void {
   const database = new DatabaseSync(path.join(userDataDirectory, PLAYER_OPERATIONAL_DATABASE_FILENAME))
   try {

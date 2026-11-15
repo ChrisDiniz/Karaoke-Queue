@@ -555,7 +555,8 @@ async function runCombinedOneControllerDatabaseAndRestart() {
 
     const databasePath = path.join(profile.userData, 'karaoke.sqlite')
     const sqliteFiles = fs.readdirSync(profile.userData).filter(name => /\.sqlite(?:3)?$/.test(name))
-    assert.deepEqual(sqliteFiles, ['karaoke.sqlite'], 'Combined must reuse the one authoritative Controller database')
+    assert.deepEqual(sqliteFiles.filter(name => name !== 'remote-control-intent.sqlite'), ['karaoke.sqlite'],
+      'Combined must reuse the one authoritative Controller database; remote intent storage is auxiliary and separate')
     const confirmed = readOperationalState(databasePath)
     assert.equal(confirmed.entries.length, 1)
     assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1,

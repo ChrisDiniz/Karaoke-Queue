@@ -1,0 +1,12 @@
+{
+  "stage": "rendered-connection-after-normal-restart",
+  "occurredAt": "2026-11-14T17:38:22.285Z",
+  "errorName": "AssertionError",
+  "errorCode": null,
+  "assertion": {
+    "operator": "==",
+    "actual": false,
+    "expected": true,
+    "message": "Management presents the real restored transport state, received backoff"
+  }
+}

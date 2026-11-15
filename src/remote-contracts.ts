@@ -49,7 +49,7 @@ export interface RemoteDeviceIdentity {
 }
 
 export interface DiscoveryCandidate {
-  /** New for each observed candidate; this value does not identify or authorize a peer. */
+  /** Opaque Main lookup handle, never peer identity or authorization; unchanged live Bonjour targets retain it. */
   candidateId: string
   instanceName: string
   displayName: string

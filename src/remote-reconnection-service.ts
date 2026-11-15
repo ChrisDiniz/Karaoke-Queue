@@ -19,7 +19,7 @@ export interface RemotePeerChannel {
   readonly fingerprintSha256: string
   readonly credentialGeneration: number
   close(): Promise<void> | void
-  onClose?(listener: () => void): () => void
+  onClose?(listener: (closeCode?: number) => void): () => void
 }
 
 export interface RemoteReconnectPort {
@@ -50,6 +50,7 @@ export interface RemotePeerStatus {
   readonly connectionId: string | null
   readonly synchronized: boolean
   readonly retryAt: number | null
+  readonly closeCode?: number
 }
 
 interface ReconnectionEntry {
@@ -57,6 +58,7 @@ interface ReconnectionEntry {
   state: RemoteConnectionState; reason: string | null; channel?: RemotePeerChannel; abort?: AbortController;
   retryDelay: number; removeCloseListener?: () => void; timer?: ReturnType<typeof setTimeout>;
   retryAt: number | null; task?: Promise<void>
+  lastCloseCode?: number
 }
 
 interface QueuedAttempt { entry: ReconnectionEntry; resolve(): void; reject(error: Error): void }
@@ -135,6 +137,24 @@ export class RemoteReconnectionService {
   status(playerId: string): RemotePeerStatus | null {
     const entry = this.entries.get(playerId)
     return entry ? this.snapshot(entry) : null
+  }
+
+  /** Fences only this locally revoked peer while preserving every reconciliation record. */
+  async removePeer(playerId: string, reason = 'REMOTE_AUTHORIZATION_REVOKED'): Promise<void> {
+    const entry = this.entries.get(playerId)
+    if (!entry) return
+    entry.peer = { ...entry.peer, active: false }
+    entry.state = 'stopping'; entry.reason = reason; this.emit(entry)
+    try {
+      await this.fence(entry, reason)
+      const task = entry.task
+      if (task) await task.catch(() => undefined)
+      entry.state = 'disabled'; entry.reason = reason; this.emit(entry)
+      if (this.entries.get(playerId) === entry) this.entries.delete(playerId)
+    } catch {
+      entry.state = 'blocked'; entry.reason = 'CHANNEL_CLOSE_FAILED'; this.emit(entry)
+      throw new Error('REMOTE_PEER_CLOSE_FAILED')
+    }
   }
 
   async close(): Promise<void> {
@@ -271,10 +291,12 @@ export class RemoteReconnectionService {
       }
       entry.channel = channel; entry.state = 'authorized'; entry.reason = null; this.emit(entry)
       entry.removeCloseListener?.()
-      entry.removeCloseListener = channel.onClose?.(() => {
+      entry.removeCloseListener = channel.onClose?.(closeCode => {
         if (entry.token !== token || entry.channel !== channel || this.closed || !this.enabled) return
         entry.removeCloseListener?.(); entry.removeCloseListener = undefined
         entry.channel = undefined; ++entry.token; entry.attempt = Math.min(entry.attempt + 1, 5)
+        entry.lastCloseCode = Number.isInteger(closeCode) && closeCode! >= 1000 && closeCode! <= 4999
+          ? closeCode : undefined
         const base = Math.min(30_000, 1000 * 2 ** (entry.attempt - 1))
         entry.retryDelay = Math.min(30_000, Math.round(base * (0.8 + Math.max(0, Math.min(1, this.clock.random())) * 0.4)))
         entry.reason = 'REMOTE_CHANNEL_CLOSED'; entry.state = 'backoff'; this.emit(entry)
@@ -355,7 +377,9 @@ export class RemoteReconnectionService {
 
   private snapshot(entry: ReconnectionEntry): RemotePeerStatus {
     return { playerId: entry.peer.playerId, state: entry.state, reason: entry.reason,
-      connectionId: entry.channel?.connectionId ?? null, synchronized: entry.state === 'synchronized', retryAt: entry.retryAt }
+      connectionId: entry.channel?.connectionId ?? null, synchronized: entry.state === 'synchronized', retryAt: entry.retryAt,
+      ...(entry.state === 'backoff' && entry.reason === 'REMOTE_CHANNEL_CLOSED' && entry.lastCloseCode !== undefined
+        ? { closeCode: entry.lastCloseCode } : {}) }
   }
   private emit(entry: ReconnectionEntry): void { this.publish(this.snapshot(entry)) }
 }

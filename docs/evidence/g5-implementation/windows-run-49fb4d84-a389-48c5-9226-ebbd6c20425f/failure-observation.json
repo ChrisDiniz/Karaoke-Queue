@@ -1,0 +1,67 @@
+{
+  "runId": "[REDACTED_ID]",
+  "stage": "rendered-connection-after-normal-restart",
+  "assertion": "Saved-device card did not render the synchronized state observed in Main.",
+  "reconnectBaseline": {
+    "revision": 17,
+    "state": "backoff",
+    "reconciled": false
+  },
+  "reconnectWaitEvidence": {
+    "baselineRevision": 17,
+    "snapshotRevision": 21,
+    "current": {
+      "state": "backoff",
+      "reconciled": false,
+      "reason": "REMOTE_CONNECTION_ERROR"
+    },
+    "postBaselineTrace": [
+      {
+        "revision": 18,
+        "states": [
+          {
+            "state": "connecting",
+            "reconciled": false,
+            "reason": null
+          }
+        ]
+      },
+      {
+        "revision": 20,
+        "states": [
+          {
+            "state": "backoff",
+            "reconciled": false,
+            "reason": "REMOTE_CONNECTION_ERROR"
+          }
+        ]
+      },
+      {
+        "revision": 20,
+        "states": [
+          {
+            "state": "backoff",
+            "reconciled": false,
+            "reason": "REMOTE_CONNECTION_ERROR"
+          }
+        ]
+      },
+      {
+        "revision": 21,
+        "states": [
+          {
+            "state": "backoff",
+            "reconciled": false,
+            "reason": "REMOTE_CONNECTION_ERROR"
+          }
+        ]
+      }
+    ]
+  },
+  "diagnosticCategories": [
+    "management snapshot and trace",
+    "player snapshot and trace",
+    "transport-fault proxy diagnostics"
+  ],
+  "interpretation": "Runner trace and process logs recorded post-restart WSS authorization and later reconciliation to synchronized; the saved-device card locator still read backoff. Root cause is under investigation."
+}

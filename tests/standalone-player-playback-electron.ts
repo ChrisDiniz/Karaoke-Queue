@@ -122,7 +122,7 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
       }
       const check = () => {
         const state = playback.getState()
-        if (state.attemptId !== attemptId) {
+        if (attemptId !== undefined && attemptId !== null && state.attemptId !== attemptId) {
           finish(new Error(`Playback attempt changed before observing ${status}.`))
           return
         }
@@ -545,6 +545,9 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
           }
         }, { once: true, capture: true })
       })
+      // Subscribe before the operation: a contained media error is durably published as failed, then the
+      // recovery owner may clear the in-memory surface while retaining the blocked recovery record.
+      const failedPlaybackEvent = context.call('waitForPlaybackStatus', 'failed', null)
       const result = await context.execute({ type: 'submit-code', enteredCode: '9998', priority: 'normal' },
         'standalone-known-invalid-media')
       assert.equal(result.outcome, 'confirmed',
@@ -554,7 +557,7 @@ if (process.env.KQ_STANDALONE_PLAYBACK_E2E_MAIN === '1') {
       const invalidMediaError = await context.page.evaluate(() => window.__kqInvalidMediaError)
       assert.ok(invalidMediaError && Number.isInteger(invalidMediaError.code) && invalidMediaError.code > 0,
         'Chromium must report a native media error before confirmed containment clears the media source')
-      const failedPlayback = await context.call('getPlaybackState')
+      const failedPlayback = await failedPlaybackEvent
       assert.equal(failedPlayback.status, 'failed')
       assert.ok(['stop-acknowledged', 'host-terminated'].includes(failedPlayback.containmentStatus),
         'the blocked Standalone snapshot requires confirmed media containment')

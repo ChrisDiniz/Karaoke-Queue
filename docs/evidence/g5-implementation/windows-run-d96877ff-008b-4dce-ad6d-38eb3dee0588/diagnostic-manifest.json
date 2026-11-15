@@ -1,0 +1,9 @@
+{
+  "sourceRunId": "d96877ff-008b-4dce-ad6d-38eb3dee0588",
+  "rawReportSha256": "e1bbb5f45cc0a2215d2c45da96952af036d1435e93b3b95eabf0c6505b6904f7",
+  "pairingCodesRedacted": true,
+  "eightDigitValuesRedacted": true,
+  "privateAddressesRedacted": true,
+  "windowsPathsRedacted": true,
+  "processCleanup": "REMOVED_EMPTY"
+}

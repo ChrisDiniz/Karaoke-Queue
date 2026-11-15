@@ -1,0 +1,40 @@
+{
+  "runId": "49fb4d84-a389-48c5-9226-ebbd6c20425f",
+  "status": "FAIL",
+  "fingerprint": "c21e11c10fd1cfaa9ae4ba3459cc489a94737aecec817039f05df1fc8e75fffe",
+  "branch": "feature/remote-player-lan-integration-3",
+  "head": "318d4fa9cad08962aec7f09b4ac03598a66eae69",
+  "testedAt": "2026-11-14T18:10:35.451Z",
+  "stage": "TEST",
+  "profileCleanup": "REMOVED_EMPTY",
+  "suites": [
+    {
+      "name": "remote-ui-contracts-unit",
+      "status": "PASS"
+    },
+    {
+      "name": "main-remote-ui-ipc-unit",
+      "status": "PASS"
+    },
+    {
+      "name": "remote-runtime-intent-unit",
+      "status": "PASS"
+    },
+    {
+      "name": "remote-reconnection-unit",
+      "status": "PASS"
+    },
+    {
+      "name": "remote-reconciliation-unit",
+      "status": "PASS"
+    },
+    {
+      "name": "remote-devices-electron",
+      "status": "PASS"
+    },
+    {
+      "name": "remote-pairing-electron",
+      "status": "FAIL"
+    }
+  ]
+}
